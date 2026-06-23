@@ -1,0 +1,30 @@
+name: Validate
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - ".github/workflows/**"
+      - ".github/CODEOWNERS"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate mod packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate manifests
+        run: npm run validate
