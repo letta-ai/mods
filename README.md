@@ -37,6 +37,7 @@ mods/         # mod implementation files declared by package.json#letta
 ## Packages
 
 - [`packages/plan-mode`](./packages/plan-mode) - sample plan-mode workflow using commands, tools, turn reminders, permissions, and local state
+- [`packages/goal-mode`](./packages/goal-mode) - goal workflow using commands, tools, turn reminders, and local state
 
 ## Safety
 

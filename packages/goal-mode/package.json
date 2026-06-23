@@ -1,0 +1,31 @@
+{
+  "name": "@letta-ai/mod-goal-mode",
+  "version": "0.1.0",
+  "description": "Example Letta Code mod package that adds goal mode with goal commands, tools, and turn reminders.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "goal-mode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/goal-mode"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["commands", "tools", "events.turns"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
