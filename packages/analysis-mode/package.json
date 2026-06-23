@@ -2,6 +2,7 @@
   "name": "@letta-ai/mod-analysis-mode",
   "version": "0.1.0",
   "description": "Example Letta Code mod package that adds phrase-triggered diagnostic analysis mode.",
+  "author": "cpacker",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [

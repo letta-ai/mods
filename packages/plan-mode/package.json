@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Example Letta Code mod package that recreates a plan-mode style workflow.",
+  "author": "carenthomas",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
