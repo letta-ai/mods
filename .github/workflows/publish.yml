@@ -1,0 +1,110 @@
+name: Publish changed mod packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - ".github/workflows/publish.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Validate manifests
+        run: npm run validate
+
+      - name: Detect changed packages
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          node <<'NODE'
+          const { existsSync, readdirSync, writeFileSync } = require("node:fs");
+          const { execSync } = require("node:child_process");
+          const path = require("node:path");
+
+          function allPackages() {
+            if (!existsSync("packages")) return [];
+            return readdirSync("packages", { withFileTypes: true })
+              .filter((entry) => entry.isDirectory())
+              .map((entry) => path.posix.join("packages", entry.name))
+              .filter((packageDir) => existsSync(path.join(packageDir, "package.json")))
+              .sort();
+          }
+
+          const eventName = process.env.EVENT_NAME;
+          const before = process.env.BEFORE_SHA || "";
+          const head = process.env.HEAD_SHA || "HEAD";
+          const zeroBefore = /^0+$/.test(before);
+
+          let packages;
+          if (eventName === "workflow_dispatch" || !before || zeroBefore) {
+            packages = allPackages();
+          } else {
+            const files = execSync(`git diff --name-only ${before} ${head}`, { encoding: "utf8" })
+              .split("\n")
+              .filter(Boolean);
+            packages = Array.from(new Set(files
+              .map((file) => file.split("/"))
+              .filter((parts) => parts[0] === "packages" && parts[1])
+              .map((parts) => path.posix.join("packages", parts[1]))
+              .filter((packageDir) => existsSync(path.join(packageDir, "package.json")))))
+              .sort();
+          }
+
+          writeFileSync("changed-packages.txt", packages.join("\n") + (packages.length ? "\n" : ""));
+          console.log(packages.length ? packages.join("\n") : "No changed packages.");
+          NODE
+
+      - name: Publish changed packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ ! -s changed-packages.txt ]; then
+            echo "No changed packages to publish."
+            exit 0
+          fi
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is required to publish packages."
+            exit 1
+          fi
+
+          while IFS= read -r package_dir; do
+            [ -n "$package_dir" ] || continue
+            name=$(node -p "require('./$package_dir/package.json').name")
+            version=$(node -p "require('./$package_dir/package.json').version")
+            private=$(node -p "require('./$package_dir/package.json').private === true ? 'true' : 'false'")
+
+            if [ "$private" = "true" ]; then
+              echo "Skipping private package $name."
+              continue
+            fi
+
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "Skipping $name@$version because it is already published."
+              continue
+            fi
+
+            echo "Publishing $name@$version from $package_dir"
+            npm publish "$package_dir" --access public
+          done < changed-packages.txt
