@@ -39,6 +39,7 @@ mods/         # mod implementation files declared by package.json#letta
 - [`packages/plan-mode`](./packages/plan-mode) - sample plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - [`packages/goal-mode`](./packages/goal-mode) - goal workflow using commands, tools, turn reminders, and local state
 - [`packages/analysis-mode`](./packages/analysis-mode) - phrase-triggered diagnostic mode using turn reminders and local state
+- [`packages/web-search`](./packages/web-search) - Tavily-backed web search tool using agent-scoped secrets
 
 ## Safety
 
