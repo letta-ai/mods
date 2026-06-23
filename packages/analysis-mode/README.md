@@ -9,7 +9,7 @@ Analysis mode is inspired by Westworld-style host diagnostics. It suspends norma
 Once npm mod install support is available:
 
 ```bash
-letta install npm:@letta-ai/mod-analysis-mode
+letta install npm:@letta-ai/analysis-mode
 ```
 
 ## What it adds

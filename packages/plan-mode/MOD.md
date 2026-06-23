@@ -1,5 +1,5 @@
 ---
-name: "@letta-ai/mod-plan-mode"
+name: "@letta-ai/plan-mode"
 description: "Example plan-mode workflow mod for Letta Code."
 ---
 

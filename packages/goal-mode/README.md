@@ -9,7 +9,7 @@ Goal mode keeps a user-provided objective active across turns. The agent receive
 Once npm mod install support is available:
 
 ```bash
-letta install npm:@letta-ai/mod-goal-mode
+letta install npm:@letta-ai/goal-mode
 ```
 
 ## What it adds

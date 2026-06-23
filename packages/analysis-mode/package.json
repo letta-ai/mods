@@ -1,5 +1,5 @@
 {
-  "name": "@letta-ai/mod-analysis-mode",
+  "name": "@letta-ai/analysis-mode",
   "version": "0.1.0",
   "description": "Example Letta Code mod package that adds phrase-triggered diagnostic analysis mode.",
   "author": "cpacker",

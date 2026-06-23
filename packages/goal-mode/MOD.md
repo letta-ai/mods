@@ -1,5 +1,5 @@
 ---
-name: "@letta-ai/mod-goal-mode"
+name: "@letta-ai/goal-mode"
 description: "Goal mode workflow mod for Letta Code."
 ---
 

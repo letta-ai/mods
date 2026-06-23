@@ -1,5 +1,5 @@
 ---
-name: "@letta-ai/mod-analysis-mode"
+name: "@letta-ai/analysis-mode"
 description: "Phrase-triggered diagnostic analysis mode for Letta Code agents."
 ---
 

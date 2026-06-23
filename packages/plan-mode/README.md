@@ -9,7 +9,7 @@ This package is an example for developers and agents. It does not replace the bu
 Publishing/install support is still being wired up. Once npm mod install is available, this package is intended to install with:
 
 ```bash
-letta mods install npm:@letta-ai/mod-plan-mode
+letta install npm:@letta-ai/plan-mode
 ```
 
 For local development, copy or install the package through the local mod package workflow once available.
