@@ -1,0 +1,8 @@
+{
+  "name": "@letta-ai/mods",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-manifests.mjs"
+  }
+}

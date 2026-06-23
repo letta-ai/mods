@@ -1,0 +1,32 @@
+{
+  "name": "@letta-ai/mod-plan-mode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example Letta Code mod package that recreates a plan-mode style workflow.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "plan-mode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/plan-mode"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["commands", "tools", "events.turns", "permissions"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
