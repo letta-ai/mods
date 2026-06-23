@@ -1,4 +1,4 @@
-# Plan Mode Mod
+# Plan Mode
 
 A sample Letta Code mod package that recreates a plan-mode style workflow using public mod APIs.
 

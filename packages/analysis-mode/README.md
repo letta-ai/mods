@@ -1,4 +1,4 @@
-# Analysis Mode Mod
+# Analysis Mode
 
 A Letta Code mod package that adds a phrase-triggered diagnostic mode for agents.
 

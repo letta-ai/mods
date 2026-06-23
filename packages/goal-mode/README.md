@@ -1,4 +1,4 @@
-# Goal Mode Mod
+# Goal Mode
 
 A Letta Code mod package that adds a goal workflow using public mod APIs.
 
