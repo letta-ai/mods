@@ -106,5 +106,5 @@ jobs:
             fi
 
             echo "Publishing $name@$version from $package_dir"
-            npm publish "$package_dir" --access public
+            npm publish "./$package_dir" --access public
           done < changed-packages.txt
