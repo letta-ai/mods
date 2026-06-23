@@ -1,7 +1,7 @@
 {
   "name": "@letta-ai/web-search",
   "version": "0.1.0",
-  "description": "Letta Code mod package that adds Tavily-backed web search using agent-scoped secrets.",
+  "description": "Letta Code mod package that adds provider-backed web search tools using agent-scoped secrets.",
   "author": "carenthomas",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,7 +10,10 @@
     "letta-mod",
     "letta-code",
     "web-search",
-    "tavily"
+    "exa",
+    "tavily",
+    "perplexity",
+    "parallel"
   ],
   "repository": {
     "type": "git",
