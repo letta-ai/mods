@@ -1,0 +1,41 @@
+{
+  "name": "@letta-ai/image-understanding",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds image understanding for text-only agents using a separate vision backend.",
+  "author": "just-cameron",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "image-understanding",
+    "vision",
+    "ollama"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/image-understanding"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "LICENSE",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "tools",
+      "commands",
+      "events.turns"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
