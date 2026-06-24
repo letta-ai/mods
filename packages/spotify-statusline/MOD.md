@@ -14,6 +14,7 @@ Use this mod when the user wants Letta Code's idle statusline to show the curren
 - Polls Spotify with `osascript` outside the render path.
 - Does not launch Spotify if the app is closed.
 - Shows `🎧 Artist - Track` while music is playing.
+- Wraps the playing track in an OSC 8 hyperlink to the native `spotify:track:<id>` URI so supported terminals can click to jump to the track.
 - Shows `🎧 paused` when Spotify is paused.
 - Clears the Spotify segment when Spotify is stopped, closed, or unavailable.
 - Renders the agent name and model on the right so the statusline remains useful when no track is active.

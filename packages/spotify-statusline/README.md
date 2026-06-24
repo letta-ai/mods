@@ -29,6 +29,7 @@ Then reload local mods:
 ## Behavior
 
 - Shows `🎧 Artist - Track` while Spotify is playing.
+- Wraps the playing track in a terminal hyperlink (OSC 8) pointing at `spotify:track:<id>`, so supported terminals (iTerm2, Ghostty, WezTerm, Kitty, VS Code) jump to the track on click.
 - Shows `🎧 paused` while Spotify is paused.
 - Shows no Spotify segment when Spotify is stopped, closed, or unavailable.
 - Does not launch Spotify when checking state.

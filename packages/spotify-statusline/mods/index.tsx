@@ -3,6 +3,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const REFRESH_MS = 5_000;
+const OSC = "\u001B]8;;";
+const ST = "\u001B\\";
+
+function terminalLink(label: string, href: string) {
+  return `${OSC}${href}${ST}${label}${OSC}${ST}`;
+}
 
 async function updateSpotify(letta: any) {
   try {
@@ -13,7 +19,8 @@ if application "Spotify" is running then
     if playerState is "playing" then
       set trackArtist to artist of current track
       set trackName to name of current track
-      return "playing|" & trackArtist & " - " & trackName
+      set trackUrl to spotify url of current track
+      return "playing|" & trackArtist & " - " & trackName & "|" & trackUrl
     else if playerState is "paused" then
       return "paused|"
     else
@@ -25,10 +32,11 @@ else
 end if
 `;
     const { stdout } = await execFileAsync("osascript", ["-e", script], { timeout: 1_500 });
-    const [state, track = ""] = stdout.trim().split("|", 2);
+    const [state, track = "", href = ""] = stdout.trim().split("|", 3);
 
     if (state === "playing" && track.trim()) {
-      letta.ui.setStatus("spotify", `🎧 ${track.trim()}`);
+      const label = `🎧 ${track.trim()}`;
+      letta.ui.setStatus("spotify", href.trim() ? terminalLink(label, href.trim()) : label);
     } else if (state === "paused") {
       letta.ui.setStatus("spotify", "🎧 paused");
     } else {
