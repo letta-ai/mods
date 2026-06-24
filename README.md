@@ -40,6 +40,7 @@ mods/         # mod implementation files declared by package.json#letta
 - [`packages/goal-mode`](./packages/goal-mode) - goal workflow using commands, tools, turn reminders, and local state
 - [`packages/analysis-mode`](./packages/analysis-mode) - phrase-triggered diagnostic mode using turn reminders and local state
 - [`packages/web-search`](./packages/web-search) - provider-backed web search tools using agent-scoped secrets
+- [`packages/memfs-search`](./packages/memfs-search) - agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - [`packages/image-understanding`](./packages/image-understanding) - image-understanding tool, commands, and optional auto-captioning for text-only agents
 
 ## Safety
