@@ -2,7 +2,7 @@
   "name": "@letta-ai/spotify-statusline",
   "version": "0.1.0",
   "description": "Letta Code statusline mod that shows the currently playing Spotify track on macOS.",
-  "author": "Kian Jones",
+  "author": "kianjones9",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
