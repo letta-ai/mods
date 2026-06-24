@@ -70,6 +70,7 @@ packages/
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── memfs-search/         # Agent-callable MemFS memory search
 ├── plan-mode/            # Plan-mode style workflow
+├── spotify-statusline/   # macOS Spotify now-playing statusline
 └── web-search/           # Provider-backed web search tools
 
 scripts/
@@ -85,6 +86,7 @@ scripts/
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
+- **spotify-statusline** - macOS Spotify now-playing statusline
 - **web-search** - Provider-backed web search tools using agent-scoped secrets
 
 ## Mod Package Format
