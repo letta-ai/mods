@@ -190,7 +190,7 @@ function getPatchTargets(input: string): string[] {
 
 function isPlanFileWrite(toolName: string, args: Record<string, unknown>, cwd: string): boolean {
   const normalized = normalizeName(toolName);
-  if (normalized === "applypatch" || normalized === "apply_patch") {
+  if (normalized === "applypatch") {
     const input = typeof args.input === "string" ? args.input : "";
     const targets = getPatchTargets(input);
     return (
