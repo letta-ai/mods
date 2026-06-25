@@ -190,7 +190,7 @@ function getPatchTargets(input: string): string[] {
 
 function isPlanFileWrite(toolName: string, args: Record<string, unknown>, cwd: string): boolean {
   const normalized = normalizeName(toolName);
-  if (normalized === "applypatch" || normalized === "apply_patch") {
+  if (normalized === "applypatch") {
     const input = typeof args.input === "string" ? args.input : "";
     const targets = getPatchTargets(input);
     return (
@@ -218,6 +218,12 @@ function isPlanFileWrite(toolName: string, args: Record<string, unknown>, cwd: s
 
 function isConservativeReadOnlyShell(command: string): boolean {
   const trimmed = command.trim();
+  // The allowlist below only validates the leading command, so reject anything
+  // that can chain, pipe, redirect, or expand into another command first.
+  // Otherwise a safe prefix like `ls` smuggles in `; rm -rf foo` or `| sh`.
+  if (/[|;&<>`\n]/.test(trimmed) || trimmed.includes("$(") || trimmed.includes("${")) {
+    return false;
+  }
   return (
     /^(pwd|ls|cat|head|tail|wc)(\s|$)/.test(trimmed) ||
     /^sed\s+-n\s+/.test(trimmed) ||
