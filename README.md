@@ -71,6 +71,7 @@ packages/
 ├── memfs-search/         # Agent-callable MemFS memory search
 ├── plan-mode/            # Plan-mode style workflow
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
+├── user-timestamps/      # Adds local timestamp metadata to user messages
 └── web-search/           # Provider-backed web search tools
 
 scripts/
@@ -87,6 +88,7 @@ scripts/
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **spotify-statusline** - macOS Spotify now-playing statusline
+- **user-timestamps** - Adds local timestamp metadata to every user message
 - **web-search** - Provider-backed web search tools using agent-scoped secrets
 
 ## Mod Package Format
