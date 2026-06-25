@@ -8,8 +8,6 @@ A Letta Code statusline mod that shows the currently playing Spotify track on ma
 
 ## Install
 
-Once npm mod install support is available:
-
 ```bash
 letta install npm:@letta-ai/spotify-statusline
 ```

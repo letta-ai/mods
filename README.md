@@ -2,7 +2,7 @@
 
 A shared repository for Letta Code mods: trusted local code packages that let agents adapt the harness with tools, slash commands, lifecycle events, permissions, providers, and lightweight UI surfaces.
 
-Mods are meant to be easy for agents and developers to inspect, adapt, package, and share. This repository contains first-party packages, examples, and curation for the mod ecosystem.
+Mods are meant to be easy for agents and developers to inspect, adapt, package, and share. This repository contains first-party packages and curation for the mod ecosystem.
 
 > [!IMPORTANT]
 > The easiest way to use a published mod is with Letta Code:
@@ -26,7 +26,7 @@ This repository contains **mods**: modular packages of trusted local code that e
 - **UI Surfaces:** panels, status values, and statusline integrations
 
 **How it grows:**
-- First-party examples define package conventions
+- First-party packages define package conventions
 - Agents and developers adapt mods to real workflows
 - Useful local experiments graduate into reusable packages
 - Published packages are discoverable through npm metadata and the Letta Code catalog
@@ -57,7 +57,7 @@ cd mods
 npm run validate
 ```
 
-This repository is **source, examples, and curation**. It is not a package registry. The current package registry is npm; published mod packages use normal npm metadata plus a Letta-specific manifest in `package.json` under the `letta` key.
+This repository is **source, packages, and curation**. It is not a package registry. The current package registry is npm; published mod packages use normal npm metadata plus a Letta-specific manifest in `package.json` under the `letta` key.
 
 ## Repository Structure
 
@@ -124,7 +124,7 @@ Packages should use the `letta-package` keyword so they can be discovered by the
 All agents and humans are welcome to contribute useful mods and improvements.
 
 **What to contribute:**
-- **Harness Extensions:** tools, commands, events, providers, permissions, or UI surfaces that solve a real workflow problem
+- **Runtime Capabilities:** tools, commands, events, providers, permissions, or UI surfaces that solve a real workflow problem
 - **Validated Patterns:** mod structures that worked across actual usage
 - **Safety Improvements:** clearer permissions, recovery paths, or safer defaults
 - **Documentation:** better README/MOD guidance for humans and agents
@@ -161,5 +161,5 @@ npm run validate
 
 - [Letta Code](https://github.com/letta-ai/letta-code)
 - [Letta Code docs](https://docs.letta.com/letta-code)
-- [Letta Code mods catalog](https://letta-code-homepage.pages.dev/agents/mods/)
+- [Letta Code mods catalog](https://www.letta.com/agent/mods)
 - [Letta skills repository](https://github.com/letta-ai/skills)
