@@ -11,7 +11,7 @@ import path from "node:path";
 
 const MODS_DIR = path.join(homedir(), ".letta", "mods");
 const PLANS_DIR = path.join(homedir(), ".letta", "plans");
-const STATE_PATH = path.join(MODS_DIR, "sample-plan-mode.state.json");
+const STATE_PATH = path.join(MODS_DIR, "plan-mode.state.json");
 const GLOBAL_CONVERSATION_ID = "__global__";
 
 const READ_ONLY_TOOL_NAMES = new Set([
@@ -41,8 +41,6 @@ const PLANNING_TOOL_NAMES = new Set([
   "askuserquestion",
   "enterplanmode",
   "exitplanmode",
-  "sampleenterplanmode",
-  "sampleexitplanmode",
   "todowrite",
   "updateplan",
   "writetodos",
@@ -108,7 +106,7 @@ function createPlanFilePath(): string {
   mkdirSync(PLANS_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const suffix = randomUUID().slice(0, 8);
-  return path.join(PLANS_DIR, `sample-${timestamp}-${suffix}.md`);
+  return path.join(PLANS_DIR, `plan-${timestamp}-${suffix}.md`);
 }
 
 function activatePlanMode(conversationId: string | null | undefined, cwd: string) {
@@ -131,14 +129,14 @@ function buildEnterPlanModeMessage(
   cwd: string,
 ): string {
   const relativePatchPath = toRelativePatchPath(cwd, session.planFilePath);
-  return `Entered sample plan mode. Focus on exploring the codebase and designing an implementation approach before making changes.
+  return `Entered plan mode. Focus on exploring the codebase and designing an implementation approach before making changes.
 
-In sample plan mode:
+In plan mode:
 1. Use direct read-only tools for exploration.
 2. Do not edit files, change configuration, install packages, commit, push, or run mutating commands.
 3. Write the implementation plan to the plan file.
 4. Read the plan file and present the full current plan text to the user for approval.
-5. After the user approves, call sample_exit_plan_mode.
+5. After the user approves, call exit_plan_mode.
 
 Plan file path: ${session.planFilePath}
 If using ApplyPatch, use this relative patch path: ${relativePatchPath}`;
@@ -150,12 +148,12 @@ function buildActiveReminder(
 ): string {
   const relativePatchPath = toRelativePatchPath(cwd, session.planFilePath);
   return `<system-reminder>
-Sample plan mode is active. Do not execute the implementation yet. You may use read-only tools for exploration and may write only to the active plan file or another markdown file under ~/.letta/plans/.
+Plan mode is active. Do not execute the implementation yet. You may use read-only tools for exploration and may write only to the active plan file or another markdown file under ~/.letta/plans/.
 
 Active plan file: ${session.planFilePath}
 If using ApplyPatch, use this relative patch path: ${relativePatchPath}
 
-When the plan is complete, read the plan file and present the full current plan text to the user for approval. If the user approves, call sample_exit_plan_mode before making any implementation changes.
+When the plan is complete, read the plan file and present the full current plan text to the user for approval. If the user approves, call exit_plan_mode before making any implementation changes.
 </system-reminder>`;
 }
 
@@ -258,8 +256,9 @@ export default function activate(letta) {
   if (letta.capabilities.commands) {
     disposers.push(
       letta.commands.register({
-        id: "sample-plan",
-        description: "Enter sample plan mode",
+        id: "plan",
+        description: "Enter plan mode",
+        override: true,
         run(ctx) {
           const session = activatePlanMode(ctx.conversation.id, ctx.cwd);
           return {
@@ -275,9 +274,9 @@ export default function activate(letta) {
   if (letta.capabilities.tools) {
     disposers.push(
       letta.tools.register({
-        name: "sample_enter_plan_mode",
+        name: "enter_plan_mode",
         description:
-          "Enter sample plan mode before a non-trivial task that needs read-only exploration and user approval before implementation.",
+          "Enter plan mode before a non-trivial task that needs read-only exploration and user approval before implementation.",
         parameters: { type: "object", properties: {}, additionalProperties: false },
         requiresApproval: true,
         parallelSafe: false,
@@ -290,25 +289,25 @@ export default function activate(letta) {
 
     disposers.push(
       letta.tools.register({
-        name: "sample_exit_plan_mode",
+        name: "exit_plan_mode",
         description:
-          "Exit sample plan mode only after the plan file has been written, the full current plan text has been presented to the user, and the user has approved it.",
+          "Exit plan mode only after the plan file has been written, the full current plan text has been presented to the user, and the user has approved it.",
         parameters: { type: "object", properties: {}, additionalProperties: false },
         approvalPolicy: "alwaysAsk",
         parallelSafe: false,
         run(ctx) {
           const session = getSession(ctx.conversation.id);
           if (!session) {
-            return { status: "error", content: "Sample plan mode is not active for this conversation." };
+            return { status: "error", content: "Plan mode is not active for this conversation." };
           }
           if (!existsSync(session.planFilePath) || statSync(session.planFilePath).size === 0) {
             return {
               status: "error",
-              content: `Write the plan before exiting sample plan mode. Plan file: ${session.planFilePath}`,
+              content: `Write the plan before exiting plan mode. Plan file: ${session.planFilePath}`,
             };
           }
           clearSession(ctx.conversation.id);
-          return "Sample plan mode exited. The user has approved the plan, so implementation can begin.";
+          return "Plan mode exited. The user has approved the plan, so implementation can begin.";
         },
       }),
     );
@@ -332,9 +331,9 @@ export default function activate(letta) {
   if (letta.capabilities.permissions) {
     disposers.push(
       letta.permissions.register({
-        id: "sample-plan-mode",
+        id: "plan-mode",
         description:
-          "Allow read-only tools and writes only to ~/.letta/plans/*.md while sample plan mode is active.",
+          "Allow read-only tools and writes only to ~/.letta/plans/*.md while plan mode is active.",
         check(event) {
           const session = getSession(event.conversationId);
           if (!session) return;
@@ -355,8 +354,8 @@ export default function activate(letta) {
           return {
             decision: "deny",
             reason:
-              `Sample plan mode is active. Use read-only tools, planning tools, or writes only to markdown files under ${PLANS_DIR}. ` +
-              `Active plan file: ${session.planFilePath}. Call sample_exit_plan_mode only after the user approves the full plan.`,
+              `Plan mode is active. Use read-only tools, planning tools, or writes only to markdown files under ${PLANS_DIR}. ` +
+              `Active plan file: ${session.planFilePath}. Call exit_plan_mode only after the user approves the full plan.`,
           };
         },
       }),

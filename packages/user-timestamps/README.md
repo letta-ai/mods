@@ -6,8 +6,6 @@ This helps agents answer time-sensitive questions and reason about current time 
 
 ## Install
 
-Once npm mod install support is available:
-
 ```bash
 letta install npm:@letta-ai/user-timestamps
 ```

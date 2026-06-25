@@ -6,8 +6,6 @@ Analysis mode is inspired by Westworld-style host diagnostics. It suspends norma
 
 ## Install
 
-Once npm mod install support is available:
-
 ```bash
 letta install npm:@letta-ai/analysis-mode
 ```
