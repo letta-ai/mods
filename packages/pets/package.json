@@ -1,0 +1,34 @@
+{
+  "name": "@letta-ai/pets",
+  "version": "0.1.0",
+  "description": "Letta Code terminal pets that animate based on turn and tool activity.",
+  "author": "Letta",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "pets",
+    "terminal",
+    "animations"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/pets"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["commands", "events.tools", "events.turns", "ui.panels"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
