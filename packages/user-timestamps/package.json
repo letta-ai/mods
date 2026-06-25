@@ -1,0 +1,33 @@
+{
+  "name": "@letta-ai/user-timestamps",
+  "version": "0.1.0",
+  "description": "Letta Code turn-start mod that adds local timestamp metadata to every user message.",
+  "author": "Letta",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "timestamps",
+    "time"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/user-timestamps"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["events.turns"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
