@@ -1,6 +1,6 @@
 ---
 name: "@letta-ai/user-timestamps"
-description: "Adds local timestamp metadata to every user message before model turns."
+description: "Ensures agents are always aware of the current time by adding timestamp metadata to every user message"
 ---
 
 # User timestamps mod semantics
@@ -35,8 +35,3 @@ The visible block is intentionally included because model providers and downstre
 - The mod uses only public turn event APIs and does not import Letta Code internals.
 - The mod registers a single `turn_start` handler and returns its disposer.
 
-## Adaptation notes for agents
-
-- Keep timestamp text compact. Do not add UTC, ISO, or verbose metadata unless the user explicitly asks.
-- Keep the XML-like tag stable so agents and tests can detect the injected timestamp.
-- If adapting for strict invisibility, remove the visible block only if the harness/provider reliably preserves `metadata.user_timestamp` into model-visible context.
