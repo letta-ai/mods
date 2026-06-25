@@ -108,3 +108,29 @@ jobs:
             echo "Publishing $name@$version from $package_dir"
             npm publish "./$package_dir" --access public
           done < changed-packages.txt
+
+  # Tell the marketing site to regenerate its mod catalog now that new packages
+  # are on npm. The target repo is kept in a secret (not hardcoded) so this public
+  # workflow / its logs don't reference the private site repo. No-ops if the
+  # secrets are absent — the site also refreshes on a schedule, so this just makes
+  # the update near-real-time.
+  notify-site:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger site mod catalog refresh
+        env:
+          DISPATCH_TOKEN: ${{ secrets.HOMESITE_DISPATCH_TOKEN }}
+          DISPATCH_URL: ${{ secrets.HOMESITE_DISPATCH_URL }}
+        run: |
+          if [ -z "${DISPATCH_TOKEN:-}" ] || [ -z "${DISPATCH_URL:-}" ]; then
+            echo "Dispatch secrets not set; skipping (site schedule will catch up)."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$DISPATCH_URL" \
+            -d '{"event_type":"mods-updated"}'
+          echo "Dispatched mods-updated to the site."
