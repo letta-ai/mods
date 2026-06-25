@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/pets",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Letta Code terminal pets that animate based on turn and tool activity.",
   "author": "ariwebb",
   "license": "Apache-2.0",
