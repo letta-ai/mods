@@ -1,47 +1,49 @@
 # Plan Mode
 
-A sample Letta Code mod package that recreates a plan-mode style workflow using public mod APIs.
+A Letta Code mod package that adds a plan-mode workflow using public mod APIs.
 
-This package is an example for developers and agents. It does not replace the built-in `/plan` command. Instead, it uses sample-prefixed IDs so you can install and inspect it safely alongside the built-in flow.
+Plan mode pauses implementation, lets the agent gather read-only context, writes an implementation plan to `~/.letta/plans/`, and asks the user to approve before coding starts.
 
 ## Install
-
-Publishing/install support is still being wired up. Once npm mod install is available, this package is intended to install with:
 
 ```bash
 letta install npm:@letta-ai/plan-mode
 ```
 
-For local development, copy or install the package through the local mod package workflow once available.
+Then reload local mods:
+
+```text
+/reload
+```
 
 ## What it adds
 
-- `/sample-plan` slash command
-- `sample_enter_plan_mode` model-callable tool
-- `sample_exit_plan_mode` model-callable tool
-- a turn reminder while sample plan mode is active
+- `/plan` slash command
+- `enter_plan_mode` model-callable tool
+- `exit_plan_mode` model-callable tool
+- a turn reminder while plan mode is active
 - a permission overlay that blocks mutating tools except plan-file writes
 
 ## Quick start
 
 ```text
-/sample-plan
+/plan
 ```
 
-The command tells the agent to explore read-only, write an implementation plan to a generated file under `~/.letta/plans/`, present the full plan for approval, and then call `sample_exit_plan_mode` after approval.
+The command tells the agent to explore read-only, write an implementation plan to a generated file under `~/.letta/plans/`, present the full plan for approval, and then call `exit_plan_mode` after approval.
 
 ## State files
 
 This mod stores small local state in:
 
 ```text
-~/.letta/mods/sample-plan-mode.state.json
+~/.letta/mods/plan-mode.state.json
 ```
 
 Generated plan files live in:
 
 ```text
-~/.letta/plans/sample-*.md
+~/.letta/plans/plan-*.md
 ```
 
 ## Safety
@@ -56,8 +58,6 @@ letta --no-mods
 LETTA_DISABLE_MODS=1 letta
 ```
 
-## Adapting this example
-
-This example intentionally uses `sample-*` command/tool IDs. If you want to turn it into a real replacement for built-in plan mode, rename the command and tools intentionally and document any overrides.
+Then remove or edit the mod package and run `/reload`.
 
 See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract and semantics.
