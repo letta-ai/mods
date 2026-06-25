@@ -1,0 +1,47 @@
+{
+  "name": "@letta-ai/threadkeeper",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that keeps live operational anchors visible across turns.",
+  "author": "HAL",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "threadkeeper",
+    "operational-continuity",
+    "anchors"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/threadkeeper"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods",
+    "smoke-test.mjs"
+  ],
+  "scripts": {
+    "test": "node smoke-test.mjs"
+  },
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "commands",
+      "tools",
+      "events.lifecycle",
+      "events.turns",
+      "ui.panels",
+      "ui.statusValues"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.17"
+    }
+  }
+}
