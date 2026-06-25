@@ -19,6 +19,7 @@ a replacement for existing git UI.
   --untracked-files=all`, plus a `rev-parse --is-inside-work-tree` guard.
 - Reads from `letta.workspace.cwd` (falls back to `process.cwd()`).
 - Branch: from `# branch.head`; shows a short SHA (from `# branch.oid`) when detached.
+  Long names are truncated to 22 chars with a trailing `…` to avoid overflowing the row.
 - Ahead/behind: from `# branch.ab +A -B`; rendered as `↑A ↓B`, only when an upstream
   exists and there is a non-zero delta.
 - File counts from porcelain v2 entries: `?` untracked → added; staged `A` → added;

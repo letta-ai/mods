@@ -5,6 +5,15 @@ const execFileAsync = promisify(execFile);
 
 const REFRESH_MS = 4_000;
 const EXEC_TIMEOUT_MS = 1_500;
+// Long branch names can overflow narrow statuslines, so cap the displayed
+// length and add an ellipsis. The full name is never hidden in detached mode
+// (we already show a short SHA there).
+const MAX_BRANCH_CHARS = 22;
+
+function truncateBranch(name: string): string {
+  if (name.length <= MAX_BRANCH_CHARS) return name;
+  return `${name.slice(0, MAX_BRANCH_CHARS - 1)}…`;
+}
 
 interface GitState {
   /** Current branch name (or short SHA when detached). */
@@ -128,9 +137,9 @@ async function readGitState(cwd: string): Promise<GitState | null> {
 function formatSegment(state: GitState): string {
   const parts: string[] = [];
 
-  // Branch.
-  const branchLabel = state.branch || (state.detached ? "detached" : "?");
-  parts.push(` ${branchLabel}`);
+  // Branch (truncated if long).
+  const rawBranch = state.branch || (state.detached ? "detached" : "?");
+  parts.push(` ${truncateBranch(rawBranch)}`);
 
   // Ahead/behind vs upstream.
   if (state.hasUpstream && (state.ahead || state.behind)) {

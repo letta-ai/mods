@@ -30,7 +30,7 @@ A git segment on the left of the idle statusline, for example:
  main ↑2 +1 ~3 -1     Letta · claude-sonnet
 ```
 
-- ` main` — current branch (short SHA when in detached HEAD)
+- ` main` — current branch (short SHA when in detached HEAD; long names are truncated with `…`)
 - `↑2 ↓1` — commits ahead / behind the upstream branch (only shown when there's an upstream and a delta)
 - `+N` — untracked / newly added files
 - `~N` — modified files (staged or unstaged)
