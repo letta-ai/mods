@@ -17,7 +17,10 @@ a replacement for existing git UI.
 - Polls `git` outside the render path on a fixed interval (default 4 seconds).
 - Runs a single read-only command per poll: `git status --porcelain=v2 --branch
   --untracked-files=all`, plus a `rev-parse --is-inside-work-tree` guard.
-- Reads from `letta.workspace.cwd` (falls back to `process.cwd()`).
+- Reads the live working directory from the statusline render context (`ModContext.cwd`),
+  captured at render time, so polling follows the session's current directory rather than
+  the launch directory. The host `letta` object does not expose a workspace. Falls back to
+  `process.cwd()` until the first render.
 - Branch: from `# branch.head`; shows a short SHA (from `# branch.oid`) when detached.
   Long names are truncated to 22 chars with a trailing `…` to avoid overflowing the row.
 - Ahead/behind: from `# branch.ab +A -B`; rendered as `↑A ↓B`, only when an upstream

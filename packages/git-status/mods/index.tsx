@@ -168,14 +168,18 @@ export default function activate(letta: any) {
   if (!letta.capabilities.ui.customStatuslineRenderer) return;
 
   let latest: GitState | null = null;
+  // The live working directory is provided by the statusline render context
+  // (ModContext.cwd), which tracks the session's current directory. The host
+  // `letta` object does not expose a workspace, so we capture cwd at render
+  // time and let the poll loop read the latest value.
+  let currentCwd = process.cwd();
 
   const update = async () => {
     if (!letta.capabilities.ui.statusValues) return;
-    const cwd = letta.workspace?.cwd ?? process.cwd();
 
     let state: GitState | null = null;
     try {
-      state = await readGitState(cwd);
+      state = await readGitState(currentCwd);
     } catch {
       state = null;
     }
@@ -192,6 +196,13 @@ export default function activate(letta: any) {
   letta.ui.setStatuslineRenderer((context: any) => {
     const { Box, Text } = context.components;
     const model = context.model.displayName ?? context.model.id ?? "unknown";
+
+    // Track the live cwd from the render context so polling follows the
+    // session's current directory rather than the launch directory.
+    if (typeof context.cwd === "string" && context.cwd) {
+      currentCwd = context.cwd;
+    }
+
     const dirty =
       !!latest &&
       latest.added + latest.modified + latest.deleted > 0;
