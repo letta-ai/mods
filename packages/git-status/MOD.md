@@ -17,10 +17,9 @@ a replacement for existing git UI.
 - Polls `git` outside the render path on a fixed interval (default 4 seconds).
 - Runs a single read-only command per poll: `git status --porcelain=v2 --branch
   --untracked-files=all`, plus a `rev-parse --is-inside-work-tree` guard.
-- Reads the live working directory from the statusline render context (`ModContext.cwd`),
-  captured at render time, so polling follows the session's current directory rather than
-  the launch directory. The host `letta` object does not expose a workspace. Falls back to
-  `process.cwd()` until the first render.
+- Tracks the live working directory via `turn_start` events (`context.cwd`), so polling
+  follows the session's current directory rather than the launch directory. Falls back to
+  `process.cwd()` until the first turn.
 - Branch: from `# branch.head`; shows a short SHA (from `# branch.oid`) when detached.
   Long names are truncated to 22 chars with a trailing `…` to avoid overflowing the row.
 - Ahead/behind: from `# branch.ab +A -B`; rendered as `↑A ↓B`, only when an upstream
@@ -43,8 +42,8 @@ Uses `windowsHide` so no console window flashes on Windows.
 - Renderer stays synchronous; all shelling happens in the poll interval.
 - Only read-only git commands are run; the mod never mutates the repository.
 - Git invocations use a short timeout and swallow errors, degrading to a cleared segment.
-- Timers and status values are cleaned up when the mod is disposed.
-- Optional UI APIs are capability-guarded (`ui.customStatuslineRenderer`, `ui.statusValues`).
+- Timers and panels are cleaned up when the mod is disposed.
+- Optional UI APIs are capability-guarded (`ui.panels`).
 
 ## Adaptation notes for agents
 
