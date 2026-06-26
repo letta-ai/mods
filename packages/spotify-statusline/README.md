@@ -22,7 +22,7 @@ Then reload local mods:
 
 - macOS Spotify now-playing statusline segment
 - paused-state indicator
-- fallback right-side agent/model display
+- panel-based primary statusline with fallback right-side agent/model display
 
 ## Behavior
 
@@ -36,7 +36,7 @@ Then reload local mods:
 
 - macOS
 - Spotify desktop app
-- Letta Code with custom statusline mod support
+- Letta Code `>=0.27.18` with panel-based statusline support
 
 ## Safety
 
