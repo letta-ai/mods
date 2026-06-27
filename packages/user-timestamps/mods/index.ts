@@ -7,7 +7,6 @@ function timestampMetadata(date = new Date()) {
     local: date.toLocaleString(undefined, {
       dateStyle: "full",
       timeStyle: "long",
-      timeZoneName: "short",
     }),
     timeZone,
   };
