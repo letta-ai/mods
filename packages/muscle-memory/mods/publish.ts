@@ -2,6 +2,7 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { userInfo } from "node:os";
 import { GLOBAL_SKILLS_DIR, MM_TAG, PUBLISH_STAGED_DIR, appendMeshFeed, appendUiEvent, scanDirs, scanSkillContent, slug, writeUiState } from "./core";
 import { lintSkillDraft, sotaQualityGaps } from "./gate";
 import { SEARCH_STOP } from "./autopilot";
@@ -27,6 +28,32 @@ export function publishHardBlocks(body: string): string[] {
   return out;
 }
 
+function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+function gitConfigValue(key: string): string {
+  const envKey = key === "user.name" ? "MM_TEST_GIT_USER_NAME" : key === "user.email" ? "MM_TEST_GIT_USER_EMAIL" : "";
+  if (envKey && process.env[envKey]) return process.env[envKey] || "";
+  try { return execFileSync("git", ["config", "--get", key], { encoding: "utf8", timeout: 1500, stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+  catch { return ""; }
+}
+
+function runtimeUserIdentifiers(): string[] {
+  const vals = new Set<string>();
+  const add = (v?: string) => {
+    const s = String(v || "").trim();
+    if (s.length >= 3 && !/^(root|user|admin|runner|node|git|local)$/i.test(s)) vals.add(s);
+  };
+
+  try { add(process.env.MM_TEST_USERINFO_USERNAME || userInfo().username); } catch { /* ignore */ }
+  const gitName = gitConfigValue("user.name");
+  const gitEmail = gitConfigValue("user.email");
+  add(gitName);
+  add(gitEmail);
+  if (gitEmail.includes("@")) add(gitEmail.split("@")[0]);
+
+  return [...vals].sort((a, b) => b.length - a.length);
+}
+
 // Sanitize identifiers → placeholders. Preserves all mechanism/code/worked-examples; only swaps PRIVATE terms.
 export function sanitizeForPublish(body: string): { sanitized: string; replacements: Array<{ kind: string; from: string; to: string }> } {
   const replacements: Array<{ kind: string; from: string; to: string }> = []; let s = body;
@@ -35,6 +62,7 @@ export function sanitizeForPublish(body: string): { sanitized: string; replaceme
   sub("agent-memfs", /(?:~\/)?\.letta\/(?:lc-local-backend\/memfs\/)?agents?\/[A-Za-z0-9._/-]+/g, "<agent memfs>");
   sub("agent-id", /\bagent-[a-f0-9]{6,}(?:-[a-f0-9]+)+\b/g, "<agent id>");
   sub("user", /\b(?:localuser|private-user|chan2saucy|adrianchan|adrian chan)\b/gi, "<user>");
+  for (const id of runtimeUserIdentifiers()) sub("user", new RegExp(`\\b${escapeRegExp(id)}\\b`, "gi"), "<user>");
   sub("project", /\b(?:ProjectX|ExampleCorp)\b/g, "<project>");
   sub("provider-env", /\b(?:ZAI|Z_AI|OPENAI|ANTHROPIC|GLM|MORPH|KIMI|MINIMAX|GEMINI|XAI)_API_KEY\b/g, "PROVIDER_API_KEY");
   return { sanitized: s, replacements };

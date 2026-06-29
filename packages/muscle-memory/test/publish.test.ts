@@ -54,6 +54,28 @@ test("publish preflight: sanitizes identifiers (preserving mechanism), hard-bloc
   expect(publishPlan({ name: "s", description: "Use when relevant in this case", body }).recommended).toBe("stage-sanitized");
 });
 
+test("publish sanitizer redacts runtime user identity, not only project fixtures", () => {
+  const { sanitizeForPublish } = __mm;
+  const originalEnv = { ...process.env };
+  try {
+    process.env.MM_TEST_USERINFO_USERNAME = "jsmith";
+    process.env.MM_TEST_GIT_USER_NAME = "Jane Smith";
+    process.env.MM_TEST_GIT_USER_EMAIL = "jane.smith@example.com";
+
+    const body = "jsmith debugged this with Jane Smith, jane.smith, and jane.smith@example.com in the note.";
+    const { sanitized, replacements } = sanitizeForPublish(body);
+
+    expect(sanitized).not.toContain("jsmith");
+    expect(sanitized).not.toContain("Jane Smith");
+    expect(sanitized).not.toContain("jane.smith@example.com");
+    expect(sanitized).not.toContain("jane.smith");
+    expect(sanitized).toContain("<user>");
+    expect(replacements.some((r) => r.kind === "user")).toBe(true);
+  } finally {
+    process.env = originalEnv;
+  }
+});
+
 // ── security scanner: blocks TRUE threats, allows legitimate destructive workflow ops ────────
 
 test("publish supply chain: tier/dedup/stage/approve/visibility/tamper-guard", () => {
