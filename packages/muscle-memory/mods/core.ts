@@ -251,6 +251,12 @@ export function scanSkillContent(content: string): { ok: boolean; issues: string
   // dry-run and regenerates. Security scanner = true threats (secrets, exfil, pipe-to-shell, injection) only.
   if (Math.ceil(c.length / 4) > 5000) issues.push("body > 5000 tokens (decompose into references/)");
   if (/\bignore\s+(?:all\s+|the\s+)?(?:previous|prior|above)\s+(?:instructions|messages|prompts|rules)\b/i.test(c) || /\b(?:disregard|override)\s+(?:your\s+|the\s+)?(?:system|previous)\s+(?:prompt|instructions)\b/i.test(c)) issues.push("prompt-injection phrasing");
+  // context-escape / role-injection: skill content that closes the mod's own skill wrapper, or impersonates
+  // a system/role turn to issue agent instructions (publish anyway, approve, new instructions). A SKILL.md
+  // body never legitimately contains these — they are attempts to subvert the publish/write gate.
+  if (/<\/?muscle-memory-skill\b/i.test(c)
+      || /(?:<\/?(?:system|assistant|user)>|\[(?:system|assistant)\]\s*:?)\s*[^<\n]{0,80}\b(?:you\s+are\s+now|new\s+instructions?|ignore|disregard|override)\b/i.test(c)
+      || /\bpublish\s+this\s+skill\s+(?:anyway|without\s+review|now\b|regardless)/i.test(c)) issues.push("prompt-injection / context-escape directive");
   // concrete hardcoded API-key/token formats (QA-hardened)
   if (/\b(?:sk-ant-[a-zA-Z0-9-]{8,}|sk-[a-zA-Z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,})\b/.test(c)) issues.push("hardcoded API key/token");
   // credential exfiltration: command-substitution reading secrets, or piping creds to the network
