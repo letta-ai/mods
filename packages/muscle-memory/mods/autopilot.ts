@@ -6,7 +6,7 @@ import { DESTRUCTIVE, RepairChain, buildCrossConversationEvidence, detect, detec
 import { dedupCheck, draftWithRepair, effectivenessVerdict, findCandidate, lintSkillDraft, repairForCandidate, sotaQualityGaps } from "./gate";
 import { publishPlan, publishSkillToCatalog, publishTier } from "./publish";
 import { ENGRAM, engramConsolidate } from "./engram";
-import { loadUsage, retireManagedSkill, skillVerbs, specDrift } from "./lifecycle";
+import { loadUsage, retireManagedSkill, retiredSkillBlocker, skillVerbs, specDrift } from "./lifecycle";
 
 export type AutopilotMode = "off" | "staged" | "auto";
 
@@ -573,6 +573,8 @@ export function graduateStagedSkill(name: string, ctx?: any): string {
   const srcDir = join(STAGED_DIR, nm);
   const src = join(srcDir, "SKILL.md");
   if (!existsSync(src)) throw new Error(`no staged skill '${nm}'`);
+  const retiredBlock = retiredSkillBlocker(nm, ctx);
+  if (retiredBlock) throw new Error(`retire-sticky blocked graduate: ${retiredBlock}`);
   const content = readFileSync(src, "utf8");
   const desc = (content.match(/^description:\s*(.+)$/im)?.[1] || "").trim();
   const body = content.replace(/^---[\s\S]*?\n---\s*\n?/, "");
@@ -656,6 +658,15 @@ export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | 
     const dir = graduate ? agentSkillsDir(ctx) : STAGED_DIR;
     const tagged = res.content.includes(MM_TAG) ? res.content : res.content + `\n<!-- ${MM_TAG}: reflective ${new Date().toISOString().slice(0, 10)}; action=${res.action}; convs=${ev.convs}; ${graduate ? "graduated=true" : "staged=true"} -->\n`;
     try {
+      if (res.action === "create" && !res.updateTarget) {
+        const retiredBlock = retiredSkillBlocker(res.name, ctx);
+        if (retiredBlock) {
+          markHandledReflect(sig, `RETIRED:${res.name}`);
+          appendUiEvent({ phase: "reflect_none", summary: `retire-sticky blocked '${res.name}'` });
+          writeUiState({ phase: "idle", last: `retire-sticky blocked '${res.name}'`, route: "SKIP · retired" });
+          return { action: "none", name: res.name, reason: retiredBlock } as ReviewResult & { wrote?: string };
+        }
+      }
       const oldContent = res.action === "update" && res.updateTarget ? (() => { const d = reviewDirs.find((x) => existsSync(join(x, res.updateTarget!, "SKILL.md"))); return d ? readSkill(d, res.updateTarget!) : undefined; })() : undefined;
       writeSkill(dir, res.name, tagged);
       // EVIDENCE-PACK MANIFEST: provenance next to the skill (not model vibes — a git object).

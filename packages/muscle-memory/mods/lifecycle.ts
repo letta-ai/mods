@@ -49,6 +49,25 @@ export function retireManagedSkill(name: string, reason: string, ctx?: any, abso
 }
 
 
+
+export function retiredSkillBlocker(name: string, ctx?: any): string | null {
+  const nm = slug(String(name || ""));
+  if (!nm) return null;
+  const usage = loadUsage();
+  if (usage?.[nm]?.state === "archived") {
+    return `skill '${nm}' is archived/retired; restore it before recreating or patch an existing replacement`;
+  }
+  for (const d of scanDirs(ctx)) {
+    const retiredRoot = join(d, "_retired");
+    try {
+      if (!existsSync(retiredRoot)) continue;
+      const match = readdirSync(retiredRoot).find((n) => n === nm || n.startsWith(`${nm}-`));
+      if (match) return `skill '${nm}' is retired in ${retiredRoot}/${match}; restore it before recreating`;
+    } catch { /* best-effort guard */ }
+  }
+  return null;
+}
+
 export function runAutonomousPrune(ctx?: any, opts: { maxRetire?: number } = {}): { retired: string[]; retiredPaths: string[]; flagged: string[]; kept: string[] } {
   const maxRetire = Math.max(0, opts.maxRetire ?? 1);
   const usage = loadUsage();

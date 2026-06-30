@@ -39,7 +39,7 @@ import { buildCrossConversationEvidence, classifyError, commandTemplate, correla
 import { auditSkills, buildDiffFragment, candidateDescription, candidateName, crossShelfDuplicates, dedupCheck, draftSkillFromCandidate, draftWithRepair, effectivenessVerdict, findCandidate, lintSkillDraft, repairForCandidate, sotaQualityGaps } from "./gate";
 import { approveStagedPublish, catalogPrivacyScan, findSimilarSkills, liveSkillVisible, publishHardBlocks, publishMetadata, publishPlan, publishSkillToCatalog, publishTier, publishVisibilityReceipt, publishabilityScore, sanitizeForPublish, stageSanitizedPublish } from "./publish";
 import { Defense, ENGRAM, GuardMode, buildDefenses, buildNeocortexBlock, captureTagged, engramConsolidate, expectationFor, guardDecision, interleave, labileSkills, nativeEnabled, preActionDefense, predictionError, renderEngramDigest, replayQueue, reverseReplay, skillRetrieved, syncNeocortexBlock, tagExperience } from "./engram";
-import { CURATOR, aggregateTelemetry, buildRegistry, bumpUsage, churnSignal, coverageMap, curateManagedSkills, curatorPass, isPinned, lifecycleTransition, managedSkillUsage, restoreManagedSkill, retireManagedSkill, runAutonomousPrune, setPinned, skillVerbs, specDrift } from "./lifecycle";
+import { CURATOR, aggregateTelemetry, buildRegistry, bumpUsage, churnSignal, coverageMap, curateManagedSkills, curatorPass, isPinned, lifecycleTransition, managedSkillUsage, restoreManagedSkill, retireManagedSkill, retiredSkillBlocker, runAutonomousPrune, setPinned, skillVerbs, specDrift } from "./lifecycle";
 import { AUTOPILOT_DEFAULT, AutopilotMode, REVIEW_PROMPT, autopilotPlan, buildEvidenceManifest, executeAutopilotPlan, forkAuthor, graduateStagedSkill, isHighConfidenceCreate, loadHandledReflects, managedView, pickUpdateTarget, reflectSignature, retrievePreferences, reviewAndAuthor, runAutopilot, runReflectiveReview, searchSkills, streamChunkText } from "./autopilot";
 import { renderMuscleMemoryPanel, summarizeReflectActions } from "./ui";
 
@@ -524,6 +524,8 @@ export default function activate(letta: any) {
           const repair = repairForCandidate(c);
           const d = draftWithRepair(c, repair);
           const nm = slug(a.name || d.name);
+          const retiredBlock = retiredSkillBlocker(nm, ctx);
+          if (retiredBlock) return { status: "error", content: `retire-sticky blocked: ${retiredBlock}`, candidate: c };
           const desc = String(a.description || d.description);
           const dc = dedupCheck(nm, desc, dirs);
           if (dc.dup) return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.`, candidate: c };
@@ -538,6 +540,8 @@ export default function activate(letta: any) {
         if (a.action === "create") {
           if (!a.name || !a.description || !a.body) return { status: "error", content: "need name, description, body" };
           const nm = slug(a.name);
+          const retiredBlock = retiredSkillBlocker(nm, ctx);
+          if (retiredBlock) return { status: "error", content: `retire-sticky blocked: ${retiredBlock}` };
           const dc = dedupCheck(nm, a.description, dirs);
           if (dc.dup) return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.` };
           const lint = lintSkillDraft({ name: nm, description: a.description, body: a.body });

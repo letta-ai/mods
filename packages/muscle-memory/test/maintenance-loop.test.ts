@@ -4,7 +4,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { join } from "node:path";
 import { searchSkills, pickUpdateTarget } from "../mods/autopilot";
-import { lifecycleTransition } from "../mods/lifecycle";
+import { lifecycleTransition, retiredSkillBlocker } from "../mods/lifecycle";
 import { sanitizeForPublish } from "../mods/publish";
 import { scanSkillContent } from "../mods/core";
 import { crossShelfDuplicates } from "../mods/gate";
@@ -45,3 +45,25 @@ test("maintenance loop · CROSS-SHELF: the same skill diverging across shelves i
   ]);
   expect(drift.some((d) => d.divergent)).toBe(true);
 });
+
+test("maintenance loop · RETIRED-NAME GUARD: quarantine blocks recreate until restore", () => {
+  const prev = process.env.MEMORY_DIR;
+  const mem = mkdtempSync(join(tmpdir(), "mm-retired-guard-"));
+  process.env.MEMORY_DIR = mem;
+  try {
+    const name = "zombie-skill";
+    const retired = join(mem, "skills", "_retired", `${name}-2026-06-30T00-00-00-000Z`);
+    mkdirSync(retired, { recursive: true });
+    writeFileSync(join(retired, "SKILL.md"), `---
+name: ${name}
+description: retired fixture
+---
+<!-- muscle-memory provenance: test -->`);
+    expect(retiredSkillBlocker(name, {})).toContain("is retired in");
+    expect(retiredSkillBlocker("different-skill", {})).toBeNull();
+  } finally {
+    if (prev === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = prev;
+  }
+});
+
