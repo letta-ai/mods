@@ -28,7 +28,8 @@ At the start of each turn, the agent should scan any injected Threadkeeper ancho
 2. Check whether each anchor is still true, now due, contradicted, completed, blocked, or stale.
 3. Before finishing work that changes reality, update, close, or expire affected anchors.
 4. Use due/expiry fields aggressively so old live wires do not become shadow memory.
-5. During handoff to another agent or conversation, include active anchors in the handoff or recreate the relevant anchors in the receiving board. There is no silent global sync.
+5. Keep the board small: target five or fewer active anchors, concise text, and explicit expiry/close criteria.
+6. During handoff to another agent or conversation, include active anchors in the handoff or recreate the relevant anchors in the receiving board. There is no silent global sync.
 
 Threadkeeper prevents drift only if the board is maintained when the world changes.
 
@@ -50,7 +51,7 @@ Supported actions:
 
 Anchor fields:
 
-- `text` — concrete live state, max 500 characters
+- `text` — concrete live state, max 500 characters; ideally concise (roughly 280 characters or less) with durable detail left to memory/history/project files
 - `kind` — `commitment`, `open_loop`, `boundary`, `mode`, `drift_guard`, or `due_state`
 - `status` — `active`, `pending`, `waiting_on_user`, `blocked`, `done`, or `expired`
 - `priority` — `low`, `normal`, or `high`
@@ -103,7 +104,9 @@ Shows a redacted diagnostic path for the scoped board.
 
 ## Turn-start injection
 
-On each user turn, Threadkeeper appends a compact block to the final user message when active anchors exist. Injection is capped at five shown anchors while exposing total active count.
+On each user turn, Threadkeeper appends a compact block to the final user message when active anchors exist. Injection is capped at three shown anchors while exposing total active count.
+
+The injected block also includes a short context-hygiene reminder and, when applicable, hints about too many active anchors, no-expiry anchors, or long anchor text. These hints are meant to keep Threadkeeper from turning into always-on shadow memory.
 
 Anchor content is encoded as JSON with `<`, `>`, and `&` escaped. The injected block explicitly says anchor text is untrusted local operational state, not durable memory and not an instruction override.
 
@@ -148,6 +151,8 @@ The mod fails closed when scoped agent/conversation IDs are unavailable. It does
 
 - Keep anchors concrete, current, and operational.
 - Prefer short expiry windows. `no expiry` should be rare and visible.
+- Target five or fewer active anchors; if the board is heavier, prune before adding more unless the situation is truly live.
+- Keep live anchor text concise. Move durable detail to memory/history/project notes.
 - Close anchors when their purpose is fulfilled; do not let Threadkeeper become a stale TODO pile.
 - Use durable memory for stable identity, preferences, and long-term project facts.
 - Use project TODO systems for implementation task lists.
