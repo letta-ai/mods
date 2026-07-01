@@ -1,0 +1,39 @@
+{
+  "name": "@letta-ai/tool-guard-inspector",
+  "version": "0.1.0",
+  "description": "Letta Code mod that records a lightweight audit view of tool permission decisions.",
+  "author": "Yingzuo Liu",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "tool-guard",
+    "permissions",
+    "audit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/tool-guard-inspector"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "commands",
+      "permissions"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
