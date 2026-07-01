@@ -25,8 +25,7 @@
     "CHANGELOG.md",
     "README.md",
     "LICENSE",
-    "mods",
-    "demo.gif"
+    "mods"
   ],
   "engines": {
     "node": ">=20"
@@ -55,8 +54,7 @@
   "scripts": {
     "test": "bun test test/",
     "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
-    "verify": "npm run transpile && npm run test",
-    "smoke:live": "node scripts/live-smoke.mjs"
+    "verify": "npm run transpile && npm run test"
   },
   "contributors": [
     {

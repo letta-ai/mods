@@ -27,6 +27,8 @@ The first agent earns the lesson. The next agent inherits it.
 
 ![muscle-memory live demo](./demo.gif)
 
+The demo GIF is kept in the repo for PR review and intentionally excluded from the published npm tarball.
+
 ---
 
 ## Why we built this
@@ -329,6 +331,8 @@ muscle-memory helps keep those skills learning, clean, and shareable.
 ---
 
 ## Project structure
+
+Reviewer path: start at `MOD.md`, then read `mods/index.ts` for the Letta surfaces, `mods/autopilot.ts` for the autonomous loop, `mods/gate.ts`/`mods/publish.ts` for safety, and the matching `test/*.test.ts` suites for proof.
 
 ```txt
 mods/core.ts        shared primitives, redaction, state helpers
