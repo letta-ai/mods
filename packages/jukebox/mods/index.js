@@ -405,7 +405,6 @@ function downloadTrack(track) {
       resolve(dest);
       return;
     }
-    writeFileSync(dest, Buffer.alloc(0));
     get(track.url, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode}`));
@@ -415,10 +414,15 @@ function downloadTrack(track) {
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
         try {
-          writeFileSync(dest, Buffer.concat(chunks));
+          const body = Buffer.concat(chunks);
+          if (body.length === 0) throw new Error("empty download");
+          writeFileSync(dest, body);
           touchCacheFile(dest);
           resolve(dest);
-        } catch (e) { reject(e); }
+        } catch (e) {
+          try { unlinkSync(dest); } catch (_) {}
+          reject(e);
+        }
       });
       res.on("error", reject);
     }).on("error", (e) => {
