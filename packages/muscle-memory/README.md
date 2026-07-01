@@ -8,13 +8,7 @@ A Hermes-inspired, Letta-native **Skill Ops** mod — the only Letta mod that tr
 
 Letta already creates, lists, installs, and deletes skills. `muscle-memory` adds the autonomous maintenance layer around those primitives.
 
-> 🛡️ Deterministic safety gates run inside the lifecycle — secrets are blocked before a skill is written or shared, identifiers are sanitized, and pinned skills are protected. See the loop in 10 seconds: `npm run demo:maintenance`.
-
-```bash
-npm run demo:maintenance   # a rotted shared library → deduped, pruned, sanitized, secret-blocked, each with a receipt
-```
-
-A controlled demonstration — library rots without management, stays clean with it. Honest scope + five integration tests live in [`demo-story/maintenance-loop/`](./demo-story/maintenance-loop/).
+> 🛡️ Deterministic safety gates run inside the lifecycle — secrets are blocked before a skill is written or shared, identifiers are sanitized, and pinned skills are protected. The public package keeps the runtime surface lean; validation lives in the test suite.
 
 Try it in 30 seconds — opt-in, staged-first, default off:
 
@@ -305,28 +299,27 @@ The public claim is intentionally small: a working, opt-in Skill Ops loop with e
 ```bash
 npm run verify
 npm pack --dry-run
-npm run demo:maintenance
 ```
 
 Current gate:
 
 ```txt
-60 pass
-0 fail
-LIFECYCLE VERIFIED
+source bundle passes
+core test suite passes
+pack dry-run includes only the lean runtime surface plus the core demo GIF
 ```
 
 Verify covers:
 
 - bundle/transpile
-- 11-file test suite
+- core test suite
 - reliability fallback: no silent empty/sub-threshold skill writes
 - adversarial secret-format tests across code/JSON/markdown/shell
 - MemFS-first and agent-local shelf boundary
-- controlled maintenance-loop demo
+- lifecycle maintenance regression tests
 - publish/sanitize/visibility receipts
 
-Deeper benchmark experiments exist as internal development receipts. The public surface stays focused on the shipped mod.
+Deeper demo, benchmark, and evaluation artifacts exist as internal development receipts. The public surface stays focused on the shipped mod.
 
 ```txt
 Letta gives agents durable memory and skills.
@@ -360,7 +353,7 @@ Known boundaries — these are Bounded, not Verified:
 - **Distillation quality is shared ground.** We do not claim a stronger skill primitive than Letta. The wedge is autonomy + maintenance, not skill-writing quality.
 - **Routing/dedup is lexical.** It catches exact/strong-lexical duplicates, but semantic-only duplicate catch is not solved.
 - **Secret scanning is regex-based on known formats.** It does not catch split/concatenated tokens or base64-ish / unlabeled high-entropy secrets. For standalone write-time secret scanning, dedicated mods (for example, `secrets-scanning`) go deeper; `muscle-memory`'s secret-block is a publish/write-path gate **within the lifecycle**, not a full DLP scanner.
-- **Maintenance-at-scale is unproven.** The maintenance loop is shown in a controlled demo and on this build's own library, not validated at scale on a real recurring workload.
+- **Maintenance-at-scale is unproven.** The maintenance loop has regression coverage and internal dogfood receipts, but is not validated at scale on a real recurring workload.
 - **Extraction-at-scale is untested.** Whether repair-chain extraction helps more than raw-log authoring on large noisy substrate is open.
 - **The raw-noise proxy is a health/regression signal, not a win claim.**
 - Full improvement router is roadmap, not shipped.

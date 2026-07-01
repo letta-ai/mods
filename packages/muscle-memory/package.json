@@ -26,9 +26,7 @@
     "README.md",
     "LICENSE",
     "mods",
-    "test",
-    "scripts",
-    "demo-story"
+    "demo.gif"
   ],
   "engines": {
     "node": ">=20"
@@ -56,14 +54,9 @@
   },
   "scripts": {
     "test": "bun test test/",
-    "bench": "bun run test/engram.bench.ts",
-    "eval": "bun run test/engram.eval.ts",
-    "demo": "bun run test/engram.demo.ts",
     "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
-    "verify": "npm run transpile && npm run test && npm run bench && npm run eval && npm run demo",
-    "demo:story": "node demo-story/demo-story.mjs",
-    "smoke:live": "node scripts/live-smoke.mjs",
-    "demo:maintenance": "bun run demo-story/maintenance-loop/run.ts"
+    "verify": "npm run transpile && npm run test",
+    "smoke:live": "node scripts/live-smoke.mjs"
   },
   "contributors": [
     {
