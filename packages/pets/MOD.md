@@ -34,5 +34,5 @@ The animation returns to idle after activity stops.
 
 - The mod only writes to its own UI panel.
 - The mod does not modify turn input or tool arguments.
-- The mod uses only public command, event, and panel APIs.
+- The mod uses only public command, event, and current render-based panel APIs.
 - All timers, event handlers, and panels are cleaned up on unload.
