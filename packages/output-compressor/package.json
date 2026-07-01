@@ -1,0 +1,35 @@
+{
+  "name": "@letta-ai/output-compressor",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that compresses large tool outputs (Bash, Read, web fetches) before the model sees them, reversibly.",
+  "author": "nicolasmn",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "compression",
+    "context",
+    "tokens",
+    "tool-output"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/output-compressor"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["tools", "events.tools"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.16"
+    }
+  }
+}
