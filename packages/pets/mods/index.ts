@@ -195,11 +195,14 @@ export default function activate(letta: any) {
       return;
     }
 
-    const content = rightPad(renderLines());
     if (!panel) {
-      panel = letta.ui.openPanel({ id: "pets", order: 10_000, content });
+      panel = letta.ui.openPanel({
+        id: "pets",
+        order: 10_000,
+        render: () => rightPad(renderLines()),
+      });
     } else {
-      panel.update({ content });
+      panel.update();
     }
   };
 
