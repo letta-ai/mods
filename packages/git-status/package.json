@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/git-status",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Letta Code statusline mod that shows the current git branch, dirty/clean state, file counts, and ahead/behind.",
   "author": "christinatong",
   "license": "Apache-2.0",
@@ -24,10 +24,14 @@
   ],
   "letta": {
     "manifestVersion": 1,
-    "mods": ["./mods/index.tsx"],
-    "capabilities": ["ui.statusline", "ui.statusValues"],
+    "mods": [
+      "./mods/index.tsx"
+    ],
+    "capabilities": [
+      "ui.panels"
+    ],
     "engines": {
-      "lettaCodeCli": ">=0.27.14"
+      "lettaCodeCli": ">=0.27.20"
     }
   }
 }

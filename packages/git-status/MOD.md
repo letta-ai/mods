@@ -44,14 +44,14 @@ Uses `windowsHide` so no console window flashes on Windows.
 - Only read-only git commands are run; the mod never mutates the repository.
 - Git invocations use a short timeout and swallow errors, degrading to a cleared segment.
 - Timers and status values are cleaned up when the mod is disposed.
-- Optional UI APIs are capability-guarded (`ui.customStatuslineRenderer`, `ui.statusValues`).
+- Panel UI is capability-guarded (`ui.panels`).
 
 ## Adaptation notes for agents
 
 - Keep polling lightweight; raise `REFRESH_MS` if a large repo makes `git status` slow.
 - To add line-level churn, layer in `git diff --numstat` / `--cached --numstat` and a
   sparkline; this mod intentionally stays at the file + branch level.
-- The custom statusline owns the full idle row — if composing with other statusline data,
-  merge it into this renderer rather than registering a second renderer.
+- The order-0 panel owns the full idle row — if composing with other statusline data,
+  merge it into this panel rather than registering a second order-0 panel.
 - Porcelain v2 is required for the branch/ahead-behind headers; do not downgrade to v1
   without re-deriving branch and upstream separately.
