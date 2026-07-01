@@ -1,8 +1,8 @@
 {
-  "name": "@letta-ai/git-status",
-  "version": "0.1.1",
-  "description": "Letta Code statusline mod that shows the current git branch, dirty/clean state, file counts, and ahead/behind.",
-  "author": "christinatong",
+  "name": "@letta-ai/conversation-summary",
+  "version": "0.1.0",
+  "description": "Letta Code statusline mod that shows the current conversation summary.",
+  "author": "carenthomas",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
@@ -10,12 +10,12 @@
     "letta-mod",
     "letta-code",
     "statusline",
-    "git"
+    "conversation-summary"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/letta-ai/mods.git",
-    "directory": "packages/git-status"
+    "directory": "packages/conversation-summary"
   },
   "files": [
     "README.md",
@@ -24,12 +24,8 @@
   ],
   "letta": {
     "manifestVersion": 1,
-    "mods": [
-      "./mods/index.tsx"
-    ],
-    "capabilities": [
-      "ui.panels"
-    ],
+    "mods": ["./mods/index.tsx"],
+    "capabilities": ["ui.panels", "events.lifecycle"],
     "engines": {
       "lettaCodeCli": ">=0.27.20"
     }

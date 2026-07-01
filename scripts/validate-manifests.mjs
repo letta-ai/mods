@@ -13,6 +13,8 @@ const knownCapabilities = new Set([
   "events.lifecycle",
   "events.turns",
   "events.tools",
+  "events.llm",
+  "events.compact",
   "ui.panels",
   "ui.statusValues",
   "ui.statusline",
