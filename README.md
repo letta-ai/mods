@@ -66,6 +66,7 @@ Mods are organized as npm packages under `packages/`:
 ```txt
 packages/
 ├── analysis-mode/        # Phrase-triggered diagnostic analysis mode
+├── environment-compass/  # Read-only environment and git orientation
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── memfs-search/         # Agent-callable MemFS memory search
@@ -83,6 +84,7 @@ scripts/
 ## Current Mods
 
 - **analysis-mode** - Phrase-triggered diagnostic mode using turn reminders and local state
+- **environment-compass** - Read-only environment and git orientation for local/remote runtimes
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
