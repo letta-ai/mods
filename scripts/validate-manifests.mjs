@@ -16,8 +16,6 @@ const knownCapabilities = new Set([
   "events.llm",
   "events.compact",
   "ui.panels",
-  "ui.statusValues",
-  "ui.statusline",
 ]);
 const modExtensions = new Set([".js", ".mjs", ".ts", ".tsx"]);
 
