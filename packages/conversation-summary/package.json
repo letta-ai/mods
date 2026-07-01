@@ -1,0 +1,33 @@
+{
+  "name": "@letta-ai/conversation-summary",
+  "version": "0.1.0",
+  "description": "Letta Code statusline mod that shows the current conversation summary.",
+  "author": "carenthomas",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "statusline",
+    "conversation-summary"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/conversation-summary"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.tsx"],
+    "capabilities": ["ui.panels", "events.lifecycle"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.20"
+    }
+  }
+}
