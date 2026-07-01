@@ -37,11 +37,10 @@
       "tools",
       "events.lifecycle",
       "events.turns",
-      "ui.panels",
-      "ui.statusValues"
+      "ui.panels"
     ],
     "engines": {
-      "lettaCodeCli": ">=0.27.17"
+      "lettaCodeCli": ">=0.27.20"
     }
   }
 }

@@ -114,14 +114,7 @@ Only active, non-expired anchors inject. Anchors are sorted by due state, due ti
 
 ## UI behavior
 
-When UI status values are available, Threadkeeper sets a status value such as:
-
-```text
-tk:1
-tk:3/1due
-```
-
-When panel UI is available, `/threadkeeper panel` opens a compact board panel.
+When panel UI is available, `/threadkeeper panel` opens a compact board panel. The panel uses the current `ui.panels` render API and refreshes while it remains open.
 
 ## State
 

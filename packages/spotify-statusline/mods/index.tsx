@@ -6,13 +6,17 @@ const REFRESH_MS = 5_000;
 const OSC = "\u001B]8;;";
 const ST = "\u001B\\";
 
+type SpotifyStatus =
+  | { state: "playing"; href: string; track: string }
+  | { state: "paused" }
+  | { state: "stopped" };
+
 function terminalLink(label: string, href: string) {
   return `${OSC}${href}${ST}${label}${OSC}${ST}`;
 }
 
-async function updateSpotify(letta: any) {
-  try {
-    const script = `
+async function readSpotifyStatus(): Promise<SpotifyStatus> {
+  const script = `
 if application "Spotify" is running then
   tell application "Spotify"
     set playerState to player state as string
@@ -31,54 +35,61 @@ else
   return "stopped|"
 end if
 `;
-    const { stdout } = await execFileAsync("osascript", ["-e", script], { timeout: 1_500 });
-    const [state, track = "", href = ""] = stdout.trim().split("|", 3);
+  const { stdout } = await execFileAsync("osascript", ["-e", script], {
+    timeout: 1_500,
+  });
+  const [state, track = "", href = ""] = stdout.trim().split("|", 3);
 
-    if (state === "playing" && track.trim()) {
-      const label = `🎧 ${track.trim()}`;
-      letta.ui.setStatus("spotify", href.trim() ? terminalLink(label, href.trim()) : label);
-    } else if (state === "paused") {
-      letta.ui.setStatus("spotify", "🎧 paused");
-    } else {
-      letta.ui.clearStatus("spotify");
-    }
-  } catch {
-    letta.ui.clearStatus("spotify");
+  if (state === "playing" && track.trim()) {
+    return { state: "playing", href: href.trim(), track: track.trim() };
   }
+  if (state === "paused") return { state: "paused" };
+  return { state: "stopped" };
+}
+
+function spotifyLabel(status: SpotifyStatus): string {
+  if (status.state === "playing") {
+    const label = `🎧 ${status.track}`;
+    return status.href ? terminalLink(label, status.href) : label;
+  }
+  if (status.state === "paused") return "🎧 paused";
+  return "";
 }
 
 export default function activate(letta: any) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui?.panels) return;
+
+  let spotifyStatus: SpotifyStatus = { state: "stopped" };
+
+  const panel = letta.ui.openPanel({
+    id: "spotify-statusline",
+    order: 0,
+    render({ width, agent, model, row, chalk }: any) {
+      const left = spotifyLabel(spotifyStatus);
+      const right = `${chalk.hex("#8b5cf6")(agent.name ?? "Letta")}${chalk.dim(
+        ` · ${model.displayName ?? model.id ?? "unknown"}`,
+      )}`;
+      return row(left ? chalk.hex("#1DB954")(left) : "", right, width);
+    },
+  });
 
   const update = () => {
-    if (!letta.capabilities.ui.statusValues) return;
-    void updateSpotify(letta);
+    void readSpotifyStatus()
+      .then((status) => {
+        spotifyStatus = status;
+        panel.update();
+      })
+      .catch(() => {
+        spotifyStatus = { state: "stopped" };
+        panel.update();
+      });
   };
-
-  letta.ui.setStatuslineRenderer((context: any) => {
-    const { Box, Text } = context.components;
-    const model = context.model.displayName ?? context.model.id ?? "unknown";
-
-    return (
-      <Box flexDirection="row" marginBottom={1}>
-        <Box flexGrow={1} paddingRight={1}>
-          {context.statuses.spotify ? <Text color="#1DB954">{context.statuses.spotify}</Text> : null}
-        </Box>
-        <Text>
-          <Text color="#8b5cf6">{context.agent.name ?? "Letta"}</Text>
-          <Text dimColor>{` · ${model}`}</Text>
-        </Text>
-      </Box>
-    );
-  });
 
   update();
   const timer = setInterval(update, REFRESH_MS);
 
   return () => {
     clearInterval(timer);
-    if (letta.capabilities.ui.statusValues) {
-      letta.ui.clearStatus("spotify");
-    }
+    panel.close();
   };
 }

@@ -13,7 +13,6 @@ const MAX_BOARD_BYTES = 256 * 1024;
 const MAX_TEXT_LENGTH = 500;
 const CONCISE_TEXT_LENGTH = 280;
 const MAX_NOTES_LENGTH = 1000;
-const STATUS_KEY = "threadkeeper";
 
 const KINDS = new Set(["commitment", "open_loop", "boundary", "mode", "drift_guard", "due_state"]);
 const STATUSES = new Set(["active", "pending", "waiting_on_user", "blocked", "done", "expired"]);
@@ -481,13 +480,6 @@ function renderBoard(board, options = {}) {
   return lines.join("\n");
 }
 
-function statusText(board) {
-  const at = new Date();
-  const active = activeAnchors(board, at);
-  const due = active.filter((anchor) => isDue(anchor, at)).length;
-  return due ? `tk:${active.length}/${due}due` : `tk:${active.length}`;
-}
-
 function safeJson(value) {
   return JSON.stringify(value, null, 2)
     .replaceAll("<", "\\u003c")
@@ -507,16 +499,6 @@ function injectionAnchor(anchor, at = new Date()) {
     expires_at: anchor.expires_at || null,
     source: anchor.source,
   };
-}
-
-async function updateStatus(letta, ctx, event = {}) {
-  if (!letta.capabilities.ui?.statusValues) return;
-  try {
-    const board = await loadBoard(ctx, event);
-    letta.ui.setStatus(STATUS_KEY, statusText(board));
-  } catch {
-    letta.ui.setStatus(STATUS_KEY, "tk:err");
-  }
 }
 
 function activeReminder(board) {
@@ -803,13 +785,44 @@ export default function activate(letta) {
     currentPanel = null;
   };
 
+  let currentPanelLines = [];
+
+  const setPanelContent = (content) => {
+    currentPanelLines = String(content).split("\n").slice(0, 60);
+    try {
+      currentPanel?.update?.();
+    } catch {
+      // Ignore panel update failures; panels are optional UI.
+    }
+  };
+
+  const panelContent = (ctx, event, board, options = {}) => {
+    const { agentId, conversationId } = contextIds(ctx, event);
+    return [
+      `Threadkeeper for ${agentId}/${conversationId}`,
+      "",
+      renderBoard(board, options),
+    ].join("\n");
+  };
+
+  const refreshPanel = async (ctx, event = {}) => {
+    if (!currentPanel) return;
+    try {
+      const board = await loadBoard(ctx, event);
+      setPanelContent(panelContent(ctx, event, board));
+    } catch (error) {
+      setPanelContent(`Threadkeeper error: ${error?.message || String(error)}`);
+    }
+  };
+
   const maybeOpenPanel = (content) => {
     if (!letta.capabilities.ui?.panels) return false;
     closePanel();
+    currentPanelLines = String(content).split("\n").slice(0, 60);
     currentPanel = letta.ui.openPanel({
       id: MOD_ID,
       order: 80,
-      content: String(content).split("\n").slice(0, 60),
+      render: () => currentPanelLines,
     });
     return true;
   };
@@ -825,7 +838,7 @@ export default function activate(letta) {
         parallelSafe: false,
         async run(ctx) {
           const result = await performAction(ctx, ctx.args || {});
-          await updateStatus(letta, ctx);
+          await refreshPanel(ctx);
           return result;
         },
       }),
@@ -849,14 +862,13 @@ export default function activate(letta) {
 
             if (["list", "ls", "all", ""].includes(subcommand)) {
               const board = await loadBoard(ctx);
-              await updateStatus(letta, ctx);
+              await refreshPanel(ctx);
               return { type: "output", output: renderBoard(board, { all: subcommand === "all" || tokens.includes("all") }) };
             }
 
             if (subcommand === "panel") {
               const board = await loadBoard(ctx);
-              const rendered = [`Threadkeeper for ${contextIds(ctx).agentId}/${contextIds(ctx).conversationId}`, "", renderBoard(board, { all: tokens.includes("all") })].join("\n");
-              await updateStatus(letta, ctx);
+              const rendered = panelContent(ctx, {}, board, { all: tokens.includes("all") });
               if (maybeOpenPanel(rendered)) return { type: "handled" };
               return { type: "output", output: `${rendered}\n\nPanel UI is not available in this Letta surface.` };
             }
@@ -874,7 +886,7 @@ export default function activate(letta) {
                 if (limitError) return { type: "output", output: limitError };
                 board.anchors.push(anchor);
                 await saveBoard(ctx, board);
-                await updateStatus(letta, ctx);
+                await refreshPanel(ctx);
                 return { type: "output", output: `Added anchor ${shortId(anchor.id)}.\n\n${renderBoard(board)}` };
               });
             }
@@ -889,7 +901,7 @@ export default function activate(letta) {
                 const updated = normalizeAnchor(updateAnchorFromCommand(found.anchor, tokens), found.anchor);
                 board.anchors = board.anchors.map((item) => item.id === found.anchor.id ? updated : item);
                 await saveBoard(ctx, board);
-                await updateStatus(letta, ctx);
+                await refreshPanel(ctx);
                 return { type: "output", output: `Updated anchor ${shortId(updated.id)}.\n\n${renderBoard(board)}` };
               });
             }
@@ -898,7 +910,7 @@ export default function activate(letta) {
               const id = tokens.shift();
               const reason = tokens.join(" ").trim() || "closed from /threadkeeper";
               const result = await performAction(ctx, { action: "close", id, reason });
-              await updateStatus(letta, ctx);
+              await refreshPanel(ctx);
               if (!result.ok) return { type: "output", output: result.error };
               return { type: "output", output: `Closed anchor ${shortId(result.anchor.id)}.\n\n${renderBoard(await loadBoard(ctx))}` };
             }
@@ -906,14 +918,14 @@ export default function activate(letta) {
             if (["drop", "delete", "rm"].includes(subcommand)) {
               const id = tokens.shift();
               const result = await performAction(ctx, { action: "delete", id });
-              await updateStatus(letta, ctx);
+              await refreshPanel(ctx);
               if (!result.ok) return { type: "output", output: result.error };
               return { type: "output", output: `Deleted anchor ${shortId(result.id)}.\n\n${renderBoard(await loadBoard(ctx))}` };
             }
 
             if (["clear-expired", "clear_expired", "sweep"].includes(subcommand)) {
               const result = await performAction(ctx, { action: "clear_expired" });
-              await updateStatus(letta, ctx);
+              await refreshPanel(ctx);
               return { type: "output", output: `Removed ${result.removed} expired anchor${result.removed === 1 ? "" : "s"}.\n\n${renderBoard(await loadBoard(ctx), { all: true })}` };
             }
 
@@ -928,9 +940,8 @@ export default function activate(letta) {
 
   if (letta.capabilities.events?.lifecycle) {
     disposers.push(
-      letta.events.on("conversation_open", async (event, ctx) => {
+      letta.events.on("conversation_open", () => {
         closePanel();
-        await updateStatus(letta, ctx, event);
       }),
     );
   }
@@ -938,7 +949,7 @@ export default function activate(letta) {
   if (letta.capabilities.events?.turns) {
     disposers.push(
       letta.events.on("turn_start", async (event, ctx) => {
-        await updateStatus(letta, ctx, event);
+        await refreshPanel(ctx, event);
         let board;
         try {
           board = await loadBoard(ctx, event);
@@ -955,6 +966,5 @@ export default function activate(letta) {
   return () => {
     for (const dispose of disposers.reverse()) dispose();
     closePanel();
-    if (letta.capabilities.ui?.statusValues) letta.ui.clearStatus(STATUS_KEY);
   };
 }

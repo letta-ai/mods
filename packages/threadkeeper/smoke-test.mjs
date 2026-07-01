@@ -12,24 +12,25 @@ async function main() {
   process.env.THREADKEEPER_DATA_DIR = dataDir;
 
   const registered = { tools: [], commands: [], events: [] };
-  const statuses = new Map();
   const panels = [];
   const letta = {
     capabilities: {
       tools: true,
       commands: true,
       events: { lifecycle: true, turns: true },
-      ui: { panels: true, statusValues: true },
+      ui: { panels: true },
     },
     tools: { register(def) { registered.tools.push(def); return () => {}; } },
     commands: { register(def) { registered.commands.push(def); return () => {}; } },
     events: { on(name, fn) { registered.events.push({ name, fn }); return () => {}; } },
     ui: {
-      setStatus(key, value) { statuses.set(key, value); },
-      clearStatus(key) { statuses.delete(key); },
       openPanel(panel) {
+        assert(typeof panel.render === "function", "panel uses render API");
         panels.push(panel);
-        return { update(next) { Object.assign(panel, next); }, close() { panel.closed = true; } };
+        return {
+          update() { panel.updates = (panel.updates || 0) + 1; },
+          close() { panel.closed = true; },
+        };
       },
     },
   };
@@ -58,7 +59,11 @@ async function main() {
   output = await command.run({ ...ctx, args: "add \"No extra reminders unless asked\" --kind boundary --ttl 7d" });
   assert(output.output.includes("Added anchor"), "add command acknowledges anchor");
   assert(output.output.includes("No extra reminders"), "add output includes anchor text");
-  assert(statuses.get("threadkeeper") === "tk:1", "status count updated");
+
+  output = await command.run({ ...ctx, args: "panel" });
+  assert(output.type === "handled", "panel command opens panel when UI is available");
+  assert(panels.length === 1, "panel registered");
+  assert(panels[0].render().join("\n").includes("No extra reminders"), "panel renders anchor text");
 
   let listed = await tool.run({ ...ctx, args: { action: "list" } });
   assert(listed.ok, "tool list ok");
@@ -167,7 +172,7 @@ async function main() {
   assert(bigListed.active_count === 0, "storage pressure test leaves no active anchors");
 
   dispose?.();
-  assert(!statuses.has("threadkeeper"), "dispose clears status");
+  assert(panels[0].closed === true, "dispose closes panel");
   await rm(dataDir, { recursive: true, force: true });
   console.log("Threadkeeper smoke tests passed.");
 }

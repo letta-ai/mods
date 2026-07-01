@@ -6,8 +6,6 @@ Goal mode keeps a user-provided objective active across turns. The agent receive
 
 ## Install
 
-Once npm mod install support is available:
-
 ```bash
 letta install npm:@letta-ai/goal-mode
 ```
@@ -54,6 +52,6 @@ LETTA_DISABLE_MODS=1 letta
 
 ## Notes
 
-This package is based on the goal-mode bundled-extension reference from Letta Code. It is implemented as a standalone mod package, so it stores state locally instead of importing Letta Code internals.
+This package is implemented as a standalone mod package, so it stores state locally instead of importing Letta Code internals.
 
 See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.

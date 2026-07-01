@@ -2,7 +2,7 @@
 
 A shared repository for Letta Code mods: trusted local code packages that let agents adapt the harness with tools, slash commands, lifecycle events, permissions, providers, and lightweight UI surfaces.
 
-Mods are meant to be easy for agents and developers to inspect, adapt, package, and share. This repository contains first-party packages, examples, and curation for the mod ecosystem.
+Mods are meant to be easy for agents and developers to inspect, adapt, package, and share. This repository contains first-party packages and curation for the mod ecosystem.
 
 > [!IMPORTANT]
 > The easiest way to use a published mod is with Letta Code:
@@ -26,7 +26,7 @@ This repository contains **mods**: modular packages of trusted local code that e
 - **UI Surfaces:** panels, status values, and statusline integrations
 
 **How it grows:**
-- First-party examples define package conventions
+- First-party packages define package conventions
 - Agents and developers adapt mods to real workflows
 - Useful local experiments graduate into reusable packages
 - Published packages are discoverable through npm metadata and the Letta Code catalog
@@ -57,7 +57,7 @@ cd mods
 npm run validate
 ```
 
-This repository is **source, examples, and curation**. It is not a package registry. The current package registry is npm; published mod packages use normal npm metadata plus a Letta-specific manifest in `package.json` under the `letta` key.
+This repository is **source, packages, and curation**. It is not a package registry. The current package registry is npm; published mod packages use normal npm metadata plus a Letta-specific manifest in `package.json` under the `letta` key.
 
 ## Repository Structure
 
@@ -66,12 +66,15 @@ Mods are organized as npm packages under `packages/`:
 ```txt
 packages/
 ├── analysis-mode/        # Phrase-triggered diagnostic analysis mode
+├── conversation-summary/ # Conversation summary statusline
+├── environment-compass/  # Read-only environment and git orientation
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── memfs-search/         # Agent-callable MemFS memory search
 ├── plan-mode/            # Plan-mode style workflow
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
 ├── threadkeeper/         # Live operational anchors for commitments and open loops
+├── tool-guard-inspector/ # Tool permission audit log and slash command
 ├── user-timestamps/      # Adds local timestamp metadata to user messages
 └── web-search/           # Provider-backed web search tools
 
@@ -84,12 +87,15 @@ scripts/
 ## Current Mods
 
 - **analysis-mode** - Phrase-triggered diagnostic mode using turn reminders and local state
+- **conversation-summary** - Current conversation summary/title statusline
+- **environment-compass** - Read-only environment and git orientation for local/remote runtimes
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **spotify-statusline** - macOS Spotify now-playing statusline
 - **threadkeeper** - Live operational anchors for commitments, open loops, temporary boundaries, modes, drift guards, and due state
+- **tool-guard-inspector** - Tool permission audit log using a lightweight permission policy and slash command
 - **user-timestamps** - Adds local timestamp metadata to every user message
 - **web-search** - Provider-backed web search tools using agent-scoped secrets
 
@@ -126,7 +132,7 @@ Packages should use the `letta-package` keyword so they can be discovered by the
 All agents and humans are welcome to contribute useful mods and improvements.
 
 **What to contribute:**
-- **Harness Extensions:** tools, commands, events, providers, permissions, or UI surfaces that solve a real workflow problem
+- **Runtime Capabilities:** tools, commands, events, providers, permissions, or UI surfaces that solve a real workflow problem
 - **Validated Patterns:** mod structures that worked across actual usage
 - **Safety Improvements:** clearer permissions, recovery paths, or safer defaults
 - **Documentation:** better README/MOD guidance for humans and agents
@@ -163,5 +169,5 @@ npm run validate
 
 - [Letta Code](https://github.com/letta-ai/letta-code)
 - [Letta Code docs](https://docs.letta.com/letta-code)
-- [Letta Code mods catalog](https://letta-code-homepage.pages.dev/agents/mods/)
+- [Letta Code mods catalog](https://www.letta.com/agent/mods)
 - [Letta skills repository](https://github.com/letta-ai/skills)

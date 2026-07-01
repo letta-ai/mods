@@ -8,8 +8,6 @@ A Letta Code statusline mod that shows the currently playing Spotify track on ma
 
 ## Install
 
-Once npm mod install support is available:
-
 ```bash
 letta install npm:@letta-ai/spotify-statusline
 ```
@@ -24,7 +22,7 @@ Then reload local mods:
 
 - macOS Spotify now-playing statusline segment
 - paused-state indicator
-- fallback right-side agent/model display
+- panel-based primary statusline with fallback right-side agent/model display
 
 ## Behavior
 
@@ -38,7 +36,7 @@ Then reload local mods:
 
 - macOS
 - Spotify desktop app
-- Letta Code with custom statusline mod support
+- Letta Code `>=0.27.18` with panel-based statusline support
 
 ## Safety
 

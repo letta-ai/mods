@@ -1,7 +1,7 @@
 {
   "name": "@letta-ai/goal-mode",
   "version": "0.1.0",
-  "description": "Example Letta Code mod package that adds goal mode with goal commands, tools, and turn reminders.",
+  "description": "Letta Code mod package that adds goal mode with goal commands, tools, and turn reminders.",
   "author": "kl2806",
   "license": "Apache-2.0",
   "type": "module",

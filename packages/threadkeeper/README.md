@@ -20,7 +20,6 @@ The point is not “better memory.” The point is **operational continuity with
 - Model-callable tool: `threadkeeper_update`
 - Slash command: `/threadkeeper`
 - Optional panel display when panel UI is available
-- Optional status value: `tk:<active-count>` or `tk:<active>/<due>due`
 - Turn-start injection of up to three active anchors as escaped JSON
 - Context-hygiene hints when the live board gets heavy: target ≤5 active anchors, concise text, and expiry/close criteria
 - Local JSON storage scoped by agent and conversation; fails closed when scope is missing
