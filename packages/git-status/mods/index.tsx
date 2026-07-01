@@ -165,74 +165,51 @@ function formatSegment(state: GitState): string {
 }
 
 export default function activate(letta: any) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui?.panels) return;
 
   let latest: GitState | null = null;
-  // The live working directory is provided by the statusline render context
+  // The live working directory is provided by the panel render context
   // (ModContext.cwd), which tracks the session's current directory. The host
   // `letta` object does not expose a workspace, so we capture cwd at render
   // time and let the poll loop read the latest value.
   let currentCwd = process.cwd();
 
-  const update = async () => {
-    if (!letta.capabilities.ui.statusValues) return;
+  const panel = letta.ui.openPanel({
+    id: "git-status",
+    order: 0,
+    render({ width, cwd, agent, model, row, chalk }: any) {
+      // Track the live cwd from the render context so polling follows the
+      // session's current directory rather than the launch directory.
+      if (typeof cwd === "string" && cwd) {
+        currentCwd = cwd;
+      }
 
-    let state: GitState | null = null;
-    try {
-      state = await readGitState(currentCwd);
-    } catch {
-      state = null;
-    }
+      const dirty =
+        !!latest &&
+        latest.added + latest.modified + latest.deleted > 0;
+      const segment = latest ? formatSegment(latest) : "";
+      const left = segment ? chalk[dirty ? "yellow" : "green"](segment) : "";
+      const modelLabel = model.displayName ?? model.id ?? "unknown";
+      const right = chalk.dim(`${agent.name ?? "Letta"} · ${modelLabel}`);
 
-    latest = state;
-    if (!state) {
-      letta.ui.clearStatus("git");
-      return;
-    }
-
-    letta.ui.setStatus("git", formatSegment(state));
-  };
-
-  letta.ui.setStatuslineRenderer((context: any) => {
-    const { Box, Text } = context.components;
-    const model = context.model.displayName ?? context.model.id ?? "unknown";
-
-    // Track the live cwd from the render context so polling follows the
-    // session's current directory rather than the launch directory.
-    if (typeof context.cwd === "string" && context.cwd) {
-      currentCwd = context.cwd;
-    }
-
-    const dirty =
-      !!latest &&
-      latest.added + latest.modified + latest.deleted > 0;
-
-    return (
-      <Box justifyContent="space-between" width="100%">
-        <Box>
-          {context.statuses.git ? (
-            <Text color={dirty ? "yellow" : "green"}>
-              {context.statuses.git}
-            </Text>
-          ) : null}
-        </Box>
-        <Box>
-          <Text dimColor>
-            {context.agent.name ?? "Letta"}
-            {` · ${model}`}
-          </Text>
-        </Box>
-      </Box>
-    );
+      return row(left, right, width);
+    },
   });
+
+  const update = async () => {
+    try {
+      latest = await readGitState(currentCwd);
+    } catch {
+      latest = null;
+    }
+    panel.update();
+  };
 
   void update();
   const timer = setInterval(() => void update(), REFRESH_MS);
 
   return () => {
     clearInterval(timer);
-    if (letta.capabilities.ui.statusValues) {
-      letta.ui.clearStatus("git");
-    }
+    panel.close();
   };
 }
