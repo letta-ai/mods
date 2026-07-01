@@ -1,0 +1,35 @@
+{
+  "name": "@letta-ai/jukebox",
+  "version": "0.1.0",
+  "description": "Letta Code terminal jukebox that plays Jamendo Creative Commons music with an animated now-playing panel.",
+  "author": "homebodify",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "jukebox",
+    "music",
+    "jamendo",
+    "terminal-ui"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/jukebox"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.js"],
+    "capabilities": ["commands", "ui.panels"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.20"
+    }
+  }
+}
