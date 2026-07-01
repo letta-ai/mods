@@ -73,6 +73,7 @@ packages/
 ├── memfs-search/         # Agent-callable MemFS memory search
 ├── plan-mode/            # Plan-mode style workflow
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
+├── threadkeeper/         # Live operational anchors for commitments and open loops
 ├── tool-guard-inspector/ # Tool permission audit log and slash command
 ├── user-timestamps/      # Adds local timestamp metadata to user messages
 └── web-search/           # Provider-backed web search tools
@@ -93,6 +94,7 @@ scripts/
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **spotify-statusline** - macOS Spotify now-playing statusline
+- **threadkeeper** - Live operational anchors for commitments, open loops, temporary boundaries, modes, drift guards, and due state
 - **tool-guard-inspector** - Tool permission audit log using a lightweight permission policy and slash command
 - **user-timestamps** - Adds local timestamp metadata to every user message
 - **web-search** - Provider-backed web search tools using agent-scoped secrets
