@@ -347,7 +347,14 @@ export let livePanel: any = null; // set in activate(); lets state changes re-re
 
 export function setLivePanel(p: any) { livePanel = p; } // setter so the entry module can wire the panel across the module boundary
 
-export function writeUiState(s: Record<string, unknown>) { try { ensureDir(); writeFileSync(UI_STATE, JSON.stringify({ ...readUiState(), ...s, ts: Date.now() })); } catch { /* */ } try { livePanel?.update(); } catch { /* */ } }
+let panelUpdatePending = false;
+export function writeUiState(s: Record<string, unknown>) {
+  try { ensureDir(); writeFileSync(UI_STATE, JSON.stringify({ ...readUiState(), ...s, ts: Date.now() })); } catch { /* */ }
+  if (livePanel && !panelUpdatePending) {
+    panelUpdatePending = true;
+    setTimeout(() => { panelUpdatePending = false; try { livePanel?.update(); } catch { /* */ } }, 100);
+  }
+}
 
 export function readUiState(): Record<string, any> { try { return existsSync(UI_STATE) ? JSON.parse(readFileSync(UI_STATE, "utf8")) : {}; } catch { return {}; } }
 

@@ -27,6 +27,13 @@
     "LICENSE",
     "mods"
   ],
+  "scripts": {
+    "test": "bun test test/",
+    "build": "bun build mods/index.ts --target node --outfile mods/index.bundled.mjs",
+    "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
+    "prepublishOnly": "npm run build",
+    "verify": "npm run build && npm run test"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -34,7 +41,7 @@
   "letta": {
     "manifestVersion": 1,
     "mods": [
-      "./mods/index.ts"
+      "./mods/index.bundled.mjs"
     ],
     "capabilities": [
       "tools",
@@ -50,11 +57,6 @@
     "engines": {
       "lettaCodeCli": ">=0.27.18"
     }
-  },
-  "scripts": {
-    "test": "bun test test/",
-    "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
-    "verify": "npm run transpile && npm run test"
   },
   "contributors": [
     {
