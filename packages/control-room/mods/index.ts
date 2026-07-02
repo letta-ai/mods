@@ -133,7 +133,7 @@ function panelLine(s, key, cols = 100) {
   return `${title} ${tag("goal", labelColor("goal"))} ${fit(r.goal.value || "no goal", goalWidth)} ${sep()} ${tag("mode", labelColor("mode"))} ${r.mode.value || "explore"} ${sep()} ${tag("next", labelColor("next"))} ${fit(r.next.value || "no next", nextWidth)} ${sep()} ${tag("approval", labelColor("approval"))} ${approval} ${sep()} ${tag("verified", labelColor("verified"))} ${ansi(verificationColor(vv), vv)} ${sep()} ${tag("risk", labelColor("risk"))} ${ansi(riskColor(rr.level), rr.level)} ${sep()} ${ansi(ANSI_DIM, fit(base, 18))}`;
 }
 function panelPatch(s, key = "global") {
-  return { id: MOD_ID, order: 0, content: panelLine(s, key), render(ctx) { const k = workspace(ctx?.cwd || ctx?.workingDirectory || ctx?.workspace?.cwd || ctx?.conversation?.id || ctx?.sessionId); return panelLine(s, k, ctx?.columns); } };
+  return { id: MOD_ID, order: 0, render(ctx) { const k = workspace(ctx?.cwd || ctx?.workingDirectory || ctx?.workspace?.cwd || ctx?.conversation?.id || ctx?.sessionId); return panelLine(s, k, ctx?.width); } };
 }
 async function gitSummary(cwd) {
   if (!cwd) return { changed: [], lines: ["Git: cwd unavailable"] };
@@ -237,21 +237,13 @@ function safeOn(letta, disposers, name, handler) { try { disposers.push(letta.ev
 export default function activate(letta) {
   const disposers = [], state = loadState();
   let panel = null;
-  const refresh = (ctx) => { if (!panel) return; try { panel.update(panelPatch(state, ctx ? keyEvent({}, ctx) : "global")); } catch {} };
+  const refresh = () => { if (!panel) return; try { panel.update(); } catch {} };
   const commit = (ctx) => { saveState(state); refresh(ctx); };
 
   if (letta.capabilities?.ui?.panels) {
     panel = letta.ui.openPanel(panelPatch(state));
     disposers.push(() => panel?.close?.());
   }
-  if (letta.capabilities?.ui?.statusValues) {
-    letta.ui.setStatus(MOD_ID, (ctx) => {
-      const key = workspace(ctx?.cwd || ctx?.workingDirectory || ctx?.workspace?.cwd || ctx?.conversation?.id || ctx?.sessionId), r = getRoom(state, key);
-      return `${r.mode.value || "explore"} | ${vlabel(r)} | ${r.goal.value ? fit(r.goal.value, 30) : "no goal"}`;
-    });
-    disposers.push(() => letta.ui.clearStatus(MOD_ID));
-  }
-
   if (letta.capabilities?.events?.lifecycle) {
     safeOn(letta, disposers, "conversation_open", (ev, ctx) => { const r = getRoom(state, keyEvent(ev, ctx)); r.harness.lastOpenedAt = now(); r.harness.openReason = ev.reason || "open"; touch(r); commit(ctx); });
     safeOn(letta, disposers, "conversation_close", (ev, ctx) => { const r = getRoom(state, keyEvent(ev, ctx)); r.harness.lastClosedAt = now(); r.harness.closeReason = ev.reason || "close"; touch(r); commit(ctx); });
