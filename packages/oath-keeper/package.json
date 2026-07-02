@@ -1,0 +1,40 @@
+{
+  "name": "@letta-ai/oath-keeper",
+  "version": "1.0.0",
+  "description": "Passively detects when agents make follow-up promises and automatically delivers on them. Cron is for things you plan. Oath Keeper is for things you promise.",
+  "author": "RhoMancer",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "oath-keeper",
+    "promises",
+    "follow-up",
+    "accountability",
+    "passive-detection"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/oath-keeper"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
