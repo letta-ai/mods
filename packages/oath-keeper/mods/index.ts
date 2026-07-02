@@ -70,6 +70,20 @@ function saveState(state: State): void {
 
 // ─── Promise Detection (LLM-based) ───────────────────────────────
 
+// Cleanup helper: delete throwaway classification conversations
+function cleanupConversation(baseUrl: string, apiKey: string | undefined, convId: string) {
+  if (!convId) return;
+  try {
+    fetch(baseUrl + "/v1/conversations/" + convId, {
+      method: "DELETE",
+      headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
+    }).catch(() => {});
+    log("Cleaned up classification conversation " + convId);
+  } catch (e) {
+    // Non-critical — don't log, just move on
+  }
+}
+
 async function detectPromise(text: string): Promise<{ promise: string } | null> {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
@@ -136,10 +150,13 @@ async function detectPromise(text: string): Promise<{ promise: string } | null> 
 
     if (!resp.ok) {
       log("Classification API returned " + resp.status + ", falling back to regex");
+      // Cleanup: delete the throwaway conversation
+      cleanupConversation(baseUrl, apiKey, classConvId);
       return detectPromiseRegex(text);
     }
 
     const respText = await resp.text();
+    let result: { promise: string } | null = null;
     for (const line of respText.split("\n")) {
       if (!line.startsWith("data: ")) continue;
       try {
@@ -149,13 +166,18 @@ async function detectPromise(text: string): Promise<{ promise: string } | null> 
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
             if (parsed.promise && typeof parsed.promise === "string") {
-              return { promise: parsed.promise.slice(0, 300) };
+              result = { promise: parsed.promise.slice(0, 300) };
+              break;
             }
           }
         }
       } catch (e) {}
     }
-    return null;
+
+    // Cleanup: delete the throwaway conversation
+    cleanupConversation(baseUrl, apiKey, classConvId);
+
+    return result;
   } catch (e) {
     log("LLM detection error: " + e + ", falling back to regex");
     return detectPromiseRegex(text);
