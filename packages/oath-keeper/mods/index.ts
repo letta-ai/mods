@@ -4,12 +4,15 @@
  * "Cron is for things you plan. Oath Keeper is for things you promise."
  *
  * Passively detects when agents make follow-up promises and delivers on them.
- * Uses LLM-based detection for robust promise classification.
  *
  * Architecture:
- * - Detection: setInterval polls conversation API every 15s, LLM classifies
- * - Delivery: POST to conversation API with retry on 409
+ * - Detection: turn_end event handler (CLI) or setInterval polling (desktop/listener/old)
+ * - Delivery: { continue: prompt } from turn_end (CLI) or POST to conversation API (desktop/listener/old)
  * - State: local JSON file
+ *
+ * The mod checks letta.capabilities.events.turns at activation time:
+ * - If true (CLI/TUI mode): uses event-driven detection and delivery (no server needed)
+ * - If false (desktop/listener/old): falls back to REST API polling (original behavior)
  */
 
 import fs from "node:fs";
@@ -19,7 +22,7 @@ const HOME = os.homedir();
 const STATE_FILE = `${HOME}/.letta/mods/oath-keeper.state.json`;
 const ENV_FILE = `${HOME}/.letta/extensions/oath-env.json`;
 const POLL_INTERVAL_MS = 15_000;
-const DELAY_MS = 60_000;
+const DEFAULT_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 const DEBUG = process.env.OATH_KEEPER_DEBUG === "1";
 
 function log(msg: string) {
@@ -69,7 +72,16 @@ function saveState(state: State): void {
   }
 }
 
-// ─── Promise Detection (LLM-based) ───────────────────────────────
+// ─── Shared helpers ──────────────────────────────────────────────
+
+function buildDeliveryPrompt(oath: Oath): string {
+  return '[Oath Keeper] You previously promised the user:\n"'
+    + oath.promise + '"\n\nOriginal context:\n"' + oath.context
+    + '"\n\nDeliver on your promise now. Use your tools to investigate if needed. '
+    + 'Provide a specific, concise answer. Start your response with "[Oath Delivered]".';
+}
+
+// ─── Promise Detection (LLM-based, for polling path) ────────────
 
 // Cleanup helper: delete throwaway classification conversations
 function cleanupConversation(baseUrl: string, apiKey: string | undefined, convId: string) {
@@ -158,7 +170,7 @@ async function detectPromise(text: string): Promise<{ promise: string; delayMinu
     }
 
     const respText = await resp.text();
-    let result: { promise: string } | null = null;
+    let result: { promise: string; delayMinutes: number } | null = null;
     for (const line of respText.split("\n")) {
       if (!line.startsWith("data: ")) continue;
       try {
@@ -189,8 +201,12 @@ async function detectPromise(text: string): Promise<{ promise: string; delayMinu
   }
 }
 
-// Regex fallback (used when LLM classification is unavailable)
+// Regex fallback (used when LLM classification is unavailable, or as primary in event-driven mode)
 function detectPromiseRegex(text: string): { promise: string; delayMinutes: number } | null {
+  if (!text || typeof text !== "string") return null;
+  if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
+  if (text.trim().length < 15) return null;
+
   const patterns = [
     /i'll get back to (?:you|you on that|you with)/i,
     /i'll follow up/i,
@@ -220,7 +236,7 @@ function detectPromiseRegex(text: string): { promise: string; delayMinutes: numb
   return null;
 }
 
-// ─── Conversation API ────────────────────────────────────────────
+// ─── Conversation API (for polling path) ────────────────────────
 
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
@@ -299,10 +315,7 @@ async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: stri
     return { success: false, answer: "No conversation ID" };
   }
 
-  const prompt = '[Oath Keeper] You previously promised the user:\n"'
-    + oath.promise + '"\n\nOriginal context:\n"' + oath.context
-    + '"\n\nDeliver on your promise now. Use your tools to investigate if needed. '
-    + 'Provide a specific, concise answer. Start your response with "[Oath Delivered]".';
+  const prompt = buildDeliveryPrompt(oath);
 
   log("Delivering oath " + oath.id + " to conversation " + targetConv + "...");
 
@@ -356,7 +369,7 @@ async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: stri
   return { success: false, answer: "Max retries exceeded" };
 }
 
-// ─── Main Loop ───────────────────────────────────────────────────
+// ─── Polling path (desktop/listener/old) ────────────────────────
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -422,6 +435,72 @@ async function pollCycle() {
   }
 }
 
+// ─── Event-driven path (CLI/TUI) ─────────────────────────────────
+
+function handleTurnEnd(event: any): { continue?: string } | void {
+  const assistantMessage = event.assistantMessage || "";
+
+  // Skip own messages (recursion prevention)
+  if (assistantMessage.includes("[Oath Keeper]") ||
+      assistantMessage.includes("[Oath Delivered]")) {
+    // If the agent delivered on an oath, mark delivering oaths as delivered
+    if (assistantMessage.includes("[Oath Delivered]")) {
+      const state = loadState();
+      let changed = false;
+      for (const o of state.oaths) {
+        if (o.status === "delivering") {
+          o.status = "delivered";
+          o.result = assistantMessage.slice(0, 500);
+          o.deliveredAt = Date.now();
+          changed = true;
+        }
+      }
+      if (changed) saveState(state);
+    }
+    return;
+  }
+
+  const now = Date.now();
+  let state = loadState();
+
+  // 1. Detect new promises in the assistant message
+  const detection = detectPromiseRegex(assistantMessage);
+  if (detection) {
+    const exists = state.oaths.some(
+      (o) => o.promise === detection.promise && o.status === "pending"
+    );
+    if (!exists) {
+      const oath: Oath = {
+        id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8),
+        conversationId: event.conversationId || "",
+        agentId: event.agentId || "",
+        promise: detection.promise,
+        context: "(from turn_end event)",
+        createdAt: now,
+        dueAt: now + (detection.delayMinutes * 60 * 1000),
+        status: "pending",
+        result: null,
+        deliveredAt: null,
+      };
+      state.oaths.push(oath);
+      saveState(state);
+      log('Promise detected: "' + detection.promise.slice(0, 60) + '..." -> oath ' + oath.id);
+    }
+  }
+
+  // 2. Check for due oaths and deliver via continue
+  const dueOath = state.oaths.find(
+    (o) => o.status === "pending" && o.dueAt <= now
+  );
+
+  if (dueOath) {
+    dueOath.status = "delivering";
+    saveState(state);
+    log("Delivering oath " + dueOath.id + " via continue");
+    return { continue: buildDeliveryPrompt(dueOath) };
+  }
+}
+
 // ─── Mod Activation ──────────────────────────────────────────────
 
 export default function activate(letta: any) {
@@ -432,11 +511,24 @@ export default function activate(letta: any) {
     return () => {};
   }
 
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
-  pollCycle();
+  // Check if turn_end events are available (CLI/TUI mode)
+  const hasTurnEvents = letta.capabilities.events?.turns === true && !!letta.events;
 
-  log("Polling started");
+  if (hasTurnEvents) {
+    // Event-driven path: turn_end handler for detection + delivery (no server needed)
+    disposers.push(
+      letta.events.on("turn_end", async (event: any, _context: any) => {
+        return handleTurnEnd(event);
+      })
+    );
+    log("turn_end handler registered (event-driven mode)");
+  } else {
+    // Polling path: setInterval + REST API (desktop/listener/old)
+    if (intervalHandle) clearInterval(intervalHandle);
+    intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
+    pollCycle();
+    log("Polling started (REST API mode)");
+  }
 
   disposers.push(
     letta.tools.register({
