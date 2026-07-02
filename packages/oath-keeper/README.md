@@ -116,6 +116,6 @@ Cron requires explicit scheduling. Oath Keeper catches promises the agent made *
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/P8pDDmuF2aJnk1PL.svg)](https://asciinema.org/a/P8pDDmuF2aJnk1PL)
+[![asciicast](https://asciinema.org/a/CeG7le6Va4Sn5F8T.svg)](https://asciinema.org/a/CeG7le6Va4Sn5F8T)
 
 Watch the full flow: agent makes a promise → moves on to other work → Oath Keeper re-engages it to deliver.
