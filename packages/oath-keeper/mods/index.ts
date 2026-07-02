@@ -4,30 +4,26 @@
  * "Cron is for things you plan. Oath Keeper is for things you promise."
  *
  * Passively detects when agents make follow-up promises and delivers on them.
- * Zero user setup. Zero agent cooperation required.
+ * Uses LLM-based detection for robust promise classification.
  *
  * Architecture:
- * - Detection: setInterval polls conversation API every 15s for new messages
- * - Delivery: POST to conversation API with retry on 409 (busy conversation)
+ * - Detection: setInterval polls conversation API every 15s, LLM classifies
+ * - Delivery: POST to conversation API with retry on 409
  * - State: local JSON file
- *
- * Works with capabilities: { tools: true } only.
  */
 
 import fs from "node:fs";
 import os from "node:os";
 
-// ─── Config ──────────────────────────────────────────────────────
-
 const HOME = os.homedir();
 const STATE_FILE = `${HOME}/.letta/mods/oath-keeper.state.json`;
 const ENV_FILE = `${HOME}/.letta/extensions/oath-env.json`;
 const POLL_INTERVAL_MS = 15_000;
-const DELAY_MS = 60_000;             // 60s demo mode
+const DELAY_MS = 60_000;
 const DEBUG = true;
 
 function log(msg: string) {
-  if (DEBUG) console.log(`[oath-keeper] ${msg}`);
+  if (DEBUG) console.log("[oath-keeper] " + msg);
 }
 
 // ─── State ───────────────────────────────────────────────────────
@@ -59,7 +55,7 @@ function loadState(): State {
       oaths: parsed.oaths || [],
       lastScannedMessageId: parsed.lastScannedMessageId || null,
     };
-  } catch {
+  } catch (e) {
     return { oaths: [], lastScannedMessageId: null };
   }
 }
@@ -68,61 +64,127 @@ function saveState(state: State): void {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (e) {
-    log(`Failed to save state: ${e}`);
+    log("Failed to save state: " + e);
   }
 }
 
-// ─── Promise Detection ───────────────────────────────────────────
-//
-// Patterns are anchored to direct-to-user phrasing. We exclude:
-// - Text inside quotes (explaining what the mod catches)
-// - Text inside code blocks or markdown formatting
-// - Oath Keeper's own injected messages
+// ─── Promise Detection (LLM-based) ───────────────────────────────
 
-const PROMISE_PATTERNS = [
-  /i'll get back to (?:you|you on that|you with)/i,
-  /i'll follow up (?:with you|on that|shortly|soon)?/i,
-  /i'll let you know/i,
-  /let me check .* and (?:respond|get back|let you know)/i,
-  /i'll look into (?:that|this)/i,
-  /i'll investigate(?: .*?)? and (?:report back|respond|get back)/i,
-  /i'll check on (?:this|that)/i,
-  /let me (?:verify|research|dig into|confirm) (?:that|this|it)/i,
-  /i'll circle back/i,
-  /i'll update you/i,
-  /i'll share (?:that|this|it|the results?) (?:with|to) you/i,
-  /i'll send you (?:the|those|that|a)/i,
-  /i'll have (?:an answer|results|an update) (?:for you|soon|shortly)/i,
-  /i'll report back/i,
-];
-
-function detectPromise(text: string): { promise: string } | null {
+async function detectPromise(text: string): Promise<{ promise: string } | null> {
   if (!text || typeof text !== "string") return null;
-
-  // Skip our own messages
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
+  if (text.trim().length < 15) return null;
 
-  // Strip code blocks, inline code, and blockquotes before scanning
-  const cleaned = text
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`]*`/g, "")
-    .replace(/^>\s.*$/gm, "");
+  // Quick pre-filter — skip messages with no promise indicators
+  const hasIntent = /\b(i|i'll|ill|let me|i will)\b/i.test(text)
+    && /\b(will|'ll|check|look|get back|follow up|back to you|report|update|send|share|verify|investigate|confirm|research|circle|dig)\b/i.test(text);
+  if (!hasIntent) return null;
 
-  // Skip quoted text (lines starting with optional whitespace then a quote char)
-  // Also strip sentences that are clearly about the mod rather than promises
-  const lines = cleaned.split("\n");
-  const nonQuoteText = lines
-    .filter((l) => !l.trim().startsWith('"') && !l.trim().startsWith('"'))
-    .join(" ");
+  // LLM classification via a separate conversation to avoid blocking
+  const { baseUrl, apiKey, agentId } = getApiConfig();
+  if (!agentId) return null;
 
-  for (const pattern of PROMISE_PATTERNS) {
-    const match = nonQuoteText.match(pattern);
+  const classificationPrompt =
+    'Analyze this assistant message. Does the assistant make a specific promise to do something LATER (after this response)? '
+    + 'A promise means committing to follow up — not just answering inline.\n\n'
+    + 'Message: """' + text.slice(0, 800) + '"""\n\n'
+    + 'Respond with ONLY a JSON object:\n'
+    + '- Promise found: {"promise": "<what they promise to do>"}\n'
+    + '- No promise: {}';
+
+  try {
+    // Create a throwaway conversation for classification
+    const convResp = await fetch(
+      baseUrl + "/v1/conversations?agent_id=" + agentId,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+        },
+        body: "{}",
+      }
+    );
+
+    let classConvId = "";
+    if (convResp.ok) {
+      const convData: any = await convResp.json();
+      classConvId = convData.id || "";
+    }
+
+    if (!classConvId) {
+      log("Could not create classification conversation, falling back to regex");
+      return detectPromiseRegex(text);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+
+    const resp = await fetch(
+      baseUrl + "/v1/conversations/" + classConvId + "/messages",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+        },
+        body: JSON.stringify({ input: classificationPrompt, role: "user" }),
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timeout);
+
+    if (!resp.ok) {
+      log("Classification API returned " + resp.status + ", falling back to regex");
+      return detectPromiseRegex(text);
+    }
+
+    const respText = await resp.text();
+    for (const line of respText.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const d = JSON.parse(line.slice(6));
+        if (d.message_type === "assistant_message" && d.content) {
+          const jsonMatch = String(d.content).match(/\{[^}]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.promise && typeof parsed.promise === "string") {
+              return { promise: parsed.promise.slice(0, 300) };
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  } catch (e) {
+    log("LLM detection error: " + e + ", falling back to regex");
+    return detectPromiseRegex(text);
+  }
+}
+
+// Regex fallback (used when LLM classification is unavailable)
+function detectPromiseRegex(text: string): { promise: string } | null {
+  const patterns = [
+    /i'll get back to (?:you|you on that|you with)/i,
+    /i'll follow up/i,
+    /i'll tell you/i,
+    /i'll let you know/i,
+    /i'll look into (?:that|this)/i,
+    /i'll check on (?:this|that)/i,
+    /let me (?:verify|research|dig into|confirm) (?:that|this|it)/i,
+    /i'll circle back/i,
+    /i'll update you/i,
+    /i'll report back/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
     if (match) {
       const start = match.index || 0;
-      const sentStart = nonQuoteText.lastIndexOf(".", start) + 1;
-      const sentEnd = nonQuoteText.indexOf(".", start + match[0].length);
-      const end = sentEnd === -1 ? nonQuoteText.length : sentEnd + 1;
-      const promise = nonQuoteText.slice(sentStart, end).trim();
+      const sentStart = text.lastIndexOf(".", start) + 1;
+      const sentEnd = text.indexOf(".", start + match[0].length);
+      const end = sentEnd === -1 ? text.length : sentEnd + 1;
+      const promise = text.slice(sentStart, end).trim();
       if (promise.length > 10 && promise.length < 300) {
         return { promise };
       }
@@ -133,22 +195,11 @@ function detectPromise(text: string): { promise: string } | null {
 
 // ─── Conversation API ────────────────────────────────────────────
 
-// Runtime-captured IDs — set by the first tool call (list_oaths) via ctx.
-// Falls back to env vars or oath-env.json for headless/polling-only mode.
-let runtimeAgentId = "";
-let runtimeConvId = "";
-
-function captureRuntimeIds(agentId: string, convId: string) {
-  if (agentId && !runtimeAgentId) runtimeAgentId = agentId;
-  if (convId && !runtimeConvId) runtimeConvId = convId;
-}
-
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
   const apiKey = process.env.LETTA_API_KEY;
-  // TUI process sets these to the literal string "unset" — treat as empty
-  let agentId = runtimeAgentId || process.env.LETTA_AGENT_ID || "";
-  let convId = runtimeConvId || process.env.LETTA_CONVERSATION_ID || "";
+  let agentId = process.env.LETTA_AGENT_ID || "";
+  let convId = process.env.LETTA_CONVERSATION_ID || "";
   if (agentId === "unset") agentId = "";
   if (convId === "unset") convId = "";
 
@@ -169,12 +220,12 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
 
   try {
     const resp = await fetch(
-      `${baseUrl}/v1/agents/${agentId}/messages?conversation_id=${convId}&limit=20`,
-      { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} },
+      baseUrl + "/v1/agents/" + agentId + "/messages?conversation_id=" + convId + "&limit=20",
+      { headers: apiKey ? { Authorization: "Bearer " + apiKey } : {} }
     );
     if (!resp.ok) return null;
 
-    const data = await resp.json();
+    const data: any = await resp.json();
     const messages = Array.isArray(data) ? data : (data.messages || []);
     if (!messages.length) return null;
 
@@ -207,13 +258,13 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
 
     return assistantMsg ? { ...assistantMsg, userContext } : null;
   } catch (e) {
-    log(`fetchLatestAgentMessage error: ${e}`);
+    log("fetchLatestAgentMessage error: " + e);
     return null;
   }
 }
 
 async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: string }> {
-  const { baseUrl, apiKey, agentId, convId } = getApiConfig();
+  const { baseUrl, apiKey, convId } = getApiConfig();
   const targetConv = (oath.conversationId && oath.conversationId !== "default")
     ? oath.conversationId : convId;
 
@@ -221,29 +272,25 @@ async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: stri
     return { success: false, answer: "No conversation ID" };
   }
 
-  const prompt = `[Oath Keeper] You previously promised the user:
-"${oath.promise}"
+  const prompt = '[Oath Keeper] You previously promised the user:\n"'
+    + oath.promise + '"\n\nOriginal context:\n"' + oath.context
+    + '"\n\nDeliver on your promise now. Use your tools to investigate if needed. '
+    + 'Provide a specific, concise answer. Start your response with "[Oath Delivered]".';
 
-Original context:
-"${oath.context}"
+  log("Delivering oath " + oath.id + " to conversation " + targetConv + "...");
 
-Deliver on your promise now. Use your tools to investigate if needed. Provide a specific, concise answer. Start your response with "[Oath Delivered]".`;
-
-  log(`Delivering oath ${oath.id} to conversation ${targetConv}...`);
-
-  // Retry on 409 (conversation busy) with backoff
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 45_000);
 
       const resp = await fetch(
-        `${baseUrl}/v1/conversations/${targetConv}/messages`,
+        baseUrl + "/v1/conversations/" + targetConv + "/messages",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
           },
           body: JSON.stringify({ input: prompt, role: "user" }),
           signal: controller.signal,
@@ -263,19 +310,19 @@ Deliver on your promise now. Use your tools to investigate if needed. Provide a 
             }
           } catch (e) {}
         }
-        log(`Oath ${oath.id} delivered on attempt ${attempt}`);
+        log("Oath " + oath.id + " delivered on attempt " + attempt);
         return { success: true, answer: answer || "(delivered)" };
       } else if (resp.status === 409 || resp.status === 429) {
-        log(`Attempt ${attempt}: API ${resp.status}, retrying in 15s...`);
+        log("Attempt " + attempt + ": API " + resp.status + ", retrying in 15s...");
         if (attempt < 5) { await new Promise(r => setTimeout(r, 15_000)); continue; }
-        return { success: false, answer: `API ${resp.status} after ${attempt} attempts` };
+        return { success: false, answer: "API " + resp.status + " after " + attempt + " attempts" };
       } else {
-        return { success: false, answer: `API ${resp.status}` };
+        return { success: false, answer: "API " + resp.status };
       }
     } catch (e) {
-      log(`Delivery attempt ${attempt} error: ${e}`);
+      log("Delivery attempt " + attempt + " error: " + e);
       if (attempt < 5) { await new Promise(r => setTimeout(r, 15_000)); continue; }
-      return { success: false, answer: `Error: ${e}` };
+      return { success: false, answer: "Error: " + e };
     }
   }
 
@@ -310,19 +357,22 @@ async function pollCycle() {
     }
 
     // 2. Scan for new promises
-    const { agentId, convId } = getApiConfig();
-    saveState(state);
+    const { convId } = getApiConfig();
     const latest = await fetchLatestAgentMessage();
     if (latest && state.lastScannedMessageId !== latest.id) {
       state = loadState();
       state.lastScannedMessageId = latest.id;
+      saveState(state);
 
-      const detection = detectPromise(latest.text);
+      // LLM-based detection
+      const detection = await detectPromise(latest.text);
       if (detection) {
+        state = loadState();
         const exists = state.oaths.some((o) => o.sourceMessageId === latest.id);
         if (!exists) {
+          const { agentId } = getApiConfig();
           const oath: Oath = {
-            id: `oath-${now}-${Math.random().toString(36).slice(2, 8)}`,
+            id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8),
             conversationId: convId,
             agentId,
             promise: detection.promise,
@@ -335,13 +385,13 @@ async function pollCycle() {
             deliveredAt: null,
           };
           state.oaths.push(oath);
-          log(`Promise detected: "${detection.promise.slice(0, 60)}..." → oath ${oath.id}`);
+          log('Promise detected: "' + detection.promise.slice(0, 60) + '..." -> oath ' + oath.id);
         }
       }
       saveState(state);
     }
   } catch (e) {
-    log(`Poll error: ${e}`);
+    log("Poll error: " + e);
   }
 }
 
@@ -355,14 +405,12 @@ export default function activate(letta: any) {
     return () => {};
   }
 
-  // Start polling
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
   pollCycle();
 
   log("Polling started");
 
-  // list_oaths tool
   disposers.push(
     letta.tools.register({
       name: "list_oaths",
@@ -372,11 +420,7 @@ export default function activate(letta: any) {
       requiresApproval: false,
       parallelSafe: true,
 
-      async run(ctx: any) {
-        // Capture runtime IDs from tool context — eliminates need for oath-env.json
-        if (ctx?.conversation?.id) captureRuntimeIds(ctx.agent?.id || "", ctx.conversation.id);
-        if (ctx?.agent?.id) captureRuntimeIds(ctx.agent.id, ctx?.conversation?.id || "");
-
+      async run() {
         const state = loadState();
         const pending = state.oaths.filter((o) => o.status === "pending");
         const recent = state.oaths.filter(
@@ -391,15 +435,15 @@ export default function activate(letta: any) {
         }
 
         const lines: string[] = [
-          `Oath Keeper — ${pending.length} pending, ${recent.length} recent`,
+          "Oath Keeper — " + pending.length + " pending, " + recent.length + " recent",
         ];
         for (const o of pending) {
-          const mins = Math.max(0, Math.round((o.dueAt - Date.now()) / 60_000));
-          lines.push(`PENDING (${mins}m): "${o.promise.slice(0, 80)}"`);
+          const secs = Math.max(0, Math.round((o.dueAt - Date.now()) / 1000));
+          lines.push('PENDING (' + secs + 's): "' + o.promise.slice(0, 80) + '"');
         }
         for (const o of recent) {
           lines.push(
-            `${o.status === "delivered" ? "OK" : "FAIL"}: "${o.promise.slice(0, 80)}"`
+            (o.status === "delivered" ? "OK" : "FAIL") + ': "' + o.promise.slice(0, 80) + '"'
           );
         }
         return lines.join("\n");
