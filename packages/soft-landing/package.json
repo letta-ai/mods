@@ -1,0 +1,38 @@
+{
+  "name": "@letta-ai/soft-landing",
+  "version": "0.1.0",
+  "description": "A slash command that helps an agent recover from drift, compaction, tool wobble, or overloaded context with a short orientation prompt.",
+  "author": "Laura and Justin",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "commands",
+    "orientation",
+    "context"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/soft-landing"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
