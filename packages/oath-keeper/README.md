@@ -113,3 +113,9 @@ Cron requires explicit scheduling. Oath Keeper catches promises the agent made *
 - Does not modify turn input or tool arguments
 - Recursion prevention: skips its own messages
 - All timers cleaned up on unload
+
+## Demo
+
+[![asciicast](https://asciinema.org/a/P8pDDmuF2aJnk1PL.svg)](https://asciinema.org/a/P8pDDmuF2aJnk1PL)
+
+Watch the full flow: agent makes a promise → moves on to other work → Oath Keeper re-engages it to deliver.
