@@ -85,7 +85,7 @@ function cleanupConversation(baseUrl: string, apiKey: string | undefined, convId
   }
 }
 
-async function detectPromise(text: string): Promise<{ promise: string } | null> {
+async function detectPromise(text: string): Promise<{ promise: string; delayMinutes: number } | null> {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
   if (text.trim().length < 15) return null;
@@ -104,8 +104,9 @@ async function detectPromise(text: string): Promise<{ promise: string } | null> 
     + 'A promise means committing to follow up — not just answering inline.\n\n'
     + 'Message: """' + text.slice(0, 800) + '"""\n\n'
     + 'Respond with ONLY a JSON object:\n'
-    + '- Promise found: {"promise": "<what they promise to do>"}\n'
-    + '- No promise: {}';
+    + '- Promise found: {"promise": "<what they promise to do>", "delay_minutes": <number>}\n'
+    + '- No promise: {}\n\n'
+    + 'Use the delay implied by the message. Default to 5 if no timing specified.';
 
   try {
     // Create a throwaway conversation for classification
@@ -167,7 +168,10 @@ async function detectPromise(text: string): Promise<{ promise: string } | null> 
           if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
             if (parsed.promise && typeof parsed.promise === "string") {
-              result = { promise: parsed.promise.slice(0, 300) };
+              const delayMin = typeof parsed.delay_minutes === "number"
+                ? Math.max(1, Math.min(1440, parsed.delay_minutes))  // clamp 1min - 24h
+                : 5;  // default 5 minutes
+              result = { promise: parsed.promise.slice(0, 300), delayMinutes: delayMin };
               break;
             }
           }
@@ -186,7 +190,7 @@ async function detectPromise(text: string): Promise<{ promise: string } | null> 
 }
 
 // Regex fallback (used when LLM classification is unavailable)
-function detectPromiseRegex(text: string): { promise: string } | null {
+function detectPromiseRegex(text: string): { promise: string; delayMinutes: number } | null {
   const patterns = [
     /i'll get back to (?:you|you on that|you with)/i,
     /i'll follow up/i,
@@ -209,7 +213,7 @@ function detectPromiseRegex(text: string): { promise: string } | null {
       const end = sentEnd === -1 ? text.length : sentEnd + 1;
       const promise = text.slice(sentStart, end).trim();
       if (promise.length > 10 && promise.length < 300) {
-        return { promise };
+        return { promise, delayMinutes: 5 };
       }
     }
   }
@@ -402,7 +406,7 @@ async function pollCycle() {
             context: latest.userContext,
             sourceMessageId: latest.id,
             createdAt: now,
-            dueAt: now + DELAY_MS,
+            dueAt: now + (detection.delayMinutes * 60 * 1000),
             status: "pending",
             result: null,
             deliveredAt: null,
