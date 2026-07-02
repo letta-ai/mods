@@ -22,25 +22,22 @@ Then reload local mods:
 
 - Current conversation summary/title on the left side of the idle statusline
 - Fallback right-side agent/model display
-- Support for both API-backed and local agents
 
 ## Behavior
 
-- Fetches the conversation summary when a conversation opens.
-- Does not poll or call the model.
-- Uses the Letta API client for API-backed conversations.
-- Reads local agent conversation metadata from `~/.letta/lc-local-backend/conversations/.../conversation.json`, respecting `LETTA_LOCAL_BACKEND_DIR`.
+- Reads the current conversation summary from the host-provided panel context.
+- Does not poll, call the model, call the Letta API, or read local conversation files.
 - Renders no left segment when the current conversation has no summary yet.
 
 ## Requirements
 
-- Letta Code `>=0.27.20` with panel-based statusline support and lifecycle events
+- Letta Code `>=0.27.21` with panel context `conversationSummary` support
 
 ## Safety
 
 Mods are trusted local code. Review the source before installing third-party mods.
 
-This mod reads conversation metadata and does not mutate files or conversations.
+This mod only renders host-provided context and does not mutate files or conversations.
 
 If a mod breaks startup or command handling, recover with:
 
