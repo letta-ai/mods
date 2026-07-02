@@ -1,5 +1,5 @@
 ---
-name: "oath-keeper"
+name: "@letta-ai/oath-keeper"
 description: "Passively detects when agents make follow-up promises and automatically delivers on them"
 ---
 

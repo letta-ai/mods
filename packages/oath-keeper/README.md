@@ -53,8 +53,7 @@ User asks question
 ## Installation
 
 ```bash
-# Copy the mod file
-cp packages/oath-keeper/mods/index.ts ~/.letta/mods/oath-keeper.ts
+letta install npm:@letta-ai/oath-keeper
 ```
 
 Then run `/reload` in Letta Code.

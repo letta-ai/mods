@@ -20,7 +20,7 @@ const STATE_FILE = `${HOME}/.letta/mods/oath-keeper.state.json`;
 const ENV_FILE = `${HOME}/.letta/extensions/oath-env.json`;
 const POLL_INTERVAL_MS = 15_000;
 const DELAY_MS = 60_000;
-const DEBUG = true;
+const DEBUG = process.env.OATH_KEEPER_DEBUG === "1";
 
 function log(msg: string) {
   if (DEBUG) console.log("[oath-keeper] " + msg);
@@ -62,6 +62,7 @@ function loadState(): State {
 
 function saveState(state: State): void {
   try {
+    fs.mkdirSync(`${HOME}/.letta/mods`, { recursive: true });
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (e) {
     log("Failed to save state: " + e);
@@ -220,16 +221,16 @@ function detectPromiseRegex(text: string): { promise: string } | null {
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
   const apiKey = process.env.LETTA_API_KEY;
-  let agentId = process.env.LETTA_AGENT_ID || "";
-  let convId = process.env.LETTA_CONVERSATION_ID || "";
+  let agentId = process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "";
+  let convId = process.env.LETTA_CONVERSATION_ID || process.env.CONVERSATION_ID || "";
   if (agentId === "unset") agentId = "";
   if (convId === "unset") convId = "";
 
   if (!agentId || !convId) {
     try {
       const env = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
-      agentId = agentId || env.LETTA_AGENT_ID || "";
-      convId = convId || env.LETTA_CONVERSATION_ID || "";
+      agentId = agentId || env.LETTA_AGENT_ID || env.AGENT_ID || "";
+      convId = convId || env.LETTA_CONVERSATION_ID || env.CONVERSATION_ID || "";
     } catch (e) {}
   }
 
