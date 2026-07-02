@@ -1,0 +1,105 @@
+{
+  // AutoPivot config (JSONC — // comments are allowed and stripped on load).
+  // Copy to ~/.letta/mods/autopivot.config.json and edit, then run /reload.
+
+  // Your default/primary model handle (the one you normally use).
+  "primary": "anthropic/claude-sonnet-4-6",
+
+  // ── The ladder ──────────────────────────────────────────────────────────
+  // `primary` is rung 0; each rule below is the next rung down. AutoPivot walks
+  // the ladder top→down and runs the highest *reachable* rung (dynamic shift-up).
+  // A rung's health = its own reachability probe; a rule WITHOUT a probe is the
+  // always-available terminus (typically your local model). If nothing is
+  // reachable and there's no terminus, AutoPivot shows "no model" and stays put
+  // rather than switching to a dead model.
+  "rules": [
+    // Example rung 1: a cheaper/backup CLOUD model with ITS OWN probe, so this
+    // rung walks by its own health (cloud-to-cloud failover). Delete if unused.
+    {
+      "condition": "reachability",
+      "target": { "model": "openai/gpt-5-mini", "local": false },
+      "modeLabel": "backup",
+      "isDegraded": true,
+      "statusDisplay": "near-threshold",
+      // PER-RUNG probe (Phase 2): this rung is only eligible when its own endpoint
+      // is reachable. Omit `reachability` to make a rung the always-available terminus.
+      "reachability": { "probeUrl": "https://api.openai.com/v1/models", "intervalMs": 30000 }
+    },
+
+    // Example rung 2 (terminus): a LOCAL model, no probe → always available. This
+    // is the offline terminus; reaching it is what enables the offline-honesty note.
+    {
+      "condition": "reachability",
+      "target": {
+        "model": "ollama/my-local-model",   // a local model handle you have
+        "local": true,                      // mark local targets (offline gate + manual-offline route)
+        "contextWindow": 32000              // optional: shrink context on the smaller local model
+      },
+      "modeLabel": "offline",
+      "isDegraded": true,                   // true → triggers the honest note + offline pill
+      "statusDisplay": "near-threshold",    // always | near-threshold | never
+      // NOTE: on a `local: true` rung the automatic stall watchdog is DISABLED by default
+      // — a watchdog can't tell a slow cold local turn from a hung one, so you drive local
+      // hangs yourself with `/pivot down` (instant fail-over). Add `"stall": { "timeoutMs":
+      // <ms> }` here only if you want an automatic backstop anyway.
+      "signifier": { "glyph": "○", "color": "redBright", "text": "offline", "bold": true }
+    }
+  ],
+
+  // ── Axis 1: rung selection (which model) ────────────────────────────────
+  // The brain probe — health of rung 0 (primary). probeUrl MUST be your primary
+  // endpoint (not a generic ping), so "which model" tracks primary reachability.
+  "reachability": {
+    "probeUrl": "https://your-brain-host/health",
+    "intervalMs": 30000,
+    "failureThreshold": 3,                  // consecutive failures before walking down (anti-flap)
+    "recoveryThreshold": 2,                 // consecutive successes before coming back up
+    "probeAuthEnv": ""                      // NAME of an env var with a probe token (never the token)
+  },
+
+  // ── Axis 2: action availability (are networked tools usable) ────────────
+  // OPTIONAL and separate from rung selection. Point it at a NEUTRAL host (e.g.
+  // https://1.1.1.1 or https://example.com), NOT your provider. It decides which
+  // honesty note a degraded turn gets:
+  //   • network DOWN  → "actions unavailable, queue your work" (the offline note)
+  //   • network UP    → "you're on a fallback model but actions still work"
+  // Leave probeUrl empty (default) to skip this — AutoPivot then conservatively
+  // uses the offline/queue note whenever it's on a degraded rung (exactly v1).
+  "networkProbe": {
+    "probeUrl": "",                         // e.g. "https://1.1.1.1" to enable
+    "intervalMs": 20000,
+    "failureThreshold": 2,
+    "recoveryThreshold": 2
+  },
+
+  // ── Failover on completion failures (Phase 3a: stall watchdog) ──────────
+  // Reachability probes catch an UNREACHABLE endpoint. This catches a rung that is
+  // reachable but FAILS the completion — rate-limit, usage cap, no-credit, auth,
+  // context overflow. There is no error event a mod can see (verified), so the signal
+  // is a turn that starts an LLM request and never completes within `timeoutMs`. Set it
+  // ABOVE your slowest legit turn (per-rung override on slow local rungs, above).
+  //
+  // Recovery is STICKY: a completion failure can't be confirmed as recovered, so a
+  // suspended rung stays out until you run `/pivot online` (or a later turn on it
+  // succeeds). There is deliberately no auto-retry timer — that would bounce you back
+  // onto a still-broken rung. `/pivot status` lists suspended rungs.
+  "stall": {
+    "timeoutMs": 90000                      // no completion within 90s → suspend the rung
+  },
+
+  // Statusline pill (reflects the rung/model axis; the action axis shows in
+  // /pivot status and in the honesty note).
+  "statusline": {
+    "replacePrimary": false,                // false = additive line (keeps host's agent·model line)
+    "showModeText": true,                   // false = bare glyphs (● online / ○ offline)
+    "nearThresholdBand": 0.8                // metric shows at ≥ 80% of a ceiling
+  },
+
+  // How often to inject the honesty note: "transition" (once per degraded
+  // episode, recommended) or "every-turn".
+  "honesty": "transition",
+
+  // Cross-machine memory sync seam — OFF by default. Only relevant if you run the
+  // same agent on more than one machine; the onReconnect callback is wired in code.
+  "memorySync": { "enabled": false }
+}
