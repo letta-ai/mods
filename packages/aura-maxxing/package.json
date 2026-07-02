@@ -1,0 +1,40 @@
+{
+  "name": "@letta-ai/aura-maxxing",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds aura-maxxing guidance for high-signal, high-presence agent responses.",
+  "author": "EthanThatOneKid",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "aura-maxxing",
+    "presence",
+    "style"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/aura-maxxing"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "tools",
+      "events.turns"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
