@@ -714,6 +714,36 @@ function canSuspend(rungCount, suspended, index) {
   return next.size < rungCount;
 }
 
+// lib/llm-end.mjs
+var FAILING_STOP_REASONS = /* @__PURE__ */ new Set(["error", "aborted"]);
+function classifyLlmEnd(event) {
+  const err = event?.error;
+  if (err && typeof err === "object") {
+    return {
+      failed: true,
+      reason: {
+        source: "llm_end",
+        errorType: err.errorType === "local_backend_error" ? "local_backend_error" : "llm_error",
+        message: String(err.message ?? err.detail ?? "provider error"),
+        retryable: err.retryable === true
+      }
+    };
+  }
+  if (FAILING_STOP_REASONS.has(event?.stopReason)) {
+    return { failed: true, reason: "error" };
+  }
+  return { failed: false, reason: null };
+}
+function describeReason(reason) {
+  if (reason && typeof reason === "object") {
+    const kind = reason.errorType === "local_backend_error" ? "local backend error" : "provider error";
+    return reason.message ? `${kind}: ${reason.message}` : kind;
+  }
+  if (reason === "stall") return "no response (timed out)";
+  if (reason === "manual") return "manual pivot";
+  return "error";
+}
+
 // lib/turn.mjs
 function injectNote(input, note) {
   if (!Array.isArray(input)) return input;
@@ -1015,18 +1045,19 @@ async function activate(letta) {
       }
     }
   }
-  disposers.push(failSeam.onFailure(({ rungId: model }) => {
+  disposers.push(failSeam.onFailure(({ rungId: model, reason }) => {
     try {
       const idx = modelToRungIndex(rungs, model);
       if (idx == null) return;
       if (suspended.has(idx)) return;
+      const why = reason && typeof reason === "object" ? ` (${describeReason(reason)})` : "";
       if (!canSuspend(rungs.length, suspendedSet(), idx)) {
-        announce(`\u26A0\uFE0F AutoPivot: all rungs failing \u2014 staying on ${model}. Run /pivot online to retry.`);
+        announce(`\u26A0\uFE0F AutoPivot: all rungs failing${why} \u2014 staying on ${model}. Run /pivot online to retry.`);
         return;
       }
       suspended.set(idx, { count: (suspended.get(idx)?.count ?? 0) + 1 });
       const next = computeView(null).desired;
-      announce(`\u26A0\uFE0F AutoPivot: ${model} failed \u2192 now on ${next ?? "(no model)"}. Resend your message; /pivot online to retry.`);
+      announce(`\u26A0\uFE0F AutoPivot: ${model} failed${why} \u2192 now on ${next ?? "(no model)"}. Resend your message; /pivot online to retry.`);
       try {
         updateUi();
       } catch {
@@ -1175,10 +1206,10 @@ async function activate(letta) {
     ["llm_end", (event, ctx) => {
       stallWatch.markSettled(cidOf(event, ctx));
       const model = event?.model ?? ctx?.model?.id;
-      const sr = event?.stopReason;
-      if (sr === "error" || sr === "aborted") {
+      const { failed, reason } = classifyLlmEnd(event);
+      if (failed) {
         try {
-          failSeam.report(model, "error");
+          failSeam.report(model, reason);
         } catch {
         }
       } else noteSuccess(model);

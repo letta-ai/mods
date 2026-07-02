@@ -47,7 +47,7 @@ It shows you your models, asks you to check off which ones run locally (this is 
 
 ## Automatic vs. manual: when AutoPivot steps in, and when you do
 
-AutoPivot handles the clear-cut cases for you. A cloud model that errors, rate-limits, or hangs is caught automatically — if a turn doesn't finish in a reasonable window (90 seconds by default), that's unambiguously broken and you get moved down the ladder.
+AutoPivot handles the clear-cut cases for you. A cloud model that errors or rate-limits is caught automatically — on Letta Code 0.27.20+ AutoPivot sees the error the moment it happens and moves you down the ladder instantly (and tells you what broke); on older versions it falls back to a stall timeout, treating a turn that doesn't finish within a reasonable window (90 seconds by default) as broken.
 
 Local models are the exception. A local model can legitimately take minutes to warm up, and there's no reliable way to tell "slow" from "stuck." So AutoPivot doesn't auto-time-out a local model by default — you're the better judge. When you've waited long enough, `/pivot down` moves you on, and `/pivot online` brings you back. (If you'd rather have an automatic backstop even for local models, you can set a timeout for them too.)
 
@@ -55,11 +55,11 @@ One deliberate choice: once AutoPivot drops a model because it failed, it stays 
 
 ## Built for extensibility
 
-AutoPivot is deliberately structured so its detection can grow as Letta Code grows.
+AutoPivot's failure handling is split into a *detector* and a *reaction*, joined by a single internal seam — so a new failure signal can plug in without touching the pivot logic.
 
-Today, Letta Code doesn't tell a mod *why* a model failed — there's no error signal a mod can read, so AutoPivot works from the one clue it does get: a turn that starts and never finishes. That's enough to detect a failure and pivot, but not enough to know whether it was a rate limit, a spent balance, or an auth error — or when the limit resets.
+That design paid off almost immediately. AutoPivot originally detected failures by watching for a turn that starts and never finishes (a stall), because older Letta Code exposed no error signal to a mod. In **Letta Code 0.27.20**, `llm_end` started carrying structured error information — and thanks to the seam, that new signal plugged straight in with zero rework. On 0.27.20+ AutoPivot now fails over the *instant* a model errors, instead of waiting out the stall timeout, and it tells you what broke (e.g. "provider error: rate limit exceeded"). On older versions it automatically falls back to stall detection.
 
-AutoPivot is already wired for the day that changes. Its failure handling is split cleanly into a detector and a reaction, connected by a single internal seam. The moment Letta Code exposes a `provider_error` event, it plugs into that same seam with no rework — and AutoPivot will instantly gain the ability to tell failure types apart and, for rate limits, wait exactly until the limit resets before trying again. The mod is ready to deliver that value as soon as the platform makes it possible.
+What Letta still doesn't expose is *when* a rate limit resets — so AutoPivot deliberately doesn't retry on a timer. A dropped model stays dropped until a later turn on it succeeds or you run `/pivot online`. When a reset time becomes available, the same seam is ready to add timer-based recovery too.
 
 ## Good to know
 

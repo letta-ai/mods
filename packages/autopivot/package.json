@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/autopivot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Letta Code mod that fails an agent over across a priority ladder of models (primary → backup cloud → local) when a model rate-limits, runs out of credit, errors, or drops offline.",
   "author": "chaddorsey",
   "license": "MIT",
@@ -26,8 +26,14 @@
   ],
   "letta": {
     "manifestVersion": 1,
-    "mods": ["./mods/index.mjs"],
-    "capabilities": ["commands", "events.turns", "ui.panels"],
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "commands",
+      "events.turns",
+      "ui.panels"
+    ],
     "engines": {
       "lettaCodeCli": ">=0.27.18"
     }
