@@ -219,7 +219,6 @@ export default function activate(letta: any) {
       // is necessarily stale (interrupted mid-author). Reset it to idle so the panel never opens stuck on
       // "✍️ writing skill…" (the hour-long freeze Adrian hit 2026-06-27). Then repaint immediately.
       try { const s = readUiState(); if (s && s.phase && s.phase !== "done") writeUiState({ phase: "idle", last: "ready", route: "" }); } catch { /* */ }
-      try { panel?.update(); } catch { /* */ } // repaint on load, don't wait for the interval tick
       const t = setInterval(() => { try { panel?.update(); } catch { /* */ } }, 20_000);
       disposers.push(() => { clearInterval(t); try { panel?.close(); } catch { /* */ } });
     } catch { /* UI optional */ }
