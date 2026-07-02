@@ -1,0 +1,48 @@
+{
+    "name":  "@letta-ai/control-room",
+    "version":  "0.1.0",
+    "description":  "Letta Code cockpit and trust guard for goal, progress, verification, and approval state.",
+    "author":  "v3nommy",
+    "license":  "Apache-2.0",
+    "type":  "module",
+    "keywords":  [
+                     "letta-package",
+                     "letta-mod",
+                     "letta-code",
+                     "control-room",
+                     "cockpit",
+                     "verification",
+                     "permissions",
+                     "workflow"
+                 ],
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/letta-ai/mods.git",
+                       "directory":  "packages/control-room"
+                   },
+    "files":  [
+                  "README.md",
+                  "MOD.md",
+                  "mods"
+              ],
+    "letta":  {
+                  "manifestVersion":  1,
+                  "mods":  [
+                               "./mods/index.ts"
+                           ],
+                  "capabilities":  [
+                                       "commands",
+                                       "tools",
+                                       "permissions",
+                                       "ui.panels",
+                                       "events.lifecycle",
+                                       "events.turns",
+                                       "events.tools",
+                                       "events.compact",
+                                       "events.llm"
+                                   ],
+                  "engines":  {
+                                  "lettaCodeCli":  "\u003e=0.27.20"
+                              }
+              }
+}
