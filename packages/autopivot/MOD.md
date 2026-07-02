@@ -31,7 +31,7 @@ telling it it's offline instead of pretending networked actions succeeded.
 
 ## Entry points
 
-- `dist/autopivot.mjs` (bundled from `index.mjs` + `lib/*.mjs`)
+- `mods/index.mjs`
 
 ## Safety
 

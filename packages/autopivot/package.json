@@ -32,10 +32,11 @@
     "capabilities": [
       "commands",
       "events.turns",
+      "events.llm",
       "ui.panels"
     ],
     "engines": {
-      "lettaCodeCli": ">=0.27.18"
+      "lettaCodeCli": ">=0.27.20"
     }
   }
 }
