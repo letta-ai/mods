@@ -133,11 +133,21 @@ function detectPromise(text: string): { promise: string } | null {
 
 // ─── Conversation API ────────────────────────────────────────────
 
+// Runtime-captured IDs — set by the first tool call (list_oaths) via ctx.
+// Falls back to env vars or oath-env.json for headless/polling-only mode.
+let runtimeAgentId = "";
+let runtimeConvId = "";
+
+function captureRuntimeIds(agentId: string, convId: string) {
+  if (agentId && !runtimeAgentId) runtimeAgentId = agentId;
+  if (convId && !runtimeConvId) runtimeConvId = convId;
+}
+
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
   const apiKey = process.env.LETTA_API_KEY;
-  let agentId = process.env.LETTA_AGENT_ID || "";
-  let convId = process.env.LETTA_CONVERSATION_ID || "";
+  let agentId = runtimeAgentId || process.env.LETTA_AGENT_ID || "";
+  let convId = runtimeConvId || process.env.LETTA_CONVERSATION_ID || "";
 
   if (!agentId || !convId) {
     try {
@@ -358,7 +368,11 @@ export default function activate(letta: any) {
       requiresApproval: false,
       parallelSafe: true,
 
-      async run() {
+      async run(ctx: any) {
+        // Capture runtime IDs from tool context — eliminates need for oath-env.json
+        if (ctx?.conversation?.id) captureRuntimeIds(ctx.agent?.id || "", ctx.conversation.id);
+        if (ctx?.agent?.id) captureRuntimeIds(ctx.agent.id, ctx?.conversation?.id || "");
+
         const state = loadState();
         const pending = state.oaths.filter((o) => o.status === "pending");
         const recent = state.oaths.filter(

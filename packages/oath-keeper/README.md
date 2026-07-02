@@ -59,7 +59,7 @@ cp packages/oath-keeper/mods/index.ts ~/.letta/mods/oath-keeper.ts
 
 Then run `/reload` in Letta Code.
 
-For local API access, create `~/.letta/extensions/oath-env.json`:
+The mod auto-discovers conversation and agent IDs from the tool context on first use. For headless/polling-only setups where tools never fire, you can optionally create `~/.letta/extensions/oath-env.json`:
 
 ```json
 {
