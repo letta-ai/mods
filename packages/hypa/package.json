@@ -1,0 +1,62 @@
+{
+  "name": "@letta-ai/hypa",
+  "version": "0.1.0",
+  "description": "Letta Code mod integrating Hypa — a local context runtime that compresses noisy tool output via deterministic, local rewriting.",
+  "author": "robert@enosi.energy",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "hypa",
+    "compression",
+    "context",
+    "tokens",
+    "tool-output",
+    "shell-rewrite"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/hypa"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods",
+    "tests",
+    "tsconfig.json",
+    "biome.json"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check .",
+    "ci": "vitest run && tsc --noEmit && biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "@types/node": "^26.0.1",
+    "fast-check": "^4.8.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "tools",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.20"
+    }
+  }
+}
