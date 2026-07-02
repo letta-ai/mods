@@ -23,7 +23,7 @@ const HOME = os.homedir();
 const STATE_FILE = `${HOME}/.letta/mods/oath-keeper.state.json`;
 const ENV_FILE = `${HOME}/.letta/extensions/oath-env.json`;
 const POLL_INTERVAL_MS = 15_000;
-const DELAY_MS = 5 * 60 * 1000;     // 5 minutes
+const DELAY_MS = 60_000;             // 60s demo mode
 const DEBUG = true;
 
 function log(msg: string) {
@@ -146,15 +146,18 @@ function captureRuntimeIds(agentId: string, convId: string) {
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
   const apiKey = process.env.LETTA_API_KEY;
+  // TUI process sets these to the literal string "unset" — treat as empty
   let agentId = runtimeAgentId || process.env.LETTA_AGENT_ID || "";
   let convId = runtimeConvId || process.env.LETTA_CONVERSATION_ID || "";
+  if (agentId === "unset") agentId = "";
+  if (convId === "unset") convId = "";
 
   if (!agentId || !convId) {
     try {
       const env = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
       agentId = agentId || env.LETTA_AGENT_ID || "";
       convId = convId || env.LETTA_CONVERSATION_ID || "";
-    } catch {}
+    } catch (e) {}
   }
 
   return { baseUrl, apiKey, agentId, convId };
@@ -258,7 +261,7 @@ Deliver on your promise now. Use your tools to investigate if needed. Provide a 
             if (d.message_type === "assistant_message" && d.content) {
               answer = String(d.content).slice(0, 2000);
             }
-          } catch {}
+          } catch (e) {}
         }
         log(`Oath ${oath.id} delivered on attempt ${attempt}`);
         return { success: true, answer: answer || "(delivered)" };
@@ -308,6 +311,7 @@ async function pollCycle() {
 
     // 2. Scan for new promises
     const { agentId, convId } = getApiConfig();
+    saveState(state);
     const latest = await fetchLatestAgentMessage();
     if (latest && state.lastScannedMessageId !== latest.id) {
       state = loadState();
@@ -406,7 +410,9 @@ export default function activate(letta: any) {
   log("list_oaths tool registered");
 
   return () => {
-    for (const d of disposers.reverse()) { try { d(); } catch {}
+    for (const d of disposers.reverse()) {
+      try { d(); } catch (e) {}
+    }
     if (intervalHandle) { clearInterval(intervalHandle); intervalHandle = null; }
   };
 }
