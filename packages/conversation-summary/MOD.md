@@ -12,24 +12,20 @@ Use this mod when the user wants Letta Code's idle statusline to show the curren
 ## Behavior
 
 - Registers an order-0 panel, replacing the built-in agent/model line while idle.
-- Shows the current conversation summary on the left side of the statusline.
+- Shows the host-provided `ctx.conversationSummary` on the left side of the statusline.
 - Renders the agent name and model on the right so the row stays useful when the conversation has no summary yet.
-- Fetches on `conversation_open`; it does not poll.
-- Uses `letta.client.conversations.retrieve(conversationId)` for API-backed conversations.
-- Supports local agents by reading local backend conversation metadata from `~/.letta/lc-local-backend/conversations/<base64url-key>/conversation.json`.
-- Honors `LETTA_LOCAL_BACKEND_DIR` when resolving local backend storage.
+- Does not poll, fetch conversation records, call the model, or read local conversation files.
 - Clears the left segment when the current conversation summary is empty or unavailable.
 
 ## Safety invariants
 
 - Renderer stays synchronous and side-effect-free.
-- API/file reads happen only during activation and lifecycle events, never during render.
-- Local file access is read-only and limited to local backend conversation metadata.
+- The mod only reads host-provided panel context.
 - The panel is closed when the mod is disposed.
-- Panel and lifecycle APIs are capability-guarded.
+- Panel API is capability-guarded.
 
 ## Adaptation notes for agents
 
-- Keep this mod one-fetch-per-open; do not add polling unless the user explicitly wants live title refresh.
+- This package requires Letta Code `>=0.27.21` because it depends on `ctx.conversationSummary` in panel render context.
 - If adding a fallback label, preserve the distinction between “no summary yet” and a real conversation title.
 - If composing with other statusline data, remember an order-0 panel owns the full idle row.
