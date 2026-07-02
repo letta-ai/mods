@@ -4,11 +4,12 @@
  * "Cron is for things you plan. Oath Keeper is for things you promise."
  *
  * Passively detects when agents make follow-up promises and delivers on them.
- * Uses LLM-based detection for robust promise classification.
  *
- * Architecture:
- * - Detection: setInterval polls conversation API every 15s, LLM classifies
- * - Delivery: POST to conversation API with retry on 409
+ * Architecture (dual-mode):
+ * - If events.turns available: turn_end handler (Cameron's approach)
+ * - If not (desktop app, channels): setInterval polling fallback
+ * - Detection: regex patterns (LLM classification optional)
+ * - Delivery: turn_end { continue: prompt } OR REST API POST with retry
  * - State: local JSON file
  */
 
@@ -69,128 +70,13 @@ function saveState(state: State): void {
   }
 }
 
-// ─── Promise Detection (LLM-based) ───────────────────────────────
+// ─── Promise Detection (regex) ───────────────────────────────────
 
-// Cleanup helper: delete throwaway classification conversations
-function cleanupConversation(baseUrl: string, apiKey: string | undefined, convId: string) {
-  if (!convId) return;
-  try {
-    fetch(baseUrl + "/v1/conversations/" + convId, {
-      method: "DELETE",
-      headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
-    }).catch(() => {});
-    log("Cleaned up classification conversation " + convId);
-  } catch (e) {
-    // Non-critical — don't log, just move on
-  }
-}
-
-async function detectPromise(text: string): Promise<{ promise: string; delayMinutes: number } | null> {
+function detectPromiseRegex(text: string): { promise: string } | null {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
   if (text.trim().length < 15) return null;
 
-  // Quick pre-filter — skip messages with no promise indicators
-  const hasIntent = /\b(i|i'll|ill|let me|i will)\b/i.test(text)
-    && /\b(will|'ll|check|look|get back|follow up|back to you|report|update|send|share|verify|investigate|confirm|research|circle|dig)\b/i.test(text);
-  if (!hasIntent) return null;
-
-  // LLM classification via a separate conversation to avoid blocking
-  const { baseUrl, apiKey, agentId } = getApiConfig();
-  if (!agentId) return null;
-
-  const classificationPrompt =
-    'Analyze this assistant message. Does the assistant make a specific promise to do something LATER (after this response)? '
-    + 'A promise means committing to follow up — not just answering inline.\n\n'
-    + 'Message: """' + text.slice(0, 800) + '"""\n\n'
-    + 'Respond with ONLY a JSON object:\n'
-    + '- Promise found: {"promise": "<what they promise to do>", "delay_minutes": <number>}\n'
-    + '- No promise: {}\n\n'
-    + 'Use the delay implied by the message. Default to 5 if no timing specified.';
-
-  try {
-    // Create a throwaway conversation for classification
-    const convResp = await fetch(
-      baseUrl + "/v1/conversations?agent_id=" + agentId,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
-        },
-        body: "{}",
-      }
-    );
-
-    let classConvId = "";
-    if (convResp.ok) {
-      const convData: any = await convResp.json();
-      classConvId = convData.id || "";
-    }
-
-    if (!classConvId) {
-      log("Could not create classification conversation, falling back to regex");
-      return detectPromiseRegex(text);
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-
-    const resp = await fetch(
-      baseUrl + "/v1/conversations/" + classConvId + "/messages",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}),
-        },
-        body: JSON.stringify({ input: classificationPrompt, role: "user" }),
-        signal: controller.signal,
-      }
-    );
-    clearTimeout(timeout);
-
-    if (!resp.ok) {
-      log("Classification API returned " + resp.status + ", falling back to regex");
-      // Cleanup: delete the throwaway conversation
-      cleanupConversation(baseUrl, apiKey, classConvId);
-      return detectPromiseRegex(text);
-    }
-
-    const respText = await resp.text();
-    let result: { promise: string } | null = null;
-    for (const line of respText.split("\n")) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const d = JSON.parse(line.slice(6));
-        if (d.message_type === "assistant_message" && d.content) {
-          const jsonMatch = String(d.content).match(/\{[^}]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.promise && typeof parsed.promise === "string") {
-              const delayMin = typeof parsed.delay_minutes === "number"
-                ? Math.max(1, Math.min(1440, parsed.delay_minutes))  // clamp 1min - 24h
-                : 5;  // default 5 minutes
-              result = { promise: parsed.promise.slice(0, 300), delayMinutes: delayMin };
-              break;
-            }
-          }
-        }
-      } catch (e) {}
-    }
-
-    // Cleanup: delete the throwaway conversation
-    cleanupConversation(baseUrl, apiKey, classConvId);
-
-    return result;
-  } catch (e) {
-    log("LLM detection error: " + e + ", falling back to regex");
-    return detectPromiseRegex(text);
-  }
-}
-
-// Regex fallback (used when LLM classification is unavailable)
-function detectPromiseRegex(text: string): { promise: string; delayMinutes: number } | null {
   const patterns = [
     /i'll get back to (?:you|you on that|you with)/i,
     /i'll follow up/i,
@@ -213,14 +99,39 @@ function detectPromiseRegex(text: string): { promise: string; delayMinutes: numb
       const end = sentEnd === -1 ? text.length : sentEnd + 1;
       const promise = text.slice(sentStart, end).trim();
       if (promise.length > 10 && promise.length < 300) {
-        return { promise, delayMinutes: 5 };
+        return { promise };
       }
     }
   }
   return null;
 }
 
-// ─── Conversation API ────────────────────────────────────────────
+// ─── Delivery prompt builder ─────────────────────────────────────
+
+function buildDeliveryPrompt(oath: Oath): string {
+  return '[Oath Keeper] You previously promised the user:\n"'
+    + oath.promise + '"\n\nOriginal context:\n"' + oath.context
+    + '"\n\nDeliver on your promise now. Use your tools to investigate if needed. '
+    + 'Provide a specific, concise answer. Start your response with "[Oath Delivered]".';
+}
+
+function createOath(promise: string, context: string, conversationId: string, agentId: string): Oath {
+  const now = Date.now();
+  return {
+    id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8),
+    conversationId,
+    agentId,
+    promise,
+    context,
+    createdAt: now,
+    dueAt: now + DELAY_MS,
+    status: "pending",
+    result: null,
+    deliveredAt: null,
+  };
+}
+
+// ─── REST API helpers (polling fallback) ─────────────────────────
 
 function getApiConfig() {
   const baseUrl = process.env.LETTA_BASE_URL || "http://localhost:8283";
@@ -290,7 +201,7 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
   }
 }
 
-async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: string }> {
+async function deliverOathViaApi(oath: Oath): Promise<{ success: boolean; answer: string }> {
   const { baseUrl, apiKey, convId } = getApiConfig();
   const targetConv = (oath.conversationId && oath.conversationId !== "default")
     ? oath.conversationId : convId;
@@ -299,12 +210,8 @@ async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: stri
     return { success: false, answer: "No conversation ID" };
   }
 
-  const prompt = '[Oath Keeper] You previously promised the user:\n"'
-    + oath.promise + '"\n\nOriginal context:\n"' + oath.context
-    + '"\n\nDeliver on your promise now. Use your tools to investigate if needed. '
-    + 'Provide a specific, concise answer. Start your response with "[Oath Delivered]".';
-
-  log("Delivering oath " + oath.id + " to conversation " + targetConv + "...");
+  const prompt = buildDeliveryPrompt(oath);
+  log("Delivering oath " + oath.id + " via API to " + targetConv);
 
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
@@ -356,7 +263,7 @@ async function deliverOath(oath: Oath): Promise<{ success: boolean; answer: stri
   return { success: false, answer: "Max retries exceeded" };
 }
 
-// ─── Main Loop ───────────────────────────────────────────────────
+// ─── Polling fallback (for desktop app / channels) ───────────────
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -365,13 +272,13 @@ async function pollCycle() {
     let state = loadState();
     const now = Date.now();
 
-    // 1. Deliver due oaths
+    // 1. Deliver due oaths via API
     for (const oath of state.oaths) {
       if (oath.status === "pending" && oath.dueAt <= now) {
         oath.status = "delivering";
         saveState(state);
 
-        const result = await deliverOath(oath);
+        const result = await deliverOathViaApi(oath);
 
         state = loadState();
         const o = state.oaths.find((x) => x.id === oath.id);
@@ -391,26 +298,13 @@ async function pollCycle() {
       state.lastScannedMessageId = latest.id;
       saveState(state);
 
-      // LLM-based detection
-      const detection = await detectPromise(latest.text);
+      const detection = detectPromiseRegex(latest.text);
       if (detection) {
         state = loadState();
         const exists = state.oaths.some((o) => o.sourceMessageId === latest.id);
         if (!exists) {
           const { agentId } = getApiConfig();
-          const oath: Oath = {
-            id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8),
-            conversationId: convId,
-            agentId,
-            promise: detection.promise,
-            context: latest.userContext,
-            sourceMessageId: latest.id,
-            createdAt: now,
-            dueAt: now + (detection.delayMinutes * 60 * 1000),
-            status: "pending",
-            result: null,
-            deliveredAt: null,
-          };
+          const oath = createOath(detection.promise, latest.userContext, convId, agentId);
           state.oaths.push(oath);
           log('Promise detected: "' + detection.promise.slice(0, 60) + '..." -> oath ' + oath.id);
         }
@@ -426,18 +320,83 @@ async function pollCycle() {
 
 export default function activate(letta: any) {
   const disposers: Array<() => void> = [];
+  const hasTurnEvents = letta.capabilities.events?.turns === true;
 
   if (!letta.capabilities.tools) {
     log("No tools capability — mod inactive");
     return () => {};
   }
 
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
-  pollCycle();
+  // ── Mode 1: turn_end events (CLI, newer runtimes) ──────────
+  if (hasTurnEvents) {
+    disposers.push(
+      letta.events.on("turn_end", async (event: any, _ctx: any) => {
+        const assistantMessage = event.assistantMessage || "";
 
-  log("Polling started");
+        // Recursion prevention
+        if (assistantMessage.includes("[Oath Keeper]") ||
+            assistantMessage.includes("[Oath Delivered]")) {
+          if (assistantMessage.includes("[Oath Delivered]")) {
+            const state = loadState();
+            let changed = false;
+            for (const o of state.oaths) {
+              if (o.status === "delivering") {
+                o.status = "delivered";
+                o.result = assistantMessage.slice(0, 500);
+                o.deliveredAt = Date.now();
+                changed = true;
+              }
+            }
+            if (changed) saveState(state);
+          }
+          return;
+        }
 
+        const now = Date.now();
+        let state = loadState();
+
+        // Detect promises
+        const detection = detectPromiseRegex(assistantMessage);
+        if (detection) {
+          const exists = state.oaths.some(
+            (o) => o.promise === detection.promise && o.status === "pending"
+          );
+          if (!exists) {
+            const oath = createOath(
+              detection.promise, "(from turn_end event)",
+              event.conversationId || "", event.agentId || ""
+            );
+            state.oaths.push(oath);
+            saveState(state);
+            log('Promise detected via turn_end: "' + detection.promise.slice(0, 60) + '..."');
+          }
+        }
+
+        // Deliver due oaths via continue
+        const dueOath = state.oaths.find(
+          (o) => o.status === "pending" && o.dueAt <= now
+        );
+
+        if (dueOath) {
+          dueOath.status = "delivering";
+          saveState(state);
+          log("Delivering oath " + dueOath.id + " via turn_end continue");
+          return { continue: buildDeliveryPrompt(dueOath) };
+        }
+      })
+    );
+    log("turn_end handler registered (event mode)");
+  }
+
+  // ── Mode 2: setInterval polling (desktop app, channels) ────
+  if (!hasTurnEvents) {
+    if (intervalHandle) clearInterval(intervalHandle);
+    intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
+    pollCycle();
+    log("Polling started (fallback mode — no events available)");
+  }
+
+  // ── list_oaths tool (works in both modes) ───────────────────
   disposers.push(
     letta.tools.register({
       name: "list_oaths",
@@ -461,8 +420,9 @@ export default function activate(letta: any) {
           return "No oaths. Agents have kept their word.";
         }
 
+        const mode = hasTurnEvents ? "events" : "polling";
         const lines: string[] = [
-          "Oath Keeper — " + pending.length + " pending, " + recent.length + " recent",
+          "Oath Keeper (" + mode + ") — " + pending.length + " pending, " + recent.length + " recent",
         ];
         for (const o of pending) {
           const secs = Math.max(0, Math.round((o.dueAt - Date.now()) / 1000));
