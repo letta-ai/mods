@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 const DEFAULT_PROVIDER = "openai-compatible";
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OLLAMA_MODEL = "llava:latest";
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
@@ -43,25 +44,93 @@ function normalizeProvider(value) {
   return provider;
 }
 
+const CONFIG_KEYS = {
+  provider: "string",
+  model: "string",
+  baseUrl: "string",
+  maxTokens: "number",
+  allowCloud: "boolean",
+  allowUrls: "boolean",
+  requireLocal: "boolean",
+  autoCaption: "boolean",
+  autoMode: "string",
+  stripImages: "boolean",
+};
+
+function parseConfigValue(key, value) {
+  const type = CONFIG_KEYS[key];
+  if (type === "boolean") {
+    return !["0", "false", "no", "off", ""].includes(String(value).toLowerCase());
+  }
+  if (type === "number") {
+    const n = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(n)) throw new Error(`${key} must be a number.`);
+    return n;
+  }
+  let s = String(value);
+  if (key === "provider") s = normalizeProvider(s);
+  return s;
+}
+
+// Runtime overrides: set via the image_understand tool's config action.
+// These take precedence over env vars, allowing agents to change settings
+// at runtime without shell access or slash commands.
+const runtimeOverrides = {};
+
+// Persistent config file: written when action=config has persist=true.
+// Loaded at mod activation so settings survive /reload.
+const PERSISTENT_CONFIG_PATH = process.env.IMAGE_UNDERSTANDING_CONFIG_PATH ??
+  path.join(homedir(), ".letta", "mods", "image-understanding.config.json");
+
+function loadPersistentConfig() {
+  try {
+    const raw = JSON.parse(readFileSync(PERSISTENT_CONFIG_PATH, "utf-8"));
+    if (raw && typeof raw === "object") {
+      for (const key of Object.keys(CONFIG_KEYS)) {
+        if (key in raw) {
+          try {
+            runtimeOverrides[key] = parseConfigValue(key, raw[key]);
+          } catch {
+            // skip invalid persisted values
+          }
+        }
+      }
+    }
+  } catch {
+    // no persistent config yet — fine
+  }
+}
+
+function savePersistentConfig() {
+  try {
+    mkdirSync(path.dirname(PERSISTENT_CONFIG_PATH), { recursive: true });
+    const toSave = {};
+    for (const key of Object.keys(runtimeOverrides)) {
+      toSave[key] = runtimeOverrides[key];
+    }
+    writeFileSync(PERSISTENT_CONFIG_PATH, JSON.stringify(toSave, null, 2));
+  } catch {
+    // persistence is best-effort
+  }
+}
+
 function getConfig() {
-  const provider = normalizeProvider(process.env.IMAGE_UNDERSTANDING_PROVIDER);
+  const provider = normalizeProvider(runtimeOverrides.provider ?? process.env.IMAGE_UNDERSTANDING_PROVIDER);
   const openaiApiKey = process.env.IMAGE_UNDERSTANDING_API_KEY || process.env.OPENAI_API_KEY || "";
   return {
     provider,
     apiKey: openaiApiKey,
-    model:
-      process.env.IMAGE_UNDERSTANDING_MODEL ||
-      (provider === "ollama" ? DEFAULT_OLLAMA_MODEL : DEFAULT_OPENAI_MODEL),
-    baseUrl: (
-      process.env.IMAGE_UNDERSTANDING_BASE_URL ||
-      (provider === "ollama" ? DEFAULT_OLLAMA_BASE_URL : DEFAULT_OPENAI_BASE_URL)
-    ).replace(/\/$/, ""),
-    maxTokens: Number.parseInt(process.env.IMAGE_UNDERSTANDING_MAX_TOKENS || "1200", 10),
-    allowCloud: envBool("IMAGE_UNDERSTANDING_ALLOW_CLOUD", true),
-    allowUrls: envBool("IMAGE_UNDERSTANDING_ALLOW_URLS", true),
-    requireLocal: envBool("IMAGE_UNDERSTANDING_REQUIRE_LOCAL", false),
-    autoCaption: envBool("IMAGE_UNDERSTANDING_AUTO_CAPTION", false),
-    autoMode: process.env.IMAGE_UNDERSTANDING_AUTO_MODE || "describe",
+    model: runtimeOverrides.model ?? (process.env.IMAGE_UNDERSTANDING_MODEL ||
+      (provider === "ollama" ? DEFAULT_OLLAMA_MODEL : DEFAULT_OPENAI_MODEL)),
+    baseUrl: (runtimeOverrides.baseUrl ?? (process.env.IMAGE_UNDERSTANDING_BASE_URL ||
+      (provider === "ollama" ? DEFAULT_OLLAMA_BASE_URL : DEFAULT_OPENAI_BASE_URL))).replace(/\/$/, ""),
+    maxTokens: runtimeOverrides.maxTokens ?? Number.parseInt(process.env.IMAGE_UNDERSTANDING_MAX_TOKENS || "1200", 10),
+    allowCloud: runtimeOverrides.allowCloud ?? envBool("IMAGE_UNDERSTANDING_ALLOW_CLOUD", true),
+    allowUrls: runtimeOverrides.allowUrls ?? envBool("IMAGE_UNDERSTANDING_ALLOW_URLS", true),
+    requireLocal: runtimeOverrides.requireLocal ?? envBool("IMAGE_UNDERSTANDING_REQUIRE_LOCAL", false),
+    autoCaption: runtimeOverrides.autoCaption ?? envBool("IMAGE_UNDERSTANDING_AUTO_CAPTION", false),
+    autoMode: runtimeOverrides.autoMode ?? (process.env.IMAGE_UNDERSTANDING_AUTO_MODE || "describe"),
+    stripImages: runtimeOverrides.stripImages ?? envBool("IMAGE_UNDERSTANDING_STRIP_IMAGES", false),
   };
 }
 
@@ -72,6 +141,10 @@ function isHttpUrl(value) {
   } catch {
     return false;
   }
+}
+
+function isDataUrl(value) {
+  return typeof value === "string" && value.startsWith("data:");
 }
 
 function resolveLocalPath(input, cwd) {
@@ -126,7 +199,21 @@ async function urlImage(pathOrUrl, signal) {
   return { bytes, base64: bytes.toString("base64"), mime: contentType, source: pathOrUrl, isUrl: true };
 }
 
+async function dataUrlImage(pathOrUrl) {
+  const match = pathOrUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/is);
+  if (!match) {
+    throw new Error(`Invalid image data URI: ${pathOrUrl.slice(0, 40)}...`);
+  }
+  const [, mime, base64] = match;
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    throw new Error(`Image is too large (${bytes.length} bytes). Limit is ${MAX_IMAGE_BYTES} bytes.`);
+  }
+  return { bytes, base64, mime: mime || "image/png", source: "data-url", isUrl: false };
+}
+
 async function loadImage(pathOrUrl, ctx) {
+  if (isDataUrl(pathOrUrl)) return await dataUrlImage(pathOrUrl);
   return isHttpUrl(pathOrUrl) ? await urlImage(pathOrUrl, ctx.signal) : await localImage(pathOrUrl, ctx.cwd);
 }
 
@@ -259,6 +346,8 @@ async function providerStatus() {
     `require_local: ${config.requireLocal ? "yes" : "no"}`,
     `auto_caption: ${config.autoCaption ? "yes" : "no"}`,
     `auto_mode: ${config.autoMode}`,
+    `strip_images: ${config.stripImages ? "yes" : "no"}`,
+    `config_file: ${PERSISTENT_CONFIG_PATH}`,
     `supported_providers: openai-compatible, ollama`,
     `modes: ${Object.keys(MODE_PROMPTS).join(", ")}`,
   ];
@@ -290,6 +379,9 @@ function imageRefFromPart(part) {
   if (part.source && typeof part.source === "object") {
     if (typeof part.source.path === "string") return part.source.path;
     if (typeof part.source.url === "string") return part.source.url;
+    if (part.source.type === "base64" && typeof part.source.data === "string") {
+      return `data:${part.source.media_type || "image/png"};base64,${part.source.data}`;
+    }
   }
   return null;
 }
@@ -315,12 +407,55 @@ function extractImageRefsFromContent(content) {
   return refs;
 }
 
-function appendTextContent(content, text) {
-  if (typeof content === "string") return `${content}\n\n${text}`;
-  if (Array.isArray(content)) return [...content, { type: "text", text }];
-  return text;
+/**
+ * Replace image parts in message content with replacement text.
+ * Strips any part whose type includes "image" or has an image_url field,
+ * then appends the replacement text as a new text part.
+ * For string content (markdown images), the text is appended as-is since
+ * markdown image syntax is just text and won't cause provider 400s.
+ */
+function replaceImageParts(content, replacementText) {
+  if (typeof content === "string") {
+    const cleaned = content.replace(/!\[[^\]]*\]\([^)]+\)/g, "").trim();
+    if (!replacementText) return cleaned || "[image content removed by image-understanding mod]";
+    return cleaned ? `${cleaned}\n\n${replacementText}` : replacementText;
+  }
+  if (!Array.isArray(content)) return content;
+  const filtered = content.filter((part) => {
+    const type = String(part?.type || "").toLowerCase();
+    const isImage = type.includes("image") || Boolean(part?.image_url);
+    return !isImage;
+  });
+  if (replacementText) {
+    filtered.push({ type: "text", text: replacementText });
+  }
+  // Ensure we never leave the content completely empty after stripping images.
+  const hasText = filtered.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.trim() !== "");
+  if (!hasText) {
+    filtered.push({ type: "text", text: "[image content removed by image-understanding mod]" });
+  }
+  return filtered;
 }
 
+function displayRef(ref) {
+  if (isDataUrl(ref)) {
+    const match = ref.match(/^data:([^;]+);base64,/);
+    return `pasted ${match ? match[1] : "image"}`;
+  }
+  return ref;
+}
+
+function createSystemMessage(content) {
+  return { type: "message", role: "system", content };
+}
+
+/**
+ * Turn handler for auto-caption mode: sends images to a vision backend,
+ * gets text descriptions back, then STRIPS image parts from the user message
+ * and appends a system message with the caption text. This prevents text-only
+ * providers from rejecting the request with 400 "content.type is invalid,
+ * allowed values: ['text']".
+ */
 async function autoCaptionTurn(event, ctx) {
   const config = getConfig();
   if (!config.autoCaption) return;
@@ -334,21 +469,56 @@ async function autoCaptionTurn(event, ctx) {
       try {
         const result = await askVision({ pathOrUrl: ref, mode: config.autoMode }, ctx);
         const text = typeof result === "string" ? result : result.content || JSON.stringify(result);
-        descriptions.push(`Image ${descriptions.length + 1} (${ref}):\n${text}`);
+        descriptions.push(`Image ${descriptions.length + 1} (${displayRef(ref)}):\n${text}`);
       } catch (error) {
-        descriptions.push(`Image ${descriptions.length + 1} (${ref}): auto-caption failed: ${error instanceof Error ? error.message : String(error)}`);
+        descriptions.push(`Image ${descriptions.length + 1} (${displayRef(ref)}): auto-caption failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
   if (descriptions.length === 0) return;
-  const note = `[Auto image understanding (${config.provider}/${config.model})]\n${descriptions.join("\n\n")}`;
-  event.input = input.map((item) => {
+  const imageCount = descriptions.length;
+  const note = `[image-understanding: ${imageCount} image${imageCount === 1 ? "" : "s"} auto-captioned and replaced (via ${config.provider}/${config.model})]\n<image_understanding>\n${descriptions.join("\n\n")}\n</image_understanding>`;
+  notifyUser(`${imageCount} image${imageCount === 1 ? "" : "s"} auto-captioned by ${config.provider}/${config.model}`);
+
+  let changed = false;
+  const strippedInput = input.map((item) => {
     if (!item || item.type === "approval" || item.role !== "user") return item;
     const refs = extractImageRefsFromContent(item.content);
     if (refs.length === 0) return item;
-    return { ...item, content: appendTextContent(item.content, note) };
+    changed = true;
+    return { ...item, content: replaceImageParts(item.content, "") };
   });
+  if (!changed) return;
+  event.input = [...strippedInput, createSystemMessage(note)];
+  return { input: event.input };
+}
+
+/**
+ * Turn handler for strip-images mode: when auto-caption is off but
+ * strip_images is on, removes image parts from user messages and appends a
+ * system message pointing the agent to the image_understand tool. This
+ * protects text-only models from 400 errors without requiring a vision
+ * backend call.
+ */
+function stripImagesTurn(event) {
+  const config = getConfig();
+  if (!config.stripImages || config.autoCaption) return;
+  const input = Array.isArray(event.input) ? event.input : [];
+  let changed = false;
+  let totalImages = 0;
+  const strippedInput = input.map((item) => {
+    if (!item || item.type === "approval" || item.role !== "user") return item;
+    const refs = extractImageRefsFromContent(item.content);
+    if (refs.length === 0) return item;
+    changed = true;
+    totalImages += refs.length;
+    return { ...item, content: replaceImageParts(item.content, "") };
+  });
+  if (!changed) return;
+  const note = `[image-understanding: ${totalImages} image${totalImages === 1 ? "" : "s"} stripped (via ${config.provider}/${config.model})] The user pasted image(s) but the current model is text-only. Use the image_understand tool to inspect them if needed.`;
+  notifyUser(`${totalImages} image${totalImages === 1 ? "" : "s"} stripped from turn (strip_images mode)`);
+  event.input = [...strippedInput, createSystemMessage(note)];
   return { input: event.input };
 }
 
@@ -366,20 +536,81 @@ function parseCommandArgs(args) {
   return { pathOrUrl, question: rest.join(" ").trim() };
 }
 
+/**
+ * Build a user-feedback helper. In TUI/desktop/listener, opens a transient
+ * panel above the input (order=100) and auto-closes after a few seconds.
+ * Falls back silently if no UI panels capability is available.
+ */
+function createNotifier(letta) {
+  if (!letta.capabilities.ui?.panels) {
+    return () => {};
+  }
+  let panel = null;
+  let statusText = "";
+  let hideTimer = null;
+  const show = (text) => {
+    statusText = text;
+    if (!panel) {
+      panel = letta.ui.openPanel({
+        id: "image-understanding-notify",
+        order: 100,
+        render: ({ width, row, chalk }) => {
+          if (!statusText) return "";
+          return row(chalk.dim("image-understanding:"), statusText, width);
+        },
+      });
+    }
+    panel.update();
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      statusText = "";
+      if (panel) {
+        panel.close();
+        panel = null;
+      }
+    }, 5_000);
+  };
+  return show;
+}
+
+// Module-level notifier: set during activation so turn handlers can show
+// transient UI feedback without needing it passed through the harness ctx.
+let notifyUser = () => {};
+
 export default function activate(letta) {
   const disposers = [];
+  // Clear any stale runtime overrides from a previous activation so that
+  // non-persisted settings don't survive /reload when the module is cached.
+  for (const key of Object.keys(runtimeOverrides)) {
+    delete runtimeOverrides[key];
+  }
+  loadPersistentConfig();
+  notifyUser = createNotifier(letta);
 
   if (letta.capabilities.tools) {
     disposers.push(letta.tools.register({
       name: "image_understand",
-      description: "Use a vision model to answer questions about a local image path or image URL when the current model cannot inspect images directly. Supports OpenAI-compatible vision and local Ollama vision backends. Useful for screenshots, UI errors, diagrams, photos, OCR, and visual debugging.",
+      description: "Use a vision model to answer questions about a local image path or image URL when the current model cannot inspect images directly. Supports OpenAI-compatible vision and local Ollama vision backends. Useful for screenshots, UI errors, diagrams, photos, OCR, and visual debugging. Also use action=config to read or change runtime settings for the mod.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["understand", "status"],
-            description: "Use status to inspect provider configuration. Defaults to understand.",
+            enum: ["understand", "status", "config"],
+            description: "Use status to inspect provider configuration. Use config to read or set runtime settings. Defaults to understand.",
+          },
+          config_key: {
+            type: "string",
+            enum: ["provider", "model", "baseUrl", "maxTokens", "allowCloud", "allowUrls", "requireLocal", "autoCaption", "autoMode", "stripImages"],
+            description: "Config key to read or set when action=config. Boolean keys accept true/false/on/off/yes/no/1/0.",
+          },
+          config_value: {
+            type: "string",
+            description: "Value to set for config_key. Omit or leave empty to clear the override and revert to env/default.",
+          },
+          persist: {
+            type: "boolean",
+            description: "If true, write this setting to disk so it survives /reload. Defaults to false (runtime-only).",
           },
           path_or_url: {
             type: "string",
@@ -407,8 +638,32 @@ export default function activate(letta) {
       async run(ctx) {
         const action = String(ctx.args.action || "understand");
         if (action === "status") return await providerStatus();
+        if (action === "config") {
+          const key = ctx.args.config_key;
+          const value = ctx.args.config_value;
+          const persist = ctx.args.persist === true || String(ctx.args.persist).toLowerCase() === "true";
+          if (!key) return await providerStatus();
+          if (!(key in CONFIG_KEYS)) {
+            return { status: "error", content: `Unknown config key "${key}". Available: ${Object.keys(CONFIG_KEYS).join(", ")}` };
+          }
+          if (value === undefined || value === null || value === "") {
+            delete runtimeOverrides[key];
+            if (persist) savePersistentConfig();
+            return `${key} override cleared. Current effective value will be shown by action=status.`;
+          }
+          try {
+            const parsed = parseConfigValue(key, value);
+            runtimeOverrides[key] = parsed;
+            if (persist) savePersistentConfig();
+            const display = typeof parsed === "boolean" ? (parsed ? "on" : "off") : parsed;
+            const scope = persist ? "persistent override" : "runtime override";
+            return `${key} set to ${display} (${scope}).`;
+          } catch (err) {
+            return { status: "error", content: err.message };
+          }
+        }
         const pathOrUrl = String(ctx.args.path_or_url || "").trim();
-        if (!pathOrUrl) return { status: "error", content: "path_or_url is required for image understanding. Use action=status to inspect configuration." };
+        if (!pathOrUrl) return { status: "error", content: "path_or_url is required for image understanding. Use action=status to inspect configuration. Use action=config to change settings." };
         const question = typeof ctx.args.question === "string" ? ctx.args.question : "";
         const detail = typeof ctx.args.detail === "string" ? ctx.args.detail : undefined;
         const mode = typeof ctx.args.mode === "string" ? ctx.args.mode : "describe";
@@ -419,6 +674,7 @@ export default function activate(letta) {
 
   if (letta.capabilities.events?.turns) {
     disposers.push(letta.events.on("turn_start", autoCaptionTurn));
+    disposers.push(letta.events.on("turn_start", stripImagesTurn));
   }
 
   if (letta.capabilities.commands) {
@@ -447,6 +703,10 @@ export default function activate(letta) {
   }
 
   return () => {
+    notifyUser = () => {};
+    for (const key of Object.keys(runtimeOverrides)) {
+      delete runtimeOverrides[key];
+    }
     for (const dispose of disposers.reverse()) dispose();
   };
 }
