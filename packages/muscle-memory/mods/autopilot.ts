@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { AUTOPILOT_STATE, Candidate, MM, MM_TAG, RECEIPTS_DIR, REFLECT_HANDLED, Row, STAGED_DIR, STAGED_RETIRED_DIR, STATE_DIR, agentSkillsDir, appendMeshFeed, appendUiEvent, ensureDir, hash, isManaged, listSkillNames, loadExperience, readSkill, scanDirs, scanSkillContent, skillDesc, slug, writeSkill, writeUiState } from "./core";
-import { DESTRUCTIVE, RepairChain, buildCrossConversationEvidence, detect, detectAntiPatterns, detectRepairChains, impactScore, isValidSkillName } from "./detect";
+import { DESTRUCTIVE, RepairChain, buildCrossConversationEvidence, detect, detectAntiPatterns, detectRepairChains, impactScore, isValidSkillName, multiInstanceSupport } from "./detect";
 import { dedupCheck, draftWithRepair, effectivenessVerdict, findCandidate, lintSkillDraft, repairForCandidate, sotaQualityGaps } from "./gate";
 import { publishPlan, publishSkillToCatalog, publishTier } from "./publish";
 import { ENGRAM, engramConsolidate } from "./engram";
@@ -613,12 +613,16 @@ export function reviewForkAuthor(ctx: any): (sys: string, user: string) => Promi
 
 /** v3.1 AUTONOMOUS REFLECTIVE REVIEW: cross-conversation evidence → forked reviewer → update-first
  * routing + gates → write (staged by default; live in auto mode). Reversible + receipted. The surpass, autonomous. */
-export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; authorFn?: (s: string, u: string) => Promise<string> } = {}): Promise<ReviewResult & { wrote?: string }> {
-  const dirs = scanDirs(ctx);
+export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; minInstances?: number; authorFn?: (s: string, u: string) => Promise<string>; experience?: Row[]; dirs?: string[]; stagedDir?: string } = {}): Promise<ReviewResult & { wrote?: string }> {
+  // dirs/stagedDir injectable (same pattern as `experience`) so callers/tests are hermetic —
+  // scanDirs(ctx) reads the HOST's real shelves (agent MemFS + ~/.letta/skills), which made the
+  // n=1 wiring test pass only on machines with an empty global shelf (fake-green class).
+  const dirs = config.dirs ?? scanDirs(ctx);
+  const stagedShelf = config.stagedDir ?? STAGED_DIR;
   // In staged mode, staged skills are part of the dedupe surface. Otherwise repeated manual reflects
   // can spray near-duplicate staged siblings before review/graduation (live dogfood catch).
-  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, STAGED_DIR];
-  const exp = loadExperience();
+  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, stagedShelf];
+  const exp = config.experience ?? loadExperience();
   const ev = buildCrossConversationEvidence(exp);
   // ENGRAM: the prioritized-replay + reconsolidation brief over the SAME trace. This is the
   // salience-triaged, reverse-replay-credited, reconsolidation-aware evidence that REPLACES a
@@ -655,7 +659,7 @@ export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | 
   if ((res.action === "create" || res.action === "update") && res.name && res.content) {
     const live = config.mode === "auto";
     const graduate = live || res.action === "update" || isHighConfidenceCreate(res, ev);
-    const dir = graduate ? agentSkillsDir(ctx) : STAGED_DIR;
+    const dir = graduate ? agentSkillsDir(ctx) : stagedShelf;
     const tagged = res.content.includes(MM_TAG) ? res.content : res.content + `\n<!-- ${MM_TAG}: reflective ${new Date().toISOString().slice(0, 10)}; action=${res.action}; convs=${ev.convs}; ${graduate ? "graduated=true" : "staged=true"} -->\n`;
     try {
       if (res.action === "create" && !res.updateTarget) {
@@ -665,6 +669,18 @@ export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | 
           appendUiEvent({ phase: "reflect_none", summary: `retire-sticky blocked '${res.name}'` });
           writeUiState({ phase: "idle", last: `retire-sticky blocked '${res.name}'`, route: "SKIP · retired" });
           return { action: "none", name: res.name, reason: retiredBlock } as ReviewResult & { wrote?: string };
+        }
+        // P0 2a · n=1 CREATE gate: a create must be topically grounded in a >=2-instance signal.
+        // The aggregate items floor is NOT enough — an n=1 repair can ride in on an unrelated
+        // recurring workflow (receipt: recovering-from-npx-failures, created 2×, retired 2×).
+        // A second observed instance changes the evidence signature, so parking here never
+        // permanently blocks a pattern that later matures.
+        const n1 = multiInstanceSupport(`${res.name} ${res.description ?? ""}`, ev.signals ?? [], config.minInstances ?? 2);
+        if (!n1.ok) {
+          markHandledReflect(sig, `N1-PARKED:${res.name}`);
+          appendUiEvent({ phase: "reflect_none", summary: `n=1 gate parked '${res.name}': ${n1.reason.slice(0, 120)}` });
+          writeUiState({ phase: "idle", last: `n=1 gate parked '${res.name}'`, route: "SKIP · n=1" });
+          return { action: "none", name: res.name, reason: `n=1 gate: ${n1.reason}` } as ReviewResult & { wrote?: string };
         }
       }
       const oldContent = res.action === "update" && res.updateTarget ? (() => { const d = reviewDirs.find((x) => existsSync(join(x, res.updateTarget!, "SKILL.md"))); return d ? readSkill(d, res.updateTarget!) : undefined; })() : undefined;

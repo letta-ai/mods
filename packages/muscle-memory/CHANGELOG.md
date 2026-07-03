@@ -2,6 +2,45 @@
 
 All notable changes to `@letta-ai/muscle-memory`. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this mod is pre-1.0, so the API may still change.
 
+## [Unreleased]
+
+### Fixed
+- **`reachFn` now binds the extracted method to its receiver** — letta-client `APIResource` methods
+  read `this._client`, so the previous unbound extraction threw at call time and the best-effort
+  catch blocks swallowed it into a silent no-op: the `MM_NATIVE=blocks` neocortex sync never actually
+  landed a block. Caught benchmarking live against a real Letta agent; regression test in
+  `test/native-fit.test.ts`, live block-readback verified.
+
+### Added
+- **n=1 CREATE gate** (`multiInstanceSupport`, wired into the reflect lane) — a reflect-lane CREATE must
+  be topically grounded in an evidence signal observed **≥2 distinct instances** (count or conversation
+  spread). The aggregate items floor was not enough: an n=1 repair could ride in on an unrelated recurring
+  workflow and become a command-shaped skill (live receipt: `recovering-from-npx-failures`, "Observed 1×
+  across 1 session", created twice on consecutive days and retired twice). Parked creates never block a
+  pattern permanently — a second observed instance changes the evidence signature and re-opens the route.
+- **Structured evidence signals** — `buildCrossConversationEvidence` now returns `signals[]` (per-signal
+  `label`/`kind`/`count`/`convs`) alongside the prose digest, so create-gates count instances instead of
+  guessing from text.
+- **Staged shelf in the CREATE dedupe surface** (`createDedupeSurface`) — manual `create` and
+  `create_from_candidate` now dedupe against agent + global + **staged** shelves, so a near-duplicate of a
+  not-yet-graduated skill routes to PATCH instead of spraying siblings.
+- **Retired-skill quarantine in `dedupCheck`** — near-duplicates of *retired* skills under a **different
+  name** are refused with a restore/absorb hint (`retiredSkillBlocker` already caught same-name recreates;
+  this catches renamed clones).
+- **`test/create-gates.test.ts`** — deterministic regression suite for the duplicate-create class: the
+  n=1 hole, instance borrowing from unrelated signals, ungrounded creates, staged-sibling dedupe, and
+  retired-clone quarantine.
+
+### Changed
+- **Hermetic reflect-lane testing** — `runReflectiveReview` now accepts injectable `dirs`/`stagedDir`
+  (same pattern as `experience`). The n=1 wiring test previously scanned the HOST's real skill shelves
+  (`~/.letta/skills`): on a populated machine the ambiguous-route guard fired before the n=1 gate and
+  the test failed — green only on an empty shelf. The test now pins empty tmp shelves.
+- **`HIGH_SIGNAL_TOOL_SET` is configuration, not hardcoded vocabulary** — the shipped set contained
+  deployment-specific tool names from the authors' own rigs. It now defaults to empty and is populated
+  via `MM_HIGH_SIGNAL_TOOLS` (comma-separated tool names); configured tools get a stable arg-shape
+  fingerprint template. The per-tool template special-cases for those private tools were removed.
+
 ## [0.6.0] — 2026-06-28
 
 The "skill library that maintains itself" release. Observe → distill/update → quality-gate → graduate →
