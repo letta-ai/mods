@@ -417,7 +417,7 @@ function extractImageRefsFromContent(content) {
 function replaceImageParts(content, replacementText) {
   if (typeof content === "string") {
     const cleaned = content.replace(/!\[[^\]]*\]\([^)]+\)/g, "").trim();
-    if (!replacementText) return cleaned || content;
+    if (!replacementText) return cleaned || "[image content removed by image-understanding mod]";
     return cleaned ? `${cleaned}\n\n${replacementText}` : replacementText;
   }
   if (!Array.isArray(content)) return content;
@@ -579,6 +579,11 @@ let notifyUser = () => {};
 
 export default function activate(letta) {
   const disposers = [];
+  // Clear any stale runtime overrides from a previous activation so that
+  // non-persisted settings don't survive /reload when the module is cached.
+  for (const key of Object.keys(runtimeOverrides)) {
+    delete runtimeOverrides[key];
+  }
   loadPersistentConfig();
   notifyUser = createNotifier(letta);
 
@@ -699,6 +704,9 @@ export default function activate(letta) {
 
   return () => {
     notifyUser = () => {};
+    for (const key of Object.keys(runtimeOverrides)) {
+      delete runtimeOverrides[key];
+    }
     for (const dispose of disposers.reverse()) dispose();
   };
 }
