@@ -200,12 +200,15 @@ async function urlImage(pathOrUrl, signal) {
 }
 
 async function dataUrlImage(pathOrUrl) {
-  const match = pathOrUrl.match(/^data:([^;]+);base64,(.+)$/);
+  const match = pathOrUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/is);
   if (!match) {
-    throw new Error(`Invalid data URL: ${pathOrUrl.slice(0, 40)}...`);
+    throw new Error(`Invalid image data URI: ${pathOrUrl.slice(0, 40)}...`);
   }
   const [, mime, base64] = match;
   const bytes = Buffer.from(base64, "base64");
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    throw new Error(`Image is too large (${bytes.length} bytes). Limit is ${MAX_IMAGE_BYTES} bytes.`);
+  }
   return { bytes, base64, mime: mime || "image/png", source: "data-url", isUrl: false };
 }
 
@@ -413,7 +416,9 @@ function extractImageRefsFromContent(content) {
  */
 function replaceImageParts(content, replacementText) {
   if (typeof content === "string") {
-    return replacementText ? `${content}\n\n${replacementText}` : content;
+    const cleaned = content.replace(/!\[[^\]]*\]\([^)]+\)/g, "").trim();
+    if (!replacementText) return cleaned || content;
+    return cleaned ? `${cleaned}\n\n${replacementText}` : replacementText;
   }
   if (!Array.isArray(content)) return content;
   const filtered = content.filter((part) => {
