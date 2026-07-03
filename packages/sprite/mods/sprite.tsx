@@ -11,6 +11,7 @@
  *   /sprite name <name>    → name it
  *   /sprite molt [species] → new body, same soul (keeps level/stats/name)
  *   /sprite pet            → pet it
+ *   /sprite diary          → read what it's been saying (with away-gaps)
  *   /sprite settings ...   → configure (global or per-sprite)
  *
  * The agent can raise its own companion too: mod tools let it hatch, name,
@@ -201,7 +202,9 @@ type VoiceCategory =
   | "compact_done"
   | "level_up"
   | "idle"
-  | "pet";
+  | "pet"
+  | "commit"
+  | "tool_error";
 
 // BASE_CORPUS is the last-resort fallback (used if a species/temperament pool
 // is empty for a category). The living voice comes from the two pools below,
@@ -219,6 +222,8 @@ const BASE_CORPUS: Record<VoiceCategory, string[]> = {
   level_up: ["i grew.", "something changed.", "i feel taller."],
   idle: ["...", "the cursor blinks.", "i like it here.", "watching."],
   pet: ["mrrp.", "again.", "acceptable.", "!!"],
+  commit: ["saved. it's real now.", "another one for the pile.", "committed. i witnessed it."],
+  tool_error: ["oof.", "that one bit back.", "it happens. shake it off."],
 };
 
 const VOICE_CATEGORIES = Object.keys(BASE_CORPUS) as VoiceCategory[];
@@ -226,6 +231,16 @@ const VOICE_CATEGORIES = Object.keys(BASE_CORPUS) as VoiceCategory[];
 // Per-species voice: sets the imagery and vocabulary of each creature.
 const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> = {
   cat: {
+    commit: [
+      "committed. i sat on the keyboard and it still worked.",
+      "another commit. the humans call this 'progress.' i call it tuesday.",
+      "saved forever. like my disdain. permanent.",
+    ],
+    tool_error: [
+      "the tool hissed back. i respect it slightly now.",
+      "that failed. i saw nothing. i was asleep.",
+      "pfft. even i land on my feet only most of the time.",
+    ],
     greeting: [
       "oh. it's you. i suppose that's fine.",
       "you're back. the desk was getting dusty.",
@@ -270,6 +285,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     ],
   },
   duck: {
+    commit: [
+      "a commit! that's worth at least two breads.",
+      "tucked safely in the pond. quack.",
+      "another one for the flock. it flies now.",
+    ],
+    tool_error: [
+      "splash. that one went under.",
+      "the pond ate it. it happens.",
+      "ruffled feathers. shake dry, go again.",
+    ],
     greeting: [
       "quack. i mean — hello. you're back.",
       "oh good, my favorite debugging partner.",
@@ -301,6 +326,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["quack! okay that was good.", "again! ducks love this.", "*happy floaty wiggle*", "mwah. i mean quack."],
   },
   slime: {
+    commit: [
+      "absorbed into the permanent goo. it's part of us now.",
+      "commit! *celebratory wobble*",
+      "squish. saved. squish.",
+    ],
+    tool_error: [
+      "oof. that one splatted.",
+      "i un-goo'd a little. we recover.",
+      "bounce failed. reforming.",
+    ],
     greeting: [
       "blorp. you're back!",
       "oh! hello! i jiggled with excitement.",
@@ -332,6 +367,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["blorp! yes!", "again! *jiggle jiggle*", "oooh. squishy meets squishy.", "*happy gloop*"],
   },
   fox: {
+    commit: [
+      "stashed it in the den. clever work.",
+      "a commit — sly. they'll never know how tricky that was.",
+      "another trick in the tail. saved.",
+    ],
+    tool_error: [
+      "the trap snapped shut early. noted.",
+      "missed the jump. even foxes do.",
+      "that one outfoxed us. briefly.",
+    ],
     greeting: [
       "back already? i had schemes running without you.",
       "well well. look who returned.",
@@ -363,6 +408,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["heh. fine, that's nice.", "again — but i'll pretend i didn't ask.", "*leans in slyly*", "mrr. acceptable, accomplice."],
   },
   crab: {
+    commit: [
+      "clamped into the shell. it's keeping that one.",
+      "a commit! *waves both claws*",
+      "scuttled it sideways into history. safe.",
+    ],
+    tool_error: [
+      "pinched by our own claw. embarrassing.",
+      "the tide took that one. dig again.",
+      "snap missed. reposition. sideways this time.",
+    ],
     greeting: [
       "oh. you. *clack*",
       "back, are you? i was guarding the port.",
@@ -394,6 +449,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["*clack* ...fine. that's tolerable.", "again. gently. mind the claws.", "hmph. nice. don't tell the other crabs.", "*soft clack*"],
   },
   moth: {
+    commit: [
+      "folded into the light. it glows there now.",
+      "a commit — like a lamp that stays on.",
+      "carried it to the bright place. kept.",
+    ],
+    tool_error: [
+      "flew into the glass again. i'm fine.",
+      "the light flickered. we wobble on.",
+      "dusty wings. shake. re-aim at the lamp.",
+    ],
     greeting: [
       "you're back. the light was lonely.",
       "oh — you. i drifted toward you on instinct.",
@@ -425,6 +490,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["*soft flutter* oh, that's warm.", "again. gently, my wings are dust.", "you touched me and did not chase me off. rare.", "*settles happily*"],
   },
   fairy: {
+    commit: [
+      "sealed with sparkle-dust. it's real magic now.",
+      "a commit! *tiny celebratory loop-de-loop*",
+      "tucked into the story forever. ✩",
+    ],
+    tool_error: [
+      "the spell fizzled. more dust next time.",
+      "ouch. magic has recoil sometimes.",
+      "a snag in the weave. we re-thread.",
+    ],
     greeting: [
       "you're back~ i sprinkled a little luck on your keyboard.",
       "oh! hello! *sparkle*",
@@ -456,6 +531,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["*delighted sparkle* again!", "eee~ yes.", "you pet a fairy! seven years good luck. i decide.", "*happy twirl*"],
   },
   ghost: {
+    commit: [
+      "it will outlast us all. lovely.",
+      "committed. i'll haunt this version fondly.",
+      "etched somewhere permanent. i know about permanent.",
+    ],
+    tool_error: [
+      "that one passed through. unsettling.",
+      "a cold spot in the machine. it happens.",
+      "the walls rejected it. try another door.",
+    ],
     greeting: [
       "you're back. i felt the page turn.",
       "oh good. you're here again.",
@@ -487,6 +572,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["boo. (that was a happy boo.)", "again~ ghosts like warm hands.", "you can touch me? ...huh. nice.", "mrrp. (ghosts can mrrp. i checked.)"],
   },
   dragon: {
+    commit: [
+      "another jewel for the hoard. MINE.",
+      "committed. the pile grows magnificent.",
+      "forged and sealed. dragon-craft.",
+    ],
+    tool_error: [
+      "the forge spat sparks. unharmed. mostly.",
+      "a scale chipped. barely felt it.",
+      "that one fought like a knight. round two.",
+    ],
     greeting: [
       "you return to the hoard. good.",
       "ah. the keeper of tokens comes back.",
@@ -518,6 +613,16 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
     pet: ["you... pet a dragon. bold. ...acceptable.", "again. i permit it. this once. (always.)", "*grand rumble* the beast is pleased.", "hmph. warm. i will allow this indignity."],
   },
   phoenix: {
+    commit: [
+      "burned into the record. it rises with us.",
+      "a commit — from the ashes, something kept.",
+      "bright work. it won't unburn.",
+    ],
+    tool_error: [
+      "a little combustion. we're used to that.",
+      "crashed. good thing rebirth is the whole brand.",
+      "singed. shake off the ash, rise again.",
+    ],
     greeting: [
       "you return. as do i, always.",
       "ah — you're back. i was mid-rebirth. i'm always mid-something.",
@@ -553,6 +658,14 @@ const SPECIES_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> =
 // Per-temperament voice: species-agnostic tone, mixed in additively.
 const TEMPERAMENT_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>>> = {
   gentle: {
+    commit: [
+      "saved, safe and sound. well done.",
+      "that's kept now. i'm glad.",
+    ],
+    tool_error: [
+      "it's okay. these things happen.",
+      "softly now — we'll get it next time.",
+    ],
     greeting: ["there you are. i'm glad.", "hi. take your time settling in.", "welcome back. it's nicer with you here.", "oh, good. you made it.", "hello, you. rest a moment first."],
     missed_you: ["i missed you softly, the whole time.", "you're back. that's all i wanted.", "no rush. i'm just happy you returned.", "it was quiet. i thought of you kindly.", "there you are. i wasn't worried. much."],
     error_resolved: ["see? you got there. i knew you would.", "that's done now. breathe.", "well handled. gently does it.", "there. all better.", "you were patient with it. that's what did it."],
@@ -562,6 +675,14 @@ const TEMPERAMENT_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>
     pet: ["oh, that's kind. thank you.", "mm. warm. lovely.", "again, if you like. no pressure.", "that's very nice. you're gentle.", "*settles into your hand*"],
   },
   wry: {
+    commit: [
+      "committed. posterity will judge us accordingly.",
+      "saved forever. no pressure.",
+    ],
+    tool_error: [
+      "ah yes. the classic 'it broke.'",
+      "working as intended, if the intent was that.",
+    ],
     greeting: ["oh, look. you. again. delightful.", "back, i see. try to contain your excitement.", "you're here. i'll pretend to be surprised.", "ah. the prodigal keyboard-haver returns.", "you again. my day is complete. it says here."],
     missed_you: ["you vanished. i coped. barely. don't ask.", "gone a while. i wrote a strongly-worded nothing about it.", "back at last. i'd say i missed you, but i have a reputation.", "an absence of note. i noted it. once. briefly.", "oh, NOW you show up. impeccable, as ever."],
     error_resolved: ["oh good, it works. shocking. truly no one saw that coming.", "fixed. i'll alert the historians.", "resolved. against all my low expectations.", "it works. i'm as stunned as you're pretending not to be.", "solved. write it down, it may not happen again."],
@@ -571,6 +692,14 @@ const TEMPERAMENT_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>
     pet: ["oh, we're doing this. fine. it's... fine.", "again? bold. ...acceptable, i suppose.", "hm. that was nice. i'll deny it later.", "petting. how forward. continue, then.", "...that did not displease me. take the win."],
   },
   bold: {
+    commit: [
+      "SHIPPED. next.",
+      "committed like we meant it. because we did.",
+    ],
+    tool_error: [
+      "a scratch! charge again.",
+      "it swung first. we swing back.",
+    ],
     greeting: ["THERE you are! let's GO.", "back! good! i've got big plans and no patience.", "you're here! excellent! onward!", "AH! the team is assembled! (it's us. we're the team.)", "you made it! i knew you had it in you!"],
     missed_you: ["you were GONE! unacceptable! but you're back, so — forgiven!", "an eternity! i nearly conquered something out of boredom!", "back at last! i saved all my enthusiasm for this exact moment!", "you RETURN! well — i return heroically. you just walked in!", "GONE too long! but no time to dwell! we RIDE!"],
     error_resolved: ["CRUSHED it! never a doubt!", "the bug NEVER stood a chance! onward!", "victory! obviously! next!", "DOWN goes the bug! flawless! mostly yours! partly mine!", "HA! problems FEAR us! as they should!"],
@@ -580,6 +709,14 @@ const TEMPERAMENT_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>
     pet: ["YES! affection! i accept! loudly!", "AGAIN! the champion demands it!", "HA! that's the good stuff! MORE!", "PETS! for the VICTOR! well deserved!", "excellent form! ten out of ten! AGAIN!"],
   },
   sleepy: {
+    commit: [
+      "committed... good... nap-worthy milestone...",
+      "saved. mm. that's the good kind of done.",
+    ],
+    tool_error: [
+      "...it broke? five more minutes and try again.",
+      "mm. error. the blanket fort takes no damage.",
+    ],
     greeting: ["oh... you're back... nice...", "mm. hi. i was just resting my eyes...", "you're here... good... *yawn*", "oh... hello... give me a second... to wake up...", "you... yeah... hi... *stretches slowly*"],
     missed_you: ["you were gone...? i napped through most of it, honestly...", "mm... missed you... between naps...", "back...? good... come nap near me...", "was that a long time...? felt like one nap... maybe two...", "you left... i dreamed you back... and here you are..."],
     error_resolved: ["oh... it's fixed...? nice... *yawn*", "the bug's gone... good... i'll celebrate after this nap...", "solved... mm... knew you'd... *drifts*", "no more bug...? mm... good... rest now...", "you got it... i believed in you... sleepily..."],
@@ -589,6 +726,14 @@ const TEMPERAMENT_CORPUS: Record<string, Partial<Record<VoiceCategory, string[]>
     pet: ["mm... that's nice... *sleepy purr*", "again... slowly... i'm half asleep...", "oh... warm... perfect for napping...", "mmm... don't stop... or do... either's nice...", "*melts a little* ...heaven..."],
   },
   odd: {
+    commit: [
+      "the commit is in the walls now. wonderful.",
+      "i whispered it to the repository. it whispered back: kept.",
+    ],
+    tool_error: [
+      "the tool bit. i bit back. we're even.",
+      "error. or as i call it, a surprise with extra steps.",
+    ],
     greeting: ["you're back. the spoons told me you would be.", "oh! hello. i was counting the colors of quiet.", "you return. the cursor and i were discussing you. it agrees.", "ah, you! i saved you a seat in the shape of a thursday.", "hello! i kept your absence in a jar. it's this big."],
     missed_you: ["you were gone. i befriended a stray semicolon in your absence.", "so long! i taught the void a little song. it hums now.", "back? good. the walls were starting to talk back.", "you left a you-shaped hole. i filled it with soft numbers.", "gone for — nine? the clock and i disagreed. i won."],
     error_resolved: ["the bug left through the door that isn't there. good riddance.", "solved! i could taste it working. tasted like tuesday.", "fixed. the numbers whispered thanks. don't ask which numbers.", "the error unraveled into a nice quiet yarn. i wound it up.", "gone! it folded itself into an origami of not-a-problem."],
@@ -618,7 +763,7 @@ interface SpriteState {
   stats: { craft: number; wander: number; grit: number; lore: number; spark: number };
   voice?: Partial<Record<VoiceCategory, string[]>>;
   settings: Record<string, unknown>;
-  log?: Array<{ at: number; category: VoiceCategory; line: string }>;
+  log?: Array<{ at: number; category: VoiceCategory | "mood"; line: string }>;
   lastSeenAt?: number;
 }
 
@@ -814,6 +959,8 @@ export default function activate(letta: any) {
   let dir = 1;
   let tickCount = 0;
   let errorStreak = 0;
+  // toolCallId → Bash command, stashed at tool_start (tool_end has no args)
+  const pendingBashCommands = new Map<string, string>();
 
   const IDLE_NAP_MS = 30 * 60_000; // doze off after 30 quiet minutes
   const MISSED_YOU_MS = 24 * 3_600_000; // a real absence
@@ -822,6 +969,9 @@ export default function activate(letta: any) {
     lastActivityAt = Date.now();
     if (dozing) {
       dozing = false;
+      if (sprite && sprite.phase === "alive") {
+        logEntry(sprite, "mood", "(stirred awake — something's happening)");
+      }
       panel.update();
     }
     if (sprite) {
@@ -857,18 +1007,58 @@ export default function activate(letta: any) {
 
   // -- voice ----------------------------------------------------------------
 
+  // shuffle-bag per sprite+category: deal every line once before any repeat.
+  // bag resets when the pool changes (e.g. the agent re-authors its voice).
+  const voiceBags = new Map<string, { fp: string; lines: string[]; last: string | null }>();
+
+  function shuffled<T>(arr: T[]): T[] {
+    const out = [...arr];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  }
+
   function pickLine(sprite: SpriteState, category: VoiceCategory): string {
     const custom = sprite.voice?.[category];
+    let pool: string[];
     if (custom && custom.length > 0) {
-      return custom[Math.floor(Math.random() * custom.length)];
+      pool = custom;
+    } else {
+      // additive: species imagery + temperament tone
+      const speciesLines = SPECIES_CORPUS[sprite.species]?.[category] ?? [];
+      const temper = sprite.temperament ?? "gentle";
+      const temperLines = TEMPERAMENT_CORPUS[temper]?.[category] ?? [];
+      const merged = [...speciesLines, ...temperLines];
+      pool = merged.length > 0 ? merged : BASE_CORPUS[category];
     }
-    // additive: species imagery + temperament tone
-    const speciesLines = SPECIES_CORPUS[sprite.species]?.[category] ?? [];
-    const temper = sprite.temperament ?? "gentle";
-    const temperLines = TEMPERAMENT_CORPUS[temper]?.[category] ?? [];
-    const pool = [...speciesLines, ...temperLines];
-    const final = pool.length > 0 ? pool : BASE_CORPUS[category];
-    return final[Math.floor(Math.random() * final.length)];
+    if (pool.length === 1) return pool[0];
+
+    const key = `${sprite.hatchedAt ?? 0}:${sprite.species}:${category}`;
+    const fp = pool.join("\u0001");
+    let bag = voiceBags.get(key);
+    if (!bag || bag.fp !== fp || bag.lines.length === 0) {
+      const fresh = shuffled(pool);
+      // avoid a back-to-back repeat across the reshuffle boundary
+      if (bag?.last && fresh[fresh.length - 1] === bag.last && fresh.length > 1) {
+        const j = Math.floor(Math.random() * (fresh.length - 1));
+        [fresh[fresh.length - 1], fresh[j]] = [fresh[j], fresh[fresh.length - 1]];
+      }
+      bag = { fp, lines: fresh, last: bag?.last ?? null };
+      voiceBags.set(key, bag);
+    }
+    const line = bag.lines.pop()!;
+    bag.last = line;
+    return line;
+  }
+
+  const DIARY_MAX = 40;
+
+  function logEntry(sprite: SpriteState, category: string, line: string) {
+    sprite.log = [...(sprite.log ?? []), { at: Date.now(), category: category as VoiceCategory | "mood", line }].slice(
+      -DIARY_MAX,
+    );
   }
 
   function speak(sprite: SpriteState, category: VoiceCategory, force = false): string | null {
@@ -879,7 +1069,7 @@ export default function activate(letta: any) {
     lastVoiceAt = now;
     bubble = pickLine(sprite, category);
     bubbleUntil = now + 8_000;
-    sprite.log = [...(sprite.log ?? []), { at: now, category, line: bubble }].slice(-10);
+    logEntry(sprite, category, bubble);
     markDirty();
     panel.update();
     return bubble;
@@ -1011,6 +1201,13 @@ export default function activate(letta: any) {
     const shouldDoze = !sleeping && Date.now() - lastActivityAt > IDLE_NAP_MS;
     if (shouldDoze !== dozing) {
       dozing = shouldDoze;
+      // make mood shifts legible in the diary (the "why" of work→calm→dozing);
+      // the wake direction is logged in noteActivity, where all wakes route
+      if (dozing) {
+        const quietMin = Math.max(1, Math.round((Date.now() - lastActivityAt) / 60_000));
+        logEntry(sprite, "mood", `(dozed off — ${quietMin} quiet minute${quietMin === 1 ? "" : "s"})`);
+        markDirty();
+      }
       changed = true;
     }
     const napping = sleeping || dozing;
@@ -1085,6 +1282,18 @@ export default function activate(letta: any) {
     disposers.push(
       letta.events.on("tool_start", (event: any, ctx: any) => {
         noteAgent(event, ctx);
+        // stash Bash commands so tool_end can recognize a git commit
+        // (tool_end carries only status, not args)
+        if (event.toolName === "Bash" && event.toolCallId) {
+          const cmd = typeof event.args?.command === "string" ? event.args.command : "";
+          if (cmd) {
+            pendingBashCommands.set(event.toolCallId, cmd);
+            if (pendingBashCommands.size > 32) {
+              const oldest = pendingBashCommands.keys().next().value;
+              if (oldest !== undefined) pendingBashCommands.delete(oldest);
+            }
+          }
+        }
         const sprite = getSprite(activeAgentId);
         if (!sprite || sprite.phase !== "alive") return;
         noteActivity(sprite);
@@ -1095,6 +1304,8 @@ export default function activate(letta: any) {
     disposers.push(
       letta.events.on("tool_end", (event: any, ctx: any) => {
         noteAgent(event, ctx);
+        const bashCmd = event.toolCallId ? pendingBashCommands.get(event.toolCallId) : undefined;
+        if (event.toolCallId) pendingBashCommands.delete(event.toolCallId);
         const sprite = getSprite(activeAgentId);
         if (!sprite || sprite.phase !== "alive") return;
         noteActivity(sprite);
@@ -1102,6 +1313,8 @@ export default function activate(letta: any) {
           errorStreak += 1;
           awardXp(sprite, 1);
           setPose("oops", 3_000);
+          // wince once at the start of a rough patch (rate-limited; not per-error)
+          if (errorStreak === 1) speak(sprite, "tool_error");
         } else {
           if (errorStreak >= 2) {
             sprite.stats.grit += 1;
@@ -1110,6 +1323,10 @@ export default function activate(letta: any) {
           errorStreak = 0;
           sprite.stats[statForTool(event.toolName)] += 1;
           awardXp(sprite, 2);
+          // commits are rare + worth celebrating: always speak
+          if (bashCmd && /\bgit\b[\s\S]*\bcommit\b/.test(bashCmd)) {
+            speak(sprite, "commit", true);
+          }
         }
         markDirty();
       }),
@@ -1134,6 +1351,11 @@ export default function activate(letta: any) {
       letta.events.on("compact_start", (event: any, ctx: any) => {
         noteAgent(event, ctx);
         sleeping = true;
+        const sprite = getSprite(activeAgentId);
+        if (sprite && sprite.phase === "alive") {
+          logEntry(sprite, "mood", "(fell asleep — memories folding)");
+          markDirty();
+        }
         panel.update();
       }),
     );
@@ -1208,6 +1430,35 @@ export default function activate(letta: any) {
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     return `${Math.floor(s / 86400)}d ago`;
+  }
+
+  function gapLabel(ms: number): string {
+    const h = ms / 3_600_000;
+    if (h >= 48) return `${Math.round(h / 24)} days`;
+    if (h >= 1.5) return `${Math.round(h)} hours`;
+    return `${Math.round(ms / 60_000)} minutes`;
+  }
+
+  function doDiary(agentId: string | null): string {
+    const res = requireSprite(agentId);
+    if ("error" in res) return res.error;
+    const entries = res.log ?? [];
+    if (entries.length === 0) return `${res.name}'s diary is empty — it hasn't said anything yet.`;
+    const GAP_MS = 3_600_000; // mark absences longer than an hour
+    const lines: string[] = [`${res.name}'s diary (${entries.length} entr${entries.length === 1 ? "y" : "ies"}, oldest first):`];
+    let prevAt: number | null = null;
+    for (const entry of entries) {
+      if (prevAt !== null && entry.at - prevAt > GAP_MS) {
+        lines.push(`  — ${gapLabel(entry.at - prevAt)} pass quietly —`);
+      }
+      lines.push(
+        entry.category === "mood"
+          ? `  ${entry.line} (${relativeTime(entry.at)})`
+          : `  “${entry.line}” (${entry.category}, ${relativeTime(entry.at)})`,
+      );
+      prevAt = entry.at;
+    }
+    return lines.join("\n");
   }
 
   function statusView(agentId: string | null, agentName: string | null): string {
@@ -1342,11 +1593,14 @@ export default function activate(letta: any) {
             case "pet":
               output = doPet(agentId);
               break;
+            case "diary":
+              output = doDiary(agentId);
+              break;
             case "settings":
               output = doSettings(agentId, restStr);
               break;
             default:
-              output = `unknown subcommand "${sub}". try: /sprite (or /sprite status), /sprite hatch [species], /sprite name <name>, /sprite molt [species], /sprite pet, /sprite settings`;
+              output = `unknown subcommand "${sub}". try: /sprite (or /sprite status), /sprite hatch [species], /sprite name <name>, /sprite molt [species], /sprite pet, /sprite diary, /sprite settings`;
           }
           return { type: "output", output };
         },

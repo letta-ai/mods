@@ -60,6 +60,7 @@ what it said recently — how the owner hears its companion.
 | `/sprite name <name>` | Name / rename it |
 | `/sprite molt [species]` | New body, same soul — keeps name, level, stats |
 | `/sprite pet` | Pet it |
+| `/sprite diary` | Read its recent utterances, oldest-first, with away-gap markers |
 | `/sprite settings [global] [key] [value]` | Configure (per-sprite overrides beat global) |
 
 Settings keys: `voice on|off`, `voiceRateMin <minutes>`, `visible on|off`.
