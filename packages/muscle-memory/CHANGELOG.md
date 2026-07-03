@@ -4,6 +4,13 @@ All notable changes to `@letta-ai/muscle-memory`. Format loosely follows [Keep a
 
 ## [Unreleased]
 
+### Fixed
+- **`reachFn` now binds the extracted method to its receiver** — letta-client `APIResource` methods
+  read `this._client`, so the previous unbound extraction threw at call time and the best-effort
+  catch blocks swallowed it into a silent no-op: the `MM_NATIVE=blocks` neocortex sync never actually
+  landed a block. Caught benchmarking live against a real Letta agent; regression test in
+  `test/native-fit.test.ts`, live block-readback verified.
+
 ### Added
 - **n=1 CREATE gate** (`multiInstanceSupport`, wired into the reflect lane) — a reflect-lane CREATE must
   be topically grounded in an evidence signal observed **≥2 distinct instances** (count or conversation

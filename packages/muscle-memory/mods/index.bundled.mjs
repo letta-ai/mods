@@ -1962,12 +1962,14 @@ function nativeEnabled(channel) {
 }
 function reachFn(root, path) {
   let cur = root;
+  let receiver = null;
   for (const key of path) {
     if (!cur || typeof cur !== "object")
       return null;
+    receiver = cur;
     cur = Reflect.get(cur, key);
   }
-  return typeof cur === "function" ? cur : null;
+  return typeof cur === "function" ? cur.bind(receiver) : null;
 }
 async function syncNeocortexBlock(client, agentId, content) {
   if (!agentId || !nativeEnabled("blocks"))
