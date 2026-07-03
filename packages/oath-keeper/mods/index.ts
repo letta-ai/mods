@@ -447,8 +447,9 @@ function handleTurnEnd(event: any): { continue?: string } | void {
     if (assistantMessage.includes("[Oath Delivered]")) {
       const state = loadState();
       let changed = false;
+      const convId = event.conversationId || "";
       for (const o of state.oaths) {
-        if (o.status === "delivering") {
+        if (o.status === "delivering" && o.conversationId === convId) {
           o.status = "delivered";
           o.result = assistantMessage.slice(0, 500);
           o.deliveredAt = Date.now();
@@ -489,8 +490,12 @@ function handleTurnEnd(event: any): { continue?: string } | void {
   }
 
   // 2. Check for due oaths and deliver via continue
+  // Scope to the current conversation so oaths from other conversations
+  // aren't delivered into this turn.
+  const convId = event.conversationId || "";
   const dueOath = state.oaths.find(
     (o) => o.status === "pending" && o.dueAt <= now
+      && o.conversationId === convId
   );
 
   if (dueOath) {
