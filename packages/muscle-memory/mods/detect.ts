@@ -525,7 +525,33 @@ export function isValidSkillName(name: unknown): boolean {
 
 /** THE LETTA EDGE: aggregate REAL grounded pitfalls across ALL conversations in the log
  * (Letta recall). Hermes reviews one conversation; this digests the agent's whole history. */
-export function buildCrossConversationEvidence(rows: Row[]): { digest: string; convs: number; items: number } {
+/** Structured per-signal instance counts — the n=1 CREATE gate's ground truth (P0 2a).
+ * label carries the signal's identifying text; count/convs carry how often and how widely
+ * it was actually observed. Instances = max(count, convs). */
+export type EvidenceSignal = { label: string; kind: "repair" | "antipattern" | "template" | "high-signal"; count: number; convs: number };
+
+/** P0 2a · n=1 CREATE gate (pure). A reflect-lane CREATE must be topically grounded in a signal
+ * with >= minInstances observed instances (count OR conversation spread). Receipt: the aggregate
+ * items floor let `recovering-from-npx-failures` ("Observed 1× across 1 session") ship TWICE by
+ * riding in on an unrelated recurring workflow. Topic-matching stops instance borrowing. */
+export function multiInstanceSupport(topic: string, signals: EvidenceSignal[], minInstances = 2): { ok: boolean; matched?: string; instances?: number; reason: string } {
+  const GENERIC = new Set(["recovering", "recover", "failure", "failures", "fails", "failed", "failing", "when", "never", "running", "using", "with", "from", "this", "that", "command", "commands", "error", "errors", "instead", "blind", "retrying", "workflow", "recurring", "skill", "use", "then", "same", "exact", "exit", "code"]);
+  const tok = (s: string) => new Set(String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !GENERIC.has(w)));
+  const topicTokens = tok(topic);
+  let best: { label: string; instances: number; overlap: number } | null = null;
+  for (const s of signals || []) {
+    const lt = tok(s.label);
+    let inter = 0; for (const w of topicTokens) if (lt.has(w)) inter++;
+    if (inter < 1) continue; // topically unrelated — its instances may NOT be borrowed
+    const instances = Math.max(s.count || 0, s.convs || 0);
+    if (!best || instances > best.instances || (instances === best.instances && inter > best.overlap)) best = { label: s.label, instances, overlap: inter };
+  }
+  if (!best) return { ok: false, reason: "no grounded evidence signal matches this skill's topic — refusing ungrounded create" };
+  if (best.instances < minInstances) return { ok: false, matched: best.label, instances: best.instances, reason: `single-instance evidence: strongest topical signal "${best.label}" was observed ${best.instances}× — need >=${minInstances} distinct instances before a CREATE` };
+  return { ok: true, matched: best.label, instances: best.instances, reason: `grounded: "${best.label}" observed ${best.instances}×` };
+}
+
+export function buildCrossConversationEvidence(rows: Row[]): { digest: string; convs: number; items: number; signals: EvidenceSignal[]; rejected: Array<{ item: string; reason: string }> } {
   const convs = new Set(rows.map((r) => String(r.conv ?? "?"))).size;
   const allRepairs = detectRepairChains(rows), allAps = detectAntiPatterns(rows);
   const repairs = allRepairs.filter((r) => isDurableLesson(r.errClass));
@@ -556,5 +582,12 @@ export function buildCrossConversationEvidence(rows: Row[]): { digest: string; c
   for (const p of aps.slice(0, 8)) L.push(`- recurring failure (no clean fix yet): "${p.step}" — ${p.errClass} [${p.fails}×]`);
   for (const [t, c] of topTmpl) L.push(`- recurring workflow: ${t} [${c}×]`);
   for (const [t, e] of high) L.push(`- high-signal receipt workflow: ${t} [${e.count}× across ${e.convs.size} session${e.convs.size === 1 ? "" : "s"}${e.failures ? `, ${e.failures} failed/partial receipt${e.failures === 1 ? "" : "s"}` : ""}]`);
-  return { digest: L.join("\n"), convs, items: repairs.length + aps.length + topTmpl.length + high.length, rejected };
+  // P0 2a: structured per-signal instance counts for the n=1 CREATE gate (same items, now countable).
+  const signals: EvidenceSignal[] = [
+    ...repairs.map((r) => ({ label: `${r.trigger} ${r.errClass} ${r.fixStep}`, kind: "repair" as const, count: r.count, convs: r.convs })),
+    ...aps.map((p) => ({ label: `${p.step} ${p.errClass}`, kind: "antipattern" as const, count: p.fails, convs: p.convs })),
+    ...topTmpl.map(([t, c]) => ({ label: t, kind: "template" as const, count: c, convs: 1 })),
+    ...high.map(([t, e]) => ({ label: t, kind: "high-signal" as const, count: e.count, convs: e.convs.size })),
+  ];
+  return { digest: L.join("\n"), convs, items: repairs.length + aps.length + topTmpl.length + high.length, rejected, signals };
 }

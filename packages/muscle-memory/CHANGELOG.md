@@ -2,6 +2,28 @@
 
 All notable changes to `@letta-ai/muscle-memory`. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this mod is pre-1.0, so the API may still change.
 
+## [Unreleased]
+
+### Added
+- **n=1 CREATE gate** (`multiInstanceSupport`, wired into the reflect lane) — a reflect-lane CREATE must
+  be topically grounded in an evidence signal observed **≥2 distinct instances** (count or conversation
+  spread). The aggregate items floor was not enough: an n=1 repair could ride in on an unrelated recurring
+  workflow and become a command-shaped skill (live receipt: `recovering-from-npx-failures`, "Observed 1×
+  across 1 session", created twice on consecutive days and retired twice). Parked creates never block a
+  pattern permanently — a second observed instance changes the evidence signature and re-opens the route.
+- **Structured evidence signals** — `buildCrossConversationEvidence` now returns `signals[]` (per-signal
+  `label`/`kind`/`count`/`convs`) alongside the prose digest, so create-gates count instances instead of
+  guessing from text.
+- **Staged shelf in the CREATE dedupe surface** (`createDedupeSurface`) — manual `create` and
+  `create_from_candidate` now dedupe against agent + global + **staged** shelves, so a near-duplicate of a
+  not-yet-graduated skill routes to PATCH instead of spraying siblings.
+- **Retired-skill quarantine in `dedupCheck`** — near-duplicates of *retired* skills under a **different
+  name** are refused with a restore/absorb hint (`retiredSkillBlocker` already caught same-name recreates;
+  this catches renamed clones).
+- **`test/create-gates.test.ts`** — deterministic regression suite for the duplicate-create class: the
+  n=1 hole, instance borrowing from unrelated signals, ungrounded creates, staged-sibling dedupe, and
+  retired-clone quarantine.
+
 ## [0.6.0] — 2026-06-28
 
 The "skill library that maintains itself" release. Observe → distill/update → quality-gate → graduate →

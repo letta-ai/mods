@@ -1,6 +1,6 @@
 // mods/index.ts
 import { mkdirSync as mkdirSync5, readFileSync as readFileSync5, existsSync as existsSync5, writeFileSync as writeFileSync5, readdirSync as readdirSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 
 // mods/core.ts
 import { appendFileSync, mkdirSync, readFileSync, existsSync, writeFileSync, readdirSync, renameSync } from "node:fs";
@@ -259,6 +259,9 @@ function removeSupportFile(name, filePath, ctx) {
   return grave;
 }
 var STAGED_DIR = join(STATE_DIR, "staged");
+function createDedupeSurface(ctx) {
+  return [...new Set([...scanDirs(ctx), STAGED_DIR])];
+}
 var STAGED_RETIRED_DIR = join(STATE_DIR, "staged-retired");
 var AUTOPILOT_STATE = join(STATE_DIR, "autopilot-state.json");
 var UI_EVENTS = join(STATE_DIR, "ui-events.jsonl");
@@ -854,6 +857,29 @@ function isValidSkillName(name) {
   const ANTI = [/^fix-/, /^debug-/, /^audit-/, /^patch-/, /-to-/, /\d{3,}/, /v?\d+[._]\d+/, /\berror\b|\bexception\b/, /-today$|-now$|-temp$|-wip$/];
   return !ANTI.some((p) => p.test(n));
 }
+function multiInstanceSupport(topic, signals, minInstances = 2) {
+  const GENERIC = new Set(["recovering", "recover", "failure", "failures", "fails", "failed", "failing", "when", "never", "running", "using", "with", "from", "this", "that", "command", "commands", "error", "errors", "instead", "blind", "retrying", "workflow", "recurring", "skill", "use", "then", "same", "exact", "exit", "code"]);
+  const tok = (s) => new Set(String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !GENERIC.has(w)));
+  const topicTokens = tok(topic);
+  let best = null;
+  for (const s of signals || []) {
+    const lt = tok(s.label);
+    let inter = 0;
+    for (const w of topicTokens)
+      if (lt.has(w))
+        inter++;
+    if (inter < 1)
+      continue;
+    const instances = Math.max(s.count || 0, s.convs || 0);
+    if (!best || instances > best.instances || instances === best.instances && inter > best.overlap)
+      best = { label: s.label, instances, overlap: inter };
+  }
+  if (!best)
+    return { ok: false, reason: "no grounded evidence signal matches this skill's topic — refusing ungrounded create" };
+  if (best.instances < minInstances)
+    return { ok: false, matched: best.label, instances: best.instances, reason: `single-instance evidence: strongest topical signal "${best.label}" was observed ${best.instances}× — need >=${minInstances} distinct instances before a CREATE` };
+  return { ok: true, matched: best.label, instances: best.instances, reason: `grounded: "${best.label}" observed ${best.instances}×` };
+}
 function buildCrossConversationEvidence(rows) {
   const convs = new Set(rows.map((r) => String(r.conv ?? "?"))).size;
   const allRepairs = detectRepairChains(rows), allAps = detectAntiPatterns(rows);
@@ -898,25 +924,44 @@ function buildCrossConversationEvidence(rows) {
     L.push(`- recurring workflow: ${t} [${c}×]`);
   for (const [t, e] of high)
     L.push(`- high-signal receipt workflow: ${t} [${e.count}× across ${e.convs.size} session${e.convs.size === 1 ? "" : "s"}${e.failures ? `, ${e.failures} failed/partial receipt${e.failures === 1 ? "" : "s"}` : ""}]`);
+  const signals = [
+    ...repairs.map((r) => ({ label: `${r.trigger} ${r.errClass} ${r.fixStep}`, kind: "repair", count: r.count, convs: r.convs })),
+    ...aps.map((p) => ({ label: `${p.step} ${p.errClass}`, kind: "antipattern", count: p.fails, convs: p.convs })),
+    ...topTmpl.map(([t, c]) => ({ label: t, kind: "template", count: c, convs: 1 })),
+    ...high.map(([t, e]) => ({ label: t, kind: "high-signal", count: e.count, convs: e.convs.size }))
+  ];
   return { digest: L.join(`
-`), convs, items: repairs.length + aps.length + topTmpl.length + high.length, rejected };
+`), convs, items: repairs.length + aps.length + topTmpl.length + high.length, rejected, signals };
 }
 // mods/gate.ts
+import { join as join2 } from "node:path";
 function dedupCheck(name, description, dirs = [GLOBAL_SKILLS]) {
   const words = new Set(description.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+  const overlapWith = (desc) => {
+    const dw = new Set(desc.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+    let inter = 0;
+    for (const w of words)
+      if (dw.has(w))
+        inter++;
+    return words.size ? inter / words.size : 0;
+  };
   let worst = { name: "", overlap: 0 };
   for (const dir of dirs) {
     for (const n of listSkillNames(dir)) {
       if (n === name)
         return { dup: true, reason: `skill '${n}' already exists — patch it, don't duplicate`, name: n, overlap: 1 };
-      const dw = new Set(skillDesc(dir, n).toLowerCase().split(/\W+/).filter((w) => w.length > 3));
-      let inter = 0;
-      for (const w of words)
-        if (dw.has(w))
-          inter++;
-      const overlap = words.size ? inter / words.size : 0;
+      const overlap = overlapWith(skillDesc(dir, n));
       if (overlap > worst.overlap)
         worst = { name: n, overlap };
+    }
+    const retiredRoot = join2(dir, "_retired");
+    for (const rn of listSkillNames(retiredRoot)) {
+      const base = rn.replace(/-\d{4}-\d{2}-\d{2}T[\dZ.-]+$/, "");
+      if (base === name)
+        return { dup: true, reason: `retired skill '${base}' exists in quarantine (${retiredRoot}/${rn}) — restore it or absorb instead of recreating`, name: base, overlap: 1 };
+      const overlap = overlapWith(skillDesc(retiredRoot, rn));
+      if (overlap > 0.6)
+        return { dup: true, reason: `>60% description overlap with RETIRED skill '${base}' (${retiredRoot}/${rn}) — quarantined: restore/absorb instead of recreating a sibling`, name: base, overlap };
     }
   }
   return { dup: worst.overlap > 0.6, reason: worst.overlap > 0.6 ? `>60% description overlap with '${worst.name}' — patch/absorb instead` : "", name: worst.name, overlap: worst.overlap };
@@ -1194,11 +1239,11 @@ A recovery discipline distilled from ${repair.count} real \`${repair.verifyStep}
 }
 // mods/autopilot.ts
 import { mkdirSync as mkdirSync4, readFileSync as readFileSync4, existsSync as existsSync4, writeFileSync as writeFileSync4, renameSync as renameSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 
 // mods/publish.ts
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, existsSync as existsSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 import { execFileSync } from "node:child_process";
 import { userInfo } from "node:os";
 var PUBLISH_SECRET_RES = [
@@ -1353,7 +1398,7 @@ function stageSanitizedPublish(skill) {
   const tier = publishTier(plan);
   if (plan.hardBlocks.length)
     return { staged: false, dir: "", plan, tier, reason: `blocked: ${plan.hardBlocks.join("; ")}` };
-  const dir = join2(PUBLISH_STAGED_DIR, slug(skill.name));
+  const dir = join3(PUBLISH_STAGED_DIR, slug(skill.name));
   try {
     mkdirSync2(dir, { recursive: true });
   } catch {}
@@ -1370,12 +1415,12 @@ ${Object.entries(meta).map(([k, v]) => `${k}: ${v}`).join(`
 ---
 
 ${plan.sanitizedPreview}`;
-  writeFileSync2(join2(dir, "SKILL.md"), body);
-  writeFileSync2(join2(dir, "PUBLISH-PLAN.json"), JSON.stringify({ skill: skill.name, tier, publishability: plan.publishability, recommended: plan.recommended, issues: plan.issues, replacements: plan.replacements, metadata: meta, staged_at: Date.now() }, null, 2));
+  writeFileSync2(join3(dir, "SKILL.md"), body);
+  writeFileSync2(join3(dir, "PUBLISH-PLAN.json"), JSON.stringify({ skill: skill.name, tier, publishability: plan.publishability, recommended: plan.recommended, issues: plan.issues, replacements: plan.replacements, metadata: meta, staged_at: Date.now() }, null, 2));
   return { staged: true, dir, plan, tier };
 }
 function approveStagedPublish(name, globalDir) {
-  const staged = join2(PUBLISH_STAGED_DIR, slug(name), "SKILL.md");
+  const staged = join3(PUBLISH_STAGED_DIR, slug(name), "SKILL.md");
   if (!existsSync2(staged))
     return { published: false, reason: "no staged copy — run `publish stage <skill>` first" };
   const body = readFileSync2(staged, "utf8");
@@ -1385,15 +1430,15 @@ function approveStagedPublish(name, globalDir) {
   const sec = scanSkillContent(body);
   if (!sec.ok)
     return { published: false, reason: `security: ${sec.issues.join("; ")}` };
-  const dst = join2(globalDir, slug(name));
+  const dst = join3(globalDir, slug(name));
   try {
     mkdirSync2(dst, { recursive: true });
   } catch {}
-  writeFileSync2(join2(dst, "SKILL.md"), body);
-  return { published: true, path: join2(dst, "SKILL.md") };
+  writeFileSync2(join3(dst, "SKILL.md"), body);
+  return { published: true, path: join3(dst, "SKILL.md") };
 }
 function publishVisibilityReceipt(name, globalDir) {
-  const p = join2(globalDir, slug(name), "SKILL.md");
+  const p = join3(globalDir, slug(name), "SKILL.md");
   return { exists: existsSync2(p), path: p, reloadHint: "run /reload (or restart the agent) so the skill index surfaces the new Custom Skill" };
 }
 function liveSkillVisible(name, agentId) {
@@ -1428,10 +1473,10 @@ function publishSkillToCatalog(name, ctx) {
   const nm = slug(name);
   if (!nm)
     throw new Error("name required");
-  const d = scanDirs(ctx).find((x) => existsSync2(join2(x, nm, "SKILL.md")));
+  const d = scanDirs(ctx).find((x) => existsSync2(join3(x, nm, "SKILL.md")));
   if (!d)
     throw new Error(`no active skill '${nm}'`);
-  const src = join2(d, nm, "SKILL.md");
+  const src = join3(d, nm, "SKILL.md");
   if (!existsSync2(src))
     throw new Error(`no SKILL.md for '${nm}'`);
   const content = readFileSync2(src, "utf8");
@@ -1443,21 +1488,21 @@ function publishSkillToCatalog(name, ctx) {
   const priv = catalogPrivacyScan(content);
   if (!priv.ok)
     throw new Error(`privacy blocked: ${priv.issues.join("; ")}`);
-  const dstDir = join2(GLOBAL_SKILLS_DIR, nm);
+  const dstDir = join3(GLOBAL_SKILLS_DIR, nm);
   mkdirSync2(dstDir, { recursive: true });
   const published = content.includes(MM_TAG) ? content : content + `
 <!-- ${MM_TAG}: published ${new Date().toISOString().slice(0, 10)}; catalog=global -->
 `;
-  writeFileSync2(join2(dstDir, "SKILL.md"), published);
+  writeFileSync2(join3(dstDir, "SKILL.md"), published);
   appendUiEvent({ phase: "skill_published", summary: `published '${nm}' to custom skill catalog`, skill: nm, action: "publish", route: "global-catalog" });
   appendMeshFeed({ type: "skill_published", skill: nm, route: "PUBLISH", signals: 0 });
   writeUiState({ phase: "done", last: `published '${nm}' to catalog`, route: "PUBLISH · catalog" });
-  return join2(dstDir, "SKILL.md");
+  return join3(dstDir, "SKILL.md");
 }
 
 // mods/lifecycle.ts
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync3, existsSync as existsSync3, writeFileSync as writeFileSync3, readdirSync as readdirSync2, renameSync as renameSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 function managedSkillUsage(name, rows = loadRows()) {
   const n = slug(name);
   return rows.filter((r) => (r.tmpl || r.fp || "").toLowerCase().includes(`skill ${n}`)).length;
@@ -1484,7 +1529,7 @@ function curateManagedSkills(ctx) {
 }
 function retireManagedSkill(name, reason, ctx, absorbedInto, restrictDirs) {
   const dirs = restrictDirs ?? scanDirs(ctx);
-  const d = dirs.find((x) => existsSync3(join3(x, name, "SKILL.md")));
+  const d = dirs.find((x) => existsSync3(join4(x, name, "SKILL.md")));
   if (!d)
     throw new Error(`no skill '${name}'`);
   if (!isManaged(d, name))
@@ -1492,15 +1537,15 @@ function retireManagedSkill(name, reason, ctx, absorbedInto, restrictDirs) {
   if (isPinned(name))
     throw new Error(`'${name}' is pinned — unpin first (pin protects from retire, not from patch)`);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const retiredRoot = join3(d, "_retired");
+  const retiredRoot = join4(d, "_retired");
   mkdirSync3(retiredRoot, { recursive: true });
-  const target = join3(retiredRoot, `${name}-${stamp}`);
+  const target = join4(retiredRoot, `${name}-${stamp}`);
   const forward = absorbedInto ? `absorbed_into: ${absorbedInto}
 ` : "";
-  writeFileSync3(join3(d, name, "RETIRE-REASON.txt"), `${new Date().toISOString()}
+  writeFileSync3(join4(d, name, "RETIRE-REASON.txt"), `${new Date().toISOString()}
 ${reason || "retired by muscle-memory curate"}
 ${forward}`);
-  renameSync2(join3(d, name), target);
+  renameSync2(join4(d, name), target);
   const u = loadUsage();
   u[name] = { ...u[name] || {}, state: "archived", absorbedInto: absorbedInto || undefined };
   saveUsage(u);
@@ -1515,7 +1560,7 @@ function retiredSkillBlocker(name, ctx) {
     return `skill '${nm}' is archived/retired; restore it before recreating or patch an existing replacement`;
   }
   for (const d of scanDirs(ctx)) {
-    const retiredRoot = join3(d, "_retired");
+    const retiredRoot = join4(d, "_retired");
     try {
       if (!existsSync3(retiredRoot))
         continue;
@@ -1664,18 +1709,18 @@ function isPinned(name) {
 function restoreManagedSkill(name, ctx) {
   const dirs = scanDirs(ctx);
   for (const d of dirs) {
-    const retiredRoot = join3(d, "_retired");
+    const retiredRoot = join4(d, "_retired");
     if (!existsSync3(retiredRoot))
       continue;
     const matches = readdirSync2(retiredRoot).filter((n) => n === name || n.startsWith(`${name}-`)).sort().reverse();
     if (matches.length) {
-      if (existsSync3(join3(d, name, "SKILL.md")))
+      if (existsSync3(join4(d, name, "SKILL.md")))
         throw new Error(`'${name}' already active`);
-      renameSync2(join3(retiredRoot, matches[0]), join3(d, name));
+      renameSync2(join4(retiredRoot, matches[0]), join4(d, name));
       const u = loadUsage();
       u[name] = { ...u[name] || {}, state: "active", lastActivity: Date.now() };
       saveUsage(u);
-      return join3(d, name);
+      return join4(d, name);
     }
   }
   throw new Error(`no retired skill '${name}' to restore`);
@@ -2044,7 +2089,7 @@ function provenanceBlock(c) {
 `;
 }
 function appendRecurrenceNote(dir, name, note) {
-  if (!existsSync4(join4(dir, name, "SKILL.md")))
+  if (!existsSync4(join5(dir, name, "SKILL.md")))
     return false;
   let t = readSkill(dir, name);
   const stamp = new Date().toISOString().slice(0, 10);
@@ -2239,7 +2284,7 @@ async function runAutopilot(ctx, config) {
   try {
     ensureDir();
     mkdirSync4(RECEIPTS_DIR, { recursive: true });
-    writeFileSync4(join4(RECEIPTS_DIR, `autopilot-${Date.now()}.json`), JSON.stringify({ mode: cfg.mode, ...result, published, ts: Date.now() }, null, 2));
+    writeFileSync4(join5(RECEIPTS_DIR, `autopilot-${Date.now()}.json`), JSON.stringify({ mode: cfg.mode, ...result, published, ts: Date.now() }, null, 2));
   } catch {}
   return { ...plan, result };
 }
@@ -2363,7 +2408,7 @@ async function reviewAndAuthor(evidence, dirs, authorFn, opts = {}) {
   }
   const existingForUpdate = updTarget ? (() => {
     try {
-      const d = dirs.find((x) => existsSync4(join4(x, updTarget.name, "SKILL.md")));
+      const d = dirs.find((x) => existsSync4(join5(x, updTarget.name, "SKILL.md")));
       return d ? readSkill(d, updTarget.name) : "";
     } catch {
       return "";
@@ -2462,7 +2507,7 @@ The ~70-line cap is LIFTED (target a rich ~120-180 lines); be EXHAUSTIVE on the 
   }
   try {
     ensureDir();
-    writeFileSync4(join4(STATE_DIR, "reflect-last-raw.txt"), `=== ${new Date().toISOString()}${degraded ? " [" + degraded + "]" : ""} ===
+    writeFileSync4(join5(STATE_DIR, "reflect-last-raw.txt"), `=== ${new Date().toISOString()}${degraded ? " [" + degraded + "]" : ""} ===
 ${raw}
 `);
   } catch {}
@@ -2493,7 +2538,7 @@ YOUR PREVIOUS DRAFT IS NOT YET SOTA (${why.join("; ")}). A top-tier skill ALWAYS
     try {
       const raw2 = await authorFn(REVIEW_PROMPT, evidence + hint + depthDirective + corrective) || "";
       try {
-        writeFileSync4(join4(STATE_DIR, "reflect-last-raw.txt"), `=== ${new Date().toISOString()} (retry) ===
+        writeFileSync4(join5(STATE_DIR, "reflect-last-raw.txt"), `=== ${new Date().toISOString()} (retry) ===
 ${raw2}
 `);
       } catch {}
@@ -2580,7 +2625,7 @@ function retrievePreferences(evidence, memDir) {
     return [];
   const prefs = [];
   for (const s of ["persona.md", "system/persona.md", "system/human.md", "human.md", "system/human/preferences.md"]) {
-    const p = join4(dir, s);
+    const p = join5(dir, s);
     if (!existsSync4(p))
       continue;
     try {
@@ -2626,8 +2671,8 @@ function graduateStagedSkill(name, ctx) {
   const nm = slug(name);
   if (!nm)
     throw new Error("name required");
-  const srcDir = join4(STAGED_DIR, nm);
-  const src = join4(srcDir, "SKILL.md");
+  const srcDir = join5(STAGED_DIR, nm);
+  const src = join5(srcDir, "SKILL.md");
   if (!existsSync4(src))
     throw new Error(`no staged skill '${nm}'`);
   const retiredBlock = retiredSkillBlocker(nm, ctx);
@@ -2648,7 +2693,7 @@ function graduateStagedSkill(name, ctx) {
 `);
   mkdirSync4(STAGED_RETIRED_DIR, { recursive: true });
   try {
-    renameSync3(srcDir, join4(STAGED_RETIRED_DIR, `${nm}-graduated-${Date.now()}`));
+    renameSync3(srcDir, join5(STAGED_RETIRED_DIR, `${nm}-graduated-${Date.now()}`));
   } catch {}
   appendUiEvent({ phase: "skill_graduated", summary: `graduated '${nm}'`, skill: nm, action: "graduate", route: "manual" });
   appendMeshFeed({ type: "skill_graduated", skill: nm, route: "GRADUATE", signals: 0 });
@@ -2681,7 +2726,7 @@ ${user}` }]);
 async function runReflectiveReview(ctx, config = {}) {
   const dirs = scanDirs(ctx);
   const reviewDirs = config.mode === "auto" ? dirs : [...dirs, STAGED_DIR];
-  const exp = loadExperience();
+  const exp = config.experience ?? loadExperience();
   const ev = buildCrossConversationEvidence(exp);
   const engram = engramConsolidate(exp, managedView(reviewDirs).map((m) => ({ name: m.name, body: m.body })));
   appendUiEvent({ phase: "review_started", summary: `reviewing ${ev.convs} sessions / ${ev.items} durable signals` });
@@ -2736,19 +2781,26 @@ ${prefs.map((p) => `- ${p}`).join(`
           writeUiState({ phase: "idle", last: `retire-sticky blocked '${res.name}'`, route: "SKIP · retired" });
           return { action: "none", name: res.name, reason: retiredBlock };
         }
+        const n1 = multiInstanceSupport(`${res.name} ${res.description ?? ""}`, ev.signals ?? [], config.minInstances ?? 2);
+        if (!n1.ok) {
+          markHandledReflect(sig, `N1-PARKED:${res.name}`);
+          appendUiEvent({ phase: "reflect_none", summary: `n=1 gate parked '${res.name}': ${n1.reason.slice(0, 120)}` });
+          writeUiState({ phase: "idle", last: `n=1 gate parked '${res.name}'`, route: "SKIP · n=1" });
+          return { action: "none", name: res.name, reason: `n=1 gate: ${n1.reason}` };
+        }
       }
       const oldContent = res.action === "update" && res.updateTarget ? (() => {
-        const d = reviewDirs.find((x) => existsSync4(join4(x, res.updateTarget, "SKILL.md")));
+        const d = reviewDirs.find((x) => existsSync4(join5(x, res.updateTarget, "SKILL.md")));
         return d ? readSkill(d, res.updateTarget) : undefined;
       })() : undefined;
       writeSkill(dir, res.name, tagged);
       const manifest = buildEvidenceManifest({ action: res.action, skill: res.name, updateTarget: res.updateTarget, convs: ev.convs, signals: ev.items, memfsHits: res.matches || [], preferences: prefs, rejected: ev.rejected, newContent: tagged, oldContent });
-      const evDir = join4(dir, res.name, "references", "evidence");
+      const evDir = join5(dir, res.name, "references", "evidence");
       mkdirSync4(evDir, { recursive: true });
-      writeFileSync4(join4(evDir, `${Date.now()}.json`), JSON.stringify(manifest, null, 2));
+      writeFileSync4(join5(evDir, `${Date.now()}.json`), JSON.stringify(manifest, null, 2));
       ensureDir();
       mkdirSync4(RECEIPTS_DIR, { recursive: true });
-      writeFileSync4(join4(RECEIPTS_DIR, `reflect-${Date.now()}.json`), JSON.stringify({ action: res.action, name: res.name, updateTarget: res.updateTarget, convs: ev.convs, items: ev.items, prefsInjected: prefs.length, rejected: ev.rejected.length, degraded: res.degraded || null, dir, ts: Date.now() }, null, 2));
+      writeFileSync4(join5(RECEIPTS_DIR, `reflect-${Date.now()}.json`), JSON.stringify({ action: res.action, name: res.name, updateTarget: res.updateTarget, convs: ev.convs, items: ev.items, prefsInjected: prefs.length, rejected: ev.rejected.length, degraded: res.degraded || null, dir, ts: Date.now() }, null, 2));
       if (res.degraded)
         appendUiEvent({ phase: "author_degraded", summary: `authored via graceful degradation: ${res.degraded}`, skill: res.name });
       const phase = graduate ? "skill_graduated" : "skill_staged";
@@ -2763,7 +2815,7 @@ ${prefs.map((p) => `- ${p}`).join(`
       if (prefs.length)
         appendUiEvent({ phase: "memory_pref_injected", summary: `injected ${prefs.length} user preferences` });
       writeUiState({ phase: "done", last: summary, route: `${graduate ? "GRADUATE" : res.action.toUpperCase()}${res.updateTarget ? " " + res.updateTarget : ""} · ${graduate ? "live" : "staged"}` });
-      return { ...res, wrote: join4(dir, res.name) };
+      return { ...res, wrote: join5(dir, res.name) };
     } catch (e) {
       appendUiEvent({ phase: "reflect_error", summary: `write failed: ${String(e?.message ?? e).slice(0, 80)}` });
       return { ...res, reason: String(e?.message ?? e) };
@@ -2775,7 +2827,7 @@ ${prefs.map((p) => `- ${p}`).join(`
     try {
       ensureDir();
       mkdirSync4(RECEIPTS_DIR, { recursive: true });
-      writeFileSync4(join4(RECEIPTS_DIR, `reflect-rejected-${Date.now()}.json`), JSON.stringify({ action: "reject", safe, reason: res.reason || "(none)", degraded: res.degraded || null, convs: ev.convs, items: ev.items, ts: Date.now() }, null, 2));
+      writeFileSync4(join5(RECEIPTS_DIR, `reflect-rejected-${Date.now()}.json`), JSON.stringify({ action: "reject", safe, reason: res.reason || "(none)", degraded: res.degraded || null, convs: ev.convs, items: ev.items, ts: Date.now() }, null, 2));
     } catch {}
     appendUiEvent({ phase: safe ? "blocked_unsafe" : "reflect_none", summary: safe ? `\uD83D\uDEE1️ blocked unsafe content (safe): ${res.reason}` : `draft rejected; nothing saved (${res.reason})${res.degraded ? " [degraded: " + res.degraded + "]" : ""}` });
     writeUiState({ phase: safe ? "protected" : "idle", last: safe ? "blocked unsafe content (safe)" : `draft rejected; nothing saved`, route: safe ? "BLOCKED · protected" : "SKIP · rejected-draft" });
@@ -2941,7 +2993,7 @@ var __mm = {
 function activate(letta) {
   const disposers = [];
   let panel = null;
-  const DEFENSE_HITS = join5(STATE_DIR, "defense-hits.jsonl");
+  const DEFENSE_HITS = join6(STATE_DIR, "defense-hits.jsonl");
   let defensesCache = [];
   const refreshDefenses = () => {
     try {
@@ -3036,14 +3088,14 @@ function activate(letta) {
         ensureDir();
         mkdirSync5(RECEIPTS_DIR, { recursive: true });
         const { candidates } = detect(loadExperience());
-        writeFileSync5(join5(RECEIPTS_DIR, `compact-${Date.now()}.json`), JSON.stringify({ phase: "start", conv: event?.conversationId ?? null, candidatesPreserved: candidates.length, ts: Date.now() }));
+        writeFileSync5(join6(RECEIPTS_DIR, `compact-${Date.now()}.json`), JSON.stringify({ phase: "start", conv: event?.conversationId ?? null, candidatesPreserved: candidates.length, ts: Date.now() }));
       } catch {}
     }));
     disposers.push(letta.events.on("compact_end", (event) => {
       try {
         ensureDir();
         mkdirSync5(RECEIPTS_DIR, { recursive: true });
-        writeFileSync5(join5(RECEIPTS_DIR, `compact-end-${Date.now()}.json`), JSON.stringify({ phase: "end", conv: event?.conversationId ?? null, trigger: event?.trigger ?? null, messagesBefore: event?.messagesBefore ?? null, messagesAfter: event?.messagesAfter ?? null, contextTokensBefore: event?.contextTokensBefore ?? null, contextTokensAfter: event?.contextTokensAfter ?? null, ts: Date.now() }));
+        writeFileSync5(join6(RECEIPTS_DIR, `compact-end-${Date.now()}.json`), JSON.stringify({ phase: "end", conv: event?.conversationId ?? null, trigger: event?.trigger ?? null, messagesBefore: event?.messagesBefore ?? null, messagesAfter: event?.messagesAfter ?? null, contextTokensBefore: event?.contextTokensBefore ?? null, contextTokensAfter: event?.contextTokensAfter ?? null, ts: Date.now() }));
       } catch {}
     }));
   }
@@ -3147,7 +3199,7 @@ function activate(letta) {
         if (sub === "staged") {
           let s = [];
           try {
-            s = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join5(STAGED_DIR, n, "SKILL.md"))) : [];
+            s = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join6(STAGED_DIR, n, "SKILL.md"))) : [];
           } catch {}
           return { type: "output", output: s.length ? `staged skills (1-tap to graduate):
 ` + s.map((n) => `  · ${n}`).join(`
@@ -3271,7 +3323,7 @@ ${plan.digest}` };
           const reg = buildRegistry(dirs);
           let staged2 = [];
           try {
-            staged2 = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join5(STAGED_DIR, n, "SKILL.md"))) : [];
+            staged2 = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join6(STAGED_DIR, n, "SKILL.md"))) : [];
           } catch {}
           const used = reg.skills.filter((s) => s.uses > 0);
           const idle = reg.skills.filter((s) => s.uses === 0 && s.state !== "archived");
@@ -3313,7 +3365,7 @@ ${plan.digest}` };
                 managed++;
         } catch {}
         try {
-          staged = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join5(STAGED_DIR, n, "SKILL.md"))).length : 0;
+          staged = existsSync5(STAGED_DIR) ? readdirSync3(STAGED_DIR).filter((n) => existsSync5(join6(STAGED_DIR, n, "SKILL.md"))).length : 0;
         } catch {}
         const cov = (() => {
           try {
@@ -3381,7 +3433,7 @@ ${plan.digest}` };
     const readRun = async (ctx) => {
       const a = ctx?.args || {};
       const dirs = scanDirs(ctx);
-      const findSkillDir = (name) => dirs.find((d) => existsSync5(join5(d, name, "SKILL.md")));
+      const findSkillDir = (name) => dirs.find((d) => existsSync5(join6(d, name, "SKILL.md")));
       try {
         if (a.action === "candidates") {
           const rows = loadExperience();
@@ -3498,7 +3550,7 @@ ${d.body}` };
       const a = ctx?.args || {};
       const dir = agentSkillsDir(ctx);
       const dirs = scanDirs(ctx);
-      const findSkillDir = (name) => dirs.find((d) => existsSync5(join5(d, name, "SKILL.md")));
+      const findSkillDir = (name) => dirs.find((d) => existsSync5(join6(d, name, "SKILL.md")));
       try {
         if (a.action === "autopilot_run") {
           const cfg = { ...AUTOPILOT_DEFAULT, mode: a.mode === "auto" ? "auto" : "staged" };
@@ -3548,7 +3600,7 @@ ${d.body}` };
           if (retiredBlock)
             return { status: "error", content: `retire-sticky blocked: ${retiredBlock}`, candidate: c };
           const desc = String(a.description || d.description);
-          const dc = dedupCheck(nm, desc, dirs);
+          const dc = dedupCheck(nm, desc, createDedupeSurface(ctx));
           if (dc.dup)
             return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.`, candidate: c };
           const lint = lintSkillDraft({ name: nm, description: desc, body: d.body }, { needsPitfalls: !!c.fixes });
@@ -3578,7 +3630,7 @@ Load with muscle_memory_skill_read action:load, then invoke the normal Skill too
           const retiredBlock = retiredSkillBlocker(nm, ctx);
           if (retiredBlock)
             return { status: "error", content: `retire-sticky blocked: ${retiredBlock}` };
-          const dc = dedupCheck(nm, a.description, dirs);
+          const dc = dedupCheck(nm, a.description, createDedupeSurface(ctx));
           if (dc.dup)
             return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.` };
           const lint = lintSkillDraft({ name: nm, description: a.description, body: a.body });
