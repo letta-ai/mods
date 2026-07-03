@@ -32,6 +32,11 @@ After install, **reload** in any active sessions:
 /reload
 ```
 
+Note: `letta install` does not resolve `package.json#dependencies` for
+mod packages. Installing TeamTalk does not pull in any peer mods. If
+you want semantic search as a complement to the keyword search, install
+`npm:@letta-ai/memfs-search` separately.
+
 If install fails, run with `LETTA_DISABLE_MODS=1 letta` to start without
 mods and recover.
 

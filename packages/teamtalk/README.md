@@ -144,7 +144,14 @@ See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.
 
 ## Limitations
 
-- Keyword search only. No QMD or embedding-based semantic search in v1.
+- **Keyword search only.** `teamtalk_search` is keyword-based over
+  markdown files in the steward's OKF bundle. There is no semantic
+  search in v1.
+- **TeamTalk does not auto-install peer mods.** `letta install` does
+  not resolve `package.json#dependencies` for mod packages. If you
+  want semantic search over the bundle as a complement, install
+  `npm:@letta-ai/memfs-search` separately; TeamTalk does not
+  currently delegate to it.
 - No permission overlay for non-maintainer writes. Anyone with org
   access can propose; gating is the steward's job via its persona.
 - Project-scoped rule triggering is out of scope for v1.
