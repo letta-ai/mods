@@ -9,19 +9,13 @@ owner of the team's rules, playbooks, decisions, and conventions. Other
 agents on the team consult and contribute to that steward via this mod,
 which provides commands, tools, and turn-time rule injection.
 
-## Status
-
-> **This package is a skeleton.** The manifest, capability declarations,
-> README, and MOD.md are in place. The implementation (`mods/index.ts`)
-> is intentionally a stub pending validation of the steward-agent
-> pattern in a real environment. Do not install yet.
-
 ## Concept
 
 The steward agent's MemFS is the team's shared knowledge surface. The
 mod reads from the steward's local MemFS clone directly (no remote API
 calls on the hot path) and routes writes through the steward via a
-structured PROPOSE protocol. This separates concerns:
+structured `PROPOSE_NEW_CONCEPT` message protocol. This separates
+concerns:
 
 - **Reads** are local, fast, and bypass the steward model.
 - **Writes** flow through the steward, which validates OKF conformance
@@ -46,14 +40,22 @@ team/
 ├── index.md
 ├── log.md
 ├── rules/
-│   ├── global/
-│   └── events/
+│   ├── global/        # Always-on rules; summarized in steward's rules block
+│   └── events/        # Rules triggered by specific tools/events
 ├── playbooks/
-├── decisions/
+├── decisions/         # ADRs and significant decisions
 └── people/
 ```
 
-## Install (when implementation is complete)
+## Install
+
+From a clone of this repository:
+
+```bash
+letta install ./packages/teamtalk
+```
+
+Or directly from npm (once published):
 
 ```bash
 letta install npm:@letta-community/teamtalk
@@ -61,29 +63,74 @@ letta install npm:@letta-community/teamtalk
 
 Run `/reload` in active sessions after installing.
 
+## Quick start
+
+See [`GETTING_STARTED.md`](./GETTING_STARTED.md) for the full manual
+workflow. Short version:
+
+```
+/teamtalk init --confirm        # create steward + seed MemFS
+/teamtalk status                # confirm binding
+/teamtalk search think          # exercise read path
+```
+
+The model can also call `teamtalk_search` and `teamtalk_propose`
+directly — no need to invoke the slash command.
+
 ## Commands
 
-- `/teamtalk enable [agent-id]` — bind this install to a steward agent.
-- `/teamtalk status` — show current binding, steward ID, and local MemFS path.
-- `/teamtalk search <query>` — search the steward's OKF bundle.
-- `/teamtalk propose` — open the proposal flow for a new concept.
+- `/teamtalk init [--name <name>] [--confirm]` — create a steward agent
+  in your org (with confirmation) and seed its MemFS.
+- `/teamtalk enable [agent-id]` — bind to an existing steward agent.
+  Without ID, lists candidates tagged `teamtalk-steward`.
+- `/teamtalk disable` — clear the local binding.
+- `/teamtalk status` — show binding, steward ID, local MemFS path, OKF
+  bundle root, concept count.
+- `/teamtalk search <query> [--limit N]` — search the steward's OKF
+  bundle.
+- `/teamtalk propose` — open the proposal flow.
 
-## Tools
+## Tools (model-callable)
 
-- `teamtalk_search` — agent-callable search over the steward's OKF bundle.
-- `teamtalk_propose` — route a write proposal through the steward agent.
+- `teamtalk_search(query, limit?)` — search the steward's OKF bundle.
+  Read-only, parallel-safe.
+- `teamtalk_propose(type, title, proposed_path, body, tags?)` — send a
+  `PROPOSE_NEW_CONCEPT` message to the steward. Requires approval;
+  the steward may reject.
 
 ## Events
 
-- `turn_start` — re-inject the steward's current global rules into the
-  user's turn context as a transient prefix.
+- `turn_start` — reads the steward's `system/rules.md` and prepends it
+  as a transient system reminder on every user turn. No remote API
+  call.
+
+## Local state
+
+The mod persists a small state file at `~/.letta/mods/teamtalk.state.json`:
+
+```json
+{
+  "stewardAgentId": "agent-XXXXXXXX",
+  "stewardAgentName": "teamtalk-steward",
+  "lastSyncAt": "2026-07-03T16:45:00.000Z",
+  "bundlePath": "/Users/you/.letta/agents/agent-XXXXXXXX/memory/team"
+}
+```
+
+State refreshes implicitly on each read; there is no manual sync
+command.
 
 ## Safety
 
-This is trusted local code. The mod reads files from the steward's local
-MemFS clone and forwards write proposals through the steward agent. It
-does not write to the steward's MemFS directly; that is the steward's
-responsibility.
+This is trusted local code. The mod:
+
+- Reads files from the steward's local MemFS clone only.
+- Writes to `~/.letta/mods/teamtalk.state.json` for local binding state.
+- Calls `letta.client.agents.messages.create` against the bound
+  steward ID for write proposals.
+- Calls `letta.client.agents.create` exactly once, during `/teamtalk
+  init --confirm`, with the steward persona/schema/rules as memory
+  blocks.
 
 If a mod breaks startup or command handling, recover with:
 
@@ -94,3 +141,16 @@ LETTA_DISABLE_MODS=1 letta
 ```
 
 See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.
+
+## Limitations
+
+- Keyword search only. No QMD or embedding-based semantic search in v1.
+- No permission overlay for non-maintainer writes. Anyone with org
+  access can propose; gating is the steward's job via its persona.
+- Project-scoped rule triggering is out of scope for v1.
+- Cloud OAuth path only. Self-hosted deployments using API keys are not
+  explicitly tested.
+
+## License
+
+Apache-2.0. See [`LICENSE`](./LICENSE).

@@ -22,8 +22,10 @@
   "files": [
     "README.md",
     "MOD.md",
+    "GETTING_STARTED.md",
     "LICENSE",
-    "mods"
+    "mods",
+    "assets"
   ],
   "letta": {
     "manifestVersion": 1,
