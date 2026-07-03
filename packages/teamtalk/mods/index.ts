@@ -384,7 +384,7 @@ function buildHelp(): string {
   return [
     "# TeamTalk commands",
     "",
-    "- `/teamtalk init [--name <name>] [--confirm]` — create a steward agent in your org (with confirmation) and seed its MemFS.",
+    "- `/teamtalk init [--name <name>] [--confirm|--reseed]` — create a steward agent in your org (with confirmation) and seed its MemFS. Pass `--reseed` to re-seed the OKF bundle for an already-bound steward without recreating the agent.",
     "- `/teamtalk enable [agent-id]` — bind to an existing steward agent. Without ID, lists candidates tagged `teamtalk-steward`.",
     "- `/teamtalk disable` — clear the local binding.",
     "- `/teamtalk status` — show binding, steward ID, local MemFS path, OKF bundle root, concept count.",
@@ -581,6 +581,38 @@ async function handleInit(letta: any, rest: string): Promise<string> {
   const { flags } = parseFlags(rest);
   const name = flags.name || "teamtalk-steward";
   const confirmed = flags.confirm === "true" || flags.yes === "true" || flags.y === "true";
+
+  // --reseed: re-seed the OKF bundle for an already-bound steward without
+  // recreating the agent. Useful when the MemFS clone landed late or was
+  // wiped.
+  if (flags.reseed === "true" || flags.reseed === "yes") {
+    if (!state.stewardAgentId) {
+      return "No steward bound. Run `/teamtalk init --confirm` first.";
+    }
+    const home = process.env.HOME || homedir();
+    const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
+    const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
+    if (!existsSync(memDir)) {
+      return `Steward MemFS dir not found on disk: ${memDir}\nWait for the clone to land, then re-run.`;
+    }
+    let seededFiles = 0;
+    const assetFiles = listAssetFiles("team");
+    for (const rel of assetFiles) {
+      const src = join(ASSETS_DIR, "team", rel);
+      const dst = join(bundleDir, rel);
+      mkdirSync(dirname(dst), { recursive: true });
+      copyFileSync(src, dst);
+      seededFiles += 1;
+    }
+    writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
+    return [
+      "# TeamTalk reseed",
+      "",
+      `- MemFS dir: ${memDir}`,
+      `- OKF bundle: ${bundleDir}`,
+      `- Seeded ${seededFiles} files.`,
+    ].join("\n");
+  }
   if (!confirmed) {
     const summary = [
       "# TeamTalk init (preview — not yet run)",
@@ -618,16 +650,24 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       tags: [STEWARD_TAG],
     });
 
-    // Wait briefly for MemFS clone to land locally, then seed the OKF bundle.
+    // Always trust the requested name; the create response shape can vary.
+    const displayName = name;
+
+    // Wait for MemFS clone to land locally, then seed the OKF bundle.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", agent.id, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
     let seededFiles = 0;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      if (existsSync(memDir)) break;
+    let memDirFound = false;
+    // Poll up to 30 seconds for the local clone.
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (existsSync(memDir)) {
+        memDirFound = true;
+        break;
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
-    if (existsSync(memDir)) {
+    if (memDirFound) {
       const assetFiles = listAssetFiles("team");
       for (const rel of assetFiles) {
         const src = join(ASSETS_DIR, "team", rel);
@@ -640,19 +680,25 @@ async function handleInit(letta: any, rest: string): Promise<string> {
 
     writeState({
       stewardAgentId: agent.id,
-      stewardAgentName: agent.name || name,
+      stewardAgentName: displayName,
       lastSyncAt: new Date().toISOString(),
       bundlePath: existsSync(bundleDir) ? bundleDir : null,
     });
 
+    const seedNote = memDirFound
+      ? seededFiles > 0
+        ? `Seeded ${seededFiles} bundle files.`
+        : "Bundle directory exists but no files were seeded (check assets)."
+      : "MemFS clone did not land within 30s. Run `/teamtalk init --reseed` once the clone is available, or check that the steward agent was created successfully.";
+
     return [
       "# TeamTalk steward created",
       "",
-      `- Agent: ${agent.name || name} (${agent.id})`,
+      `- Agent: ${displayName} (${agent.id})`,
       `- Tagged: ${STEWARD_TAG}`,
       `- MemFS dir: ${memDir}`,
       `- OKF bundle: ${existsSync(bundleDir) ? bundleDir : "(not yet present locally)"}`,
-      `- Seeded ${seededFiles} bundle files.`,
+      `- ${seedNote}`,
       "",
       "Next: run `/teamtalk status` to verify, or `/teamtalk search` to exercise the read path.",
     ].join("\n");
