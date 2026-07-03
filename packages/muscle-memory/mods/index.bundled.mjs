@@ -372,18 +372,7 @@ function commandTemplate2(cmd) {
   t = t.replace(/\s+/g, " ").trim();
   return t.slice(0, 240);
 }
-var HIGH_SIGNAL_TOOL_SET = new Set(["visual_receipt", "im8_claims_lint", "no_cap_gate_check", "repo_radar_evidence", "kev_final_buzzer_gate", "im8_theme_done_gate", "im8_product_intel", "im8_write_plan"]);
-function hostOrToken(s) {
-  const raw = String(s || "");
-  try {
-    return new URL(raw).hostname.replace(/^www\./, "");
-  } catch {
-    return slug(raw).slice(0, 48) || "unknown";
-  }
-}
-function countMaybeArray(v) {
-  return Array.isArray(v) ? v.length : v == null ? 0 : 1;
-}
+var HIGH_SIGNAL_TOOL_SET = new Set((process.env.MM_HIGH_SIGNAL_TOOLS || "").split(",").map((s) => s.trim()).filter(Boolean));
 function fingerprint2(tool, args) {
   let tmpl = null;
   const keys = Object.keys(args || {}).sort();
@@ -398,22 +387,8 @@ function fingerprint2(tool, args) {
     tmpl = `${tool} ${keys.join(",")}`;
   } else if (tool === "Skill" && typeof args?.skill === "string") {
     tmpl = `Skill ${slug(String(args.skill))}`;
-  } else if (tool === "visual_receipt") {
-    tmpl = `visual_receipt ${hostOrToken(args?.url)} ${countMaybeArray(args?.viewports)} viewports ${countMaybeArray(args?.selectors)} selectors`;
-  } else if (tool === "im8_claims_lint") {
-    tmpl = `im8_claims_lint supplement-copy ${countMaybeArray(args?.files)} files`;
-  } else if (tool === "no_cap_gate_check") {
-    tmpl = `no_cap_gate_check high-trust-claim`;
-  } else if (tool === "repo_radar_evidence" && typeof args?.kind === "string") {
-    tmpl = `repo_radar_evidence ${slug(String(args.kind))}`;
-  } else if (tool === "kev_final_buzzer_gate") {
-    tmpl = `kev_final_buzzer_gate final-readiness`;
-  } else if (tool === "im8_theme_done_gate") {
-    tmpl = `im8_theme_done_gate theme-readiness`;
-  } else if (tool === "im8_product_intel") {
-    tmpl = `im8_product_intel ${slug(String(args?.mode || "lookup"))}`;
-  } else if (tool === "im8_write_plan") {
-    tmpl = `im8_write_plan ${slug(String(args?.operation || "write-plan"))}`;
+  } else if (HIGH_SIGNAL_TOOL_SET.has(tool)) {
+    tmpl = `${tool} ${keys.join(",")}`;
   }
   const shape = keys.filter((k) => !SECRETISH.test(k)).join(",");
   const fp = `${tool}(${shape})${tmpl ? " :: " + tmpl : ""}`;
@@ -2724,8 +2699,9 @@ ${user}` }]);
   };
 }
 async function runReflectiveReview(ctx, config = {}) {
-  const dirs = scanDirs(ctx);
-  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, STAGED_DIR];
+  const dirs = config.dirs ?? scanDirs(ctx);
+  const stagedShelf = config.stagedDir ?? STAGED_DIR;
+  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, stagedShelf];
   const exp = config.experience ?? loadExperience();
   const ev = buildCrossConversationEvidence(exp);
   const engram = engramConsolidate(exp, managedView(reviewDirs).map((m) => ({ name: m.name, body: m.body })));
@@ -2768,7 +2744,7 @@ ${prefs.map((p) => `- ${p}`).join(`
   if ((res.action === "create" || res.action === "update") && res.name && res.content) {
     const live = config.mode === "auto";
     const graduate = live || res.action === "update" || isHighConfidenceCreate(res, ev);
-    const dir = graduate ? agentSkillsDir(ctx) : STAGED_DIR;
+    const dir = graduate ? agentSkillsDir(ctx) : stagedShelf;
     const tagged = res.content.includes(MM_TAG) ? res.content : res.content + `
 <!-- ${MM_TAG}: reflective ${new Date().toISOString().slice(0, 10)}; action=${res.action}; convs=${ev.convs}; ${graduate ? "graduated=true" : "staged=true"} -->
 `;

@@ -613,11 +613,15 @@ export function reviewForkAuthor(ctx: any): (sys: string, user: string) => Promi
 
 /** v3.1 AUTONOMOUS REFLECTIVE REVIEW: cross-conversation evidence → forked reviewer → update-first
  * routing + gates → write (staged by default; live in auto mode). Reversible + receipted. The surpass, autonomous. */
-export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; minInstances?: number; authorFn?: (s: string, u: string) => Promise<string>; experience?: ReturnType<typeof loadExperience> } = {}): Promise<ReviewResult & { wrote?: string }> {
-  const dirs = scanDirs(ctx);
+export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; minInstances?: number; authorFn?: (s: string, u: string) => Promise<string>; experience?: Row[]; dirs?: string[]; stagedDir?: string } = {}): Promise<ReviewResult & { wrote?: string }> {
+  // dirs/stagedDir injectable (same pattern as `experience`) so callers/tests are hermetic —
+  // scanDirs(ctx) reads the HOST's real shelves (agent MemFS + ~/.letta/skills), which made the
+  // n=1 wiring test pass only on machines with an empty global shelf (fake-green class).
+  const dirs = config.dirs ?? scanDirs(ctx);
+  const stagedShelf = config.stagedDir ?? STAGED_DIR;
   // In staged mode, staged skills are part of the dedupe surface. Otherwise repeated manual reflects
   // can spray near-duplicate staged siblings before review/graduation (live dogfood catch).
-  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, STAGED_DIR];
+  const reviewDirs = config.mode === "auto" ? dirs : [...dirs, stagedShelf];
   const exp = config.experience ?? loadExperience();
   const ev = buildCrossConversationEvidence(exp);
   // ENGRAM: the prioritized-replay + reconsolidation brief over the SAME trace. This is the
@@ -655,7 +659,7 @@ export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | 
   if ((res.action === "create" || res.action === "update") && res.name && res.content) {
     const live = config.mode === "auto";
     const graduate = live || res.action === "update" || isHighConfidenceCreate(res, ev);
-    const dir = graduate ? agentSkillsDir(ctx) : STAGED_DIR;
+    const dir = graduate ? agentSkillsDir(ctx) : stagedShelf;
     const tagged = res.content.includes(MM_TAG) ? res.content : res.content + `\n<!-- ${MM_TAG}: reflective ${new Date().toISOString().slice(0, 10)}; action=${res.action}; convs=${ev.convs}; ${graduate ? "graduated=true" : "staged=true"} -->\n`;
     try {
       if (res.action === "create" && !res.updateTarget) {

@@ -127,7 +127,12 @@ test("2a · wiring: reflect lane parks an n=1 create as action:none with an n=1 
       mode: "staged",
       authorFn: async () => N1_DRAFT,
       experience,
-    } as any);
+      // HERMETIC: pin the routing/dedupe surface to empty tmp shelves. Without this the lane
+      // scans the HOST's real shelves (~/.letta/skills) and on a populated machine the
+      // ambiguous-route guard fires before the n=1 gate — green only on an empty shelf.
+      dirs: [mkdtempSync(join(tmpdir(), "mm-n1-shelf-"))],
+      stagedDir: mkdtempSync(join(tmpdir(), "mm-n1-staged-")),
+    });
     expect(res.action).toBe("none");
     expect(res.reason || "").toMatch(/n=1|single.instance|multi.instance/i);
     expect(res.wrote).toBeFalsy();

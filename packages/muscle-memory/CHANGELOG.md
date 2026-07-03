@@ -24,6 +24,16 @@ All notable changes to `@letta-ai/muscle-memory`. Format loosely follows [Keep a
   n=1 hole, instance borrowing from unrelated signals, ungrounded creates, staged-sibling dedupe, and
   retired-clone quarantine.
 
+### Changed
+- **Hermetic reflect-lane testing** — `runReflectiveReview` now accepts injectable `dirs`/`stagedDir`
+  (same pattern as `experience`). The n=1 wiring test previously scanned the HOST's real skill shelves
+  (`~/.letta/skills`): on a populated machine the ambiguous-route guard fired before the n=1 gate and
+  the test failed — green only on an empty shelf. The test now pins empty tmp shelves.
+- **`HIGH_SIGNAL_TOOL_SET` is configuration, not hardcoded vocabulary** — the shipped set contained
+  deployment-specific tool names from the authors' own rigs. It now defaults to empty and is populated
+  via `MM_HIGH_SIGNAL_TOOLS` (comma-separated tool names); configured tools get a stable arg-shape
+  fingerprint template. The per-tool template special-cases for those private tools were removed.
+
 ## [0.6.0] — 2026-06-28
 
 The "skill library that maintains itself" release. Observe → distill/update → quality-gate → graduate →

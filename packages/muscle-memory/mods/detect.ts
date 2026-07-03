@@ -37,15 +37,11 @@ export function commandTemplate(cmd: string): string {
 }
 
 
-export const HIGH_SIGNAL_TOOL_SET = new Set(["visual_receipt", "im8_claims_lint", "no_cap_gate_check", "repo_radar_evidence", "kev_final_buzzer_gate", "im8_theme_done_gate", "im8_product_intel", "im8_write_plan"]);
-
-
-export function hostOrToken(s: unknown): string {
-  const raw = String(s || "");
-  try { return new URL(raw).hostname.replace(/^www\./, ""); } catch { return slug(raw).slice(0, 48) || "unknown"; }
-}
-
-export function countMaybeArray(v: unknown): number { return Array.isArray(v) ? v.length : v == null ? 0 : 1; }
+/** High-signal tools get their reps tracked as first-class evidence signals. This is
+ * deployment-specific vocabulary, so it is CONFIGURED, never hardcoded: set
+ * MM_HIGH_SIGNAL_TOOLS to a comma-separated list of your own gate/receipt tool names
+ * (e.g. "design_review_gate,release_readiness_check"). Empty by default. */
+export const HIGH_SIGNAL_TOOL_SET = new Set<string>((process.env.MM_HIGH_SIGNAL_TOOLS || "").split(",").map((s) => s.trim()).filter(Boolean));
 
 
 export function fingerprint(tool: string, args: Record<string, unknown>): { fp: string; tmpl: string | null } {
@@ -64,22 +60,9 @@ export function fingerprint(tool: string, args: Record<string, unknown>): { fp: 
     tmpl = `${tool} ${keys.join(",")}`;
   } else if (tool === "Skill" && typeof args?.skill === "string") {
     tmpl = `Skill ${slug(String(args.skill))}`;
-  } else if (tool === "visual_receipt") {
-    tmpl = `visual_receipt ${hostOrToken(args?.url)} ${countMaybeArray(args?.viewports)} viewports ${countMaybeArray(args?.selectors)} selectors`;
-  } else if (tool === "im8_claims_lint") {
-    tmpl = `im8_claims_lint supplement-copy ${countMaybeArray(args?.files)} files`;
-  } else if (tool === "no_cap_gate_check") {
-    tmpl = `no_cap_gate_check high-trust-claim`;
-  } else if (tool === "repo_radar_evidence" && typeof args?.kind === "string") {
-    tmpl = `repo_radar_evidence ${slug(String(args.kind))}`;
-  } else if (tool === "kev_final_buzzer_gate") {
-    tmpl = `kev_final_buzzer_gate final-readiness`;
-  } else if (tool === "im8_theme_done_gate") {
-    tmpl = `im8_theme_done_gate theme-readiness`;
-  } else if (tool === "im8_product_intel") {
-    tmpl = `im8_product_intel ${slug(String(args?.mode || "lookup"))}`;
-  } else if (tool === "im8_write_plan") {
-    tmpl = `im8_write_plan ${slug(String(args?.operation || "write-plan"))}`;
+  } else if (HIGH_SIGNAL_TOOL_SET.has(tool)) {
+    // Configured high-signal tools (MM_HIGH_SIGNAL_TOOLS) get a stable arg-shape template.
+    tmpl = `${tool} ${keys.join(",")}`;
   }
   const shape = keys.filter((k) => !SECRETISH.test(k)).join(",");
   const fp = `${tool}(${shape})${tmpl ? " :: " + tmpl : ""}`;
