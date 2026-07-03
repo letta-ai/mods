@@ -51,7 +51,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /AKIA[0-9A-Z]{16}/,
   /sk-[A-Za-z0-9]{20,}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}/,
+  /(api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}/i,
 ];
 
 // ============================================================================
