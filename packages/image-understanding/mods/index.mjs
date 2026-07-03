@@ -126,7 +126,24 @@ async function urlImage(pathOrUrl, signal) {
   return { bytes, base64: bytes.toString("base64"), mime: contentType, source: pathOrUrl, isUrl: true };
 }
 
+function isDataUri(value) {
+  return typeof value === "string" && value.startsWith("data:");
+}
+
+function loadDataUri(dataUri) {
+  const match = dataUri.match(/^data:(image\/[a-z+]+);base64,(.+)$/is);
+  if (!match) throw new Error("Invalid image data URI");
+  const mime = match[1];
+  const base64 = match[2];
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    throw new Error(`Image is too large (${bytes.length} bytes). Limit is ${MAX_IMAGE_BYTES} bytes.`);
+  }
+  return { bytes, base64, mime, source: "inline-data-uri", isUrl: false };
+}
+
 async function loadImage(pathOrUrl, ctx) {
+  if (isDataUri(pathOrUrl)) return loadDataUri(pathOrUrl);
   return isHttpUrl(pathOrUrl) ? await urlImage(pathOrUrl, ctx.signal) : await localImage(pathOrUrl, ctx.cwd);
 }
 
@@ -284,12 +301,17 @@ function imageRefFromPart(part) {
   if (!part || typeof part !== "object") return null;
   if (typeof part.path === "string" && part.path) return part.path;
   if (typeof part.file_path === "string" && part.file_path) return part.file_path;
-  if (typeof part.url === "string" && isHttpUrl(part.url)) return part.url;
-  if (typeof part.image_url === "string" && isHttpUrl(part.image_url)) return part.image_url;
+  if (typeof part.url === "string" && part.url) return part.url;
+  if (typeof part.image_url === "string" && part.image_url) return part.image_url;
   if (part.image_url && typeof part.image_url === "object" && typeof part.image_url.url === "string") return part.image_url.url;
   if (part.source && typeof part.source === "object") {
     if (typeof part.source.path === "string") return part.source.path;
     if (typeof part.source.url === "string") return part.source.url;
+    // Anthropic-style inline base64: { type: "image", source: { type: "base64", media_type: "image/png", data: "..." } }
+    if (part.source.type === "base64" && typeof part.source.data === "string") {
+      const mt = part.source.media_type || "image/png";
+      return `data:${mt};base64,${part.source.data}`;
+    }
   }
   return null;
 }
@@ -321,6 +343,20 @@ function appendTextContent(content, text) {
   return text;
 }
 
+function stripImagesFromContent(content, replacementText) {
+  if (typeof content === "string") {
+    const cleaned = content.replace(/!\[[^\]]*\]\([^)]+\)/g, "").trim();
+    return cleaned ? `${cleaned}\n\n${replacementText}` : replacementText;
+  }
+  if (!Array.isArray(content)) return content;
+  const kept = content.filter((part) => {
+    const type = String(part?.type || "").toLowerCase();
+    const isImage = type.includes("image") || Boolean(part?.image_url);
+    return !isImage;
+  });
+  return [...kept, { type: "text", text: replacementText }];
+}
+
 async function autoCaptionTurn(event, ctx) {
   const config = getConfig();
   if (!config.autoCaption) return;
@@ -347,7 +383,8 @@ async function autoCaptionTurn(event, ctx) {
     if (!item || item.type === "approval" || item.role !== "user") return item;
     const refs = extractImageRefsFromContent(item.content);
     if (refs.length === 0) return item;
-    return { ...item, content: appendTextContent(item.content, note) };
+    // CRITICAL: Strip image parts and replace with text so non-vision models don't choke
+    return { ...item, content: stripImagesFromContent(item.content, note) };
   });
   return { input: event.input };
 }
