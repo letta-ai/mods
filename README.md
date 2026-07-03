@@ -66,14 +66,25 @@ Mods are organized as npm packages under `packages/`:
 ```txt
 packages/
 ├── analysis-mode/        # Phrase-triggered diagnostic analysis mode
+├── aura-maxxing/         # High-signal, high-presence response guidance
+├── autopivot/            # Model failover across a priority ladder on rate limits or errors
+├── control-room/         # Cockpit and trust guard for goal, progress, and approval state
 ├── conversation-summary/ # Conversation summary statusline
 ├── environment-compass/  # Read-only environment and git orientation
+├── git-status/           # Git branch, dirty state, and ahead/behind statusline
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
+├── hypa/                 # Local context runtime that compresses noisy tool output
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── jukebox/              # Jamendo-powered terminal music player
 ├── memfs-search/         # Agent-callable MemFS memory search
+├── muscle-memory/        # Self-maintaining skill library from real tool-use patterns
+├── oath-keeper/          # Detects agent promises and delivers on them automatically
+├── output-compressor/    # Reversibly compresses large tool outputs before the model sees them
+├── pets/                 # Terminal pets that animate based on turn and tool activity
 ├── plan-mode/            # Plan-mode style workflow
+├── soft-landing/         # Recovery slash command for drift, compaction, or context overload
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
+├── sprite/               # Persistent pet that grows stats from real agent work
 ├── threadkeeper/         # Live operational anchors for commitments and open loops
 ├── tool-guard-inspector/ # Tool permission audit log and slash command
 ├── user-timestamps/      # Adds local timestamp metadata to user messages
@@ -88,14 +99,25 @@ scripts/
 ## Current Mods
 
 - **analysis-mode** - Phrase-triggered diagnostic mode using turn reminders and local state
+- **aura-maxxing** - High-signal, high-presence response guidance
+- **autopivot** - Model failover across a priority ladder on rate limits or errors
+- **control-room** - Cockpit and trust guard for goal, progress, and approval state
 - **conversation-summary** - Current conversation summary/title statusline
 - **environment-compass** - Read-only environment and git orientation for local/remote runtimes
+- **git-status** - Git branch, dirty state, and ahead/behind statusline
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
+- **hypa** - Local context runtime that compresses noisy tool output
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **jukebox** - Jamendo-powered terminal music player with a now-playing panel
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
+- **muscle-memory** - Self-maintaining skill library from real tool-use patterns
+- **oath-keeper** - Detects agent promises and delivers on them automatically
+- **output-compressor** - Reversibly compresses large tool outputs before the model sees them
+- **pets** - Terminal pets that animate based on turn and tool activity
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
+- **soft-landing** - Recovery slash command for drift, compaction, or context overload
 - **spotify-statusline** - macOS Spotify now-playing statusline
+- **sprite** - Persistent pet that grows stats from real agent work
 - **threadkeeper** - Live operational anchors for commitments, open loops, temporary boundaries, modes, drift guards, and due state
 - **tool-guard-inspector** - Tool permission audit log using a lightweight permission policy and slash command
 - **user-timestamps** - Adds local timestamp metadata to every user message
