@@ -676,25 +676,56 @@ export default function activate(letta: any) {
         description: "TeamTalk — shared team knowledge base (init, enable, status, search, propose)",
         async run(ctx: any) {
           const { sub, rest } = parseSubcommand(String(ctx.args || ""));
+          // Diagnostic logging — write to stderr and a local file so we can
+          // see what happened even if the TUI doesn't render output.
+          const logLine = `[teamtalk] sub=${sub} rest=${JSON.stringify(rest)}\n`;
+          try { process.stderr.write(logLine); } catch {}
           try {
+            const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+            mkdirSync(dirname(logPath), { recursive: true });
+            writeFileSync(logPath, logLine, { flag: "a" });
+          } catch {}
+          try {
+            let result: string;
             switch (sub) {
               case "init":
-                return { type: "output", output: await handleInit(letta, rest) };
+                result = await handleInit(letta, rest);
+                break;
               case "enable":
-                return { type: "output", output: await handleEnable(letta, rest) };
+                result = await handleEnable(letta, rest);
+                break;
               case "disable":
-                return { type: "output", output: handleDisable() };
+                result = handleDisable();
+                break;
               case "status":
-                return { type: "output", output: handleStatus(ctx.cwd) };
+                result = handleStatus(ctx.cwd);
+                break;
               case "search":
-                return { type: "output", output: await handleSearch(rest) };
+                result = await handleSearch(rest);
+                break;
               case "propose":
-                return { type: "output", output: await handlePropose(letta, rest, ctx) };
+                result = await handlePropose(letta, rest, ctx);
+                break;
               case "help":
               default:
-                return { type: "output", output: buildHelp() };
+                result = buildHelp();
+                break;
             }
+            try {
+              const okLine = `[teamtalk] result (${result.length} chars): ${result.slice(0, 200)}\n`;
+              process.stderr.write(okLine);
+              const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+              writeFileSync(logPath, okLine, { flag: "a" });
+            } catch {}
+            return { type: "output", output: result };
           } catch (err: any) {
+            const errMsg = `Error: ${err?.message || String(err)}\n${err?.stack || ""}`;
+            try {
+              const errLine = `[teamtalk] error: ${errMsg.slice(0, 500)}\n`;
+              process.stderr.write(errLine);
+              const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+              writeFileSync(logPath, errLine, { flag: "a" });
+            } catch {}
             return { type: "output", output: `Error: ${err?.message || String(err)}` };
           }
         },
