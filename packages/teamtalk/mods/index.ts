@@ -1188,29 +1188,49 @@ export default function activate(letta: any) {
       letta.tools.register({
         name: "teamtalk_propose",
         description:
-          "Propose a new concept (Rule, Playbook, Decision, Person, Reference) for the team's " +
-          "shared knowledge base. The proposal is sent to the steward agent, which validates " +
-          "OKF conformance and commits to its own MemFS. The steward may reject proposals that " +
-          "violate policy (secrets, duplicates, schema violations); treat a rejection as a " +
-          "revision request.",
+          "Propose adding a new concept to the team's shared knowledge base. " +
+          "USE THIS WHEN the user wants to: add a new team rule, document a " +
+          "playbook or runbook, record an architectural decision (ADR), create " +
+          "a person page, or otherwise add structured content to the team's " +
+          "OKF bundle. The proposal is sent to the steward agent, which " +
+          "validates OKF conformance and policy (no secrets, no duplicates, " +
+          "paths under team/) and commits to its own MemFS. The steward may " +
+          "reject — treat a rejection as a revision request and adjust the " +
+          "proposal. Do NOT use this for ephemeral notes, project state, or " +
+          "anything that belongs on a per-user agent.",
         parameters: {
           type: "object",
           properties: {
             type: {
               type: "string",
               enum: ["Rule", "Playbook", "Decision", "Person", "Reference"],
-              description: "OKF concept type",
+              description: "OKF concept type. " +
+                "Rule: an always-on or event-triggered team convention. " +
+                "Playbook: a runbook or procedure for handling a recurring task. " +
+                "Decision: an architectural decision record (ADR). " +
+                "Person: a team member page. " +
+                "Reference: a pointer to an external asset or index.",
             },
-            title: { type: "string", description: "Display title for the concept" },
+            title: {
+              type: "string",
+              description: "Human-readable title. The steward converts this to a slug in the proposed_path if not supplied.",
+            },
             proposed_path: {
               type: "string",
-              description: "Path under team/, e.g. team/rules/global/think-before-coding.md",
+              description: "Target path under team/. Must start with 'team/' and end with '.md'. " +
+                "Examples: 'team/rules/global/no-unused-imports.md', 'team/playbooks/incident-triage.md', " +
+                "'team/decisions/2026-07-04-use-postgres.md', 'team/people/jane-doe.md'. " +
+                "Conventional structure: team/<type-plural>/<slug>.md.",
             },
-            body: { type: "string", description: "Markdown body of the concept" },
+            body: {
+              type: "string",
+              description: "Markdown body. Use structural markdown — headings, lists, code blocks — not freeform prose. " +
+                "OKF v0.1 conventional sections when applicable: '# Trigger' for rules, '# Steps' for playbooks, '# Schema' for resource references.",
+            },
             tags: {
               type: "array",
               items: { type: "string" },
-              description: "Optional tags for the concept frontmatter",
+              description: "Optional short tags for cross-cutting categorization (e.g. ['quality', 'typescript']).",
             },
           },
           required: ["type", "title", "proposed_path", "body"],
