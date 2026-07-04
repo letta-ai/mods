@@ -606,7 +606,16 @@ function renderRulesFile(bundleDir: string, rulesRelDir: string = "rules/global"
   }
   if (entries.length === 0) return "";
   entries.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  // Wrap with OKF-compliant YAML frontmatter so the steward's
+  // pre-commit hook (which validates frontmatter on every .md in
+  // memory) accepts the rendered summary file. Allowed keys per the
+  // hook: description, read_only, limit. We need a non-empty
+  // description.
   const lines: string[] = [
+    "---",
+    "description: The team's always-on global rules, linking to full OKF concepts.",
+    "---",
+    "",
     "# Global Rules",
     "",
     "These are the team's always-on rules. Each entry links to the full concept in the OKF bundle.",
@@ -1474,23 +1483,48 @@ export default function activate(letta: any) {
             }
           }
 
-          // Commit the change via the `letta memory commit` CLI
-          // shell-out. This persists the new file to the steward's
-          // git-backed MemFS repo.
+          // Commit the change via plain git in the steward's local MemFS
+          // clone. The `letta memory` CLI has no commit subcommand
+          // (`letta memory --help` confirms: "Memory is git-backed.
+          // Use git commands for commit/push."), so we shell out to
+          // `git add . && git commit`. We use `git -C memDir` to
+          // scope to the steward's repo without changing our cwd.
           let commitNote = "";
           try {
             const { execFile } = await import("node:child_process");
             const { promisify } = await import("node:util");
             const execFileP = promisify(execFile);
-            const { stdout } = await execFileP("letta", ["memory", "commit", "--agent", state.stewardAgentId!], {
-              timeout: 15000,
-            });
-            if (stdout) dlog(`commit stdout: ${stdout.slice(0, 200)}`);
+            // Author identity matches the Letta Code convention so
+            // git log shows a recognizable identity for the bot
+            // commits.
+            const commitEnv = {
+              ...process.env,
+              GIT_AUTHOR_NAME: "teamtalk-mod",
+              GIT_AUTHOR_EMAIL: "teamtalk@letta.local",
+              GIT_COMMITTER_NAME: "teamtalk-mod",
+              GIT_COMMITTER_EMAIL: "teamtalk@letta.local",
+            };
+            const commitMsg = `teamtalk_propose: add ${proposedPath} (${type})`;
+            await execFileP("git", ["-C", memDir, "add", "."], { timeout: 10000 });
+            await execFileP(
+              "git",
+              ["-C", memDir, "commit", "-m", commitMsg, "--author=teamtalk-mod <teamtalk@letta.local>"],
+              { timeout: 15000, env: commitEnv },
+            );
             commitNote = " Committed to steward MemFS.";
+            dlog(`git commit OK: ${commitMsg}`);
           } catch (err: any) {
             // Non-fatal: file is written locally even if commit fails.
-            commitNote = ` Commit skipped: ${err?.message || err}.`;
-            dlog(`commit failed: ${err?.message || err}`);
+            // Often the failure is "nothing to commit" if a parallel
+            // write already committed — that's still a success.
+            const msg = err?.stderr || err?.message || String(err);
+            if (/nothing to commit/i.test(msg)) {
+              commitNote = " (already committed).";
+              dlog(`commit no-op: ${msg.slice(0, 200)}`);
+            } else {
+              commitNote = ` Commit skipped: ${msg.slice(0, 200)}.`;
+              dlog(`commit failed: ${msg.slice(0, 400)}`);
+            }
           }
 
           // Update local state lastSyncAt so /teamtalk status is fresh.
