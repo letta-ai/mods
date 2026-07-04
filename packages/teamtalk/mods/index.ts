@@ -362,6 +362,20 @@ async function attachStewardReadTools(letta: any, agentId: string): Promise<{ at
 }
 
 // ============================================================================
+// Module-level debug logger
+// ============================================================================
+
+// Append-only debug log shared across all handlers. The per-handler
+// debug logs in handleInit/handleReseed are local-scoped; this one is
+// for tool handlers and other top-level code that needs to log.
+function dlog(line: string): void {
+  try {
+    const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+    writeFileSync(logPath, `[teamtalk] ${line}\n`, { flag: "a" });
+  } catch {}
+}
+
+// ============================================================================
 // Secret detection
 // ============================================================================
 
@@ -846,8 +860,12 @@ async function handleInit(letta: any, rest: string): Promise<string> {
 
   try {
     const debugLog: string[] = [];
+    // Local dlog mirrors to the per-init debug array (rendered in
+    // the user-facing message) and forwards to the module-level
+    // dlog for the persistent file log.
     const dlog = (line: string) => {
       debugLog.push(line);
+      // Forward to module-level dlog (defined above) for the file log.
       try {
         const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
         writeFileSync(logPath, `[teamtalk-init] ${line}\n`, { flag: "a" });
