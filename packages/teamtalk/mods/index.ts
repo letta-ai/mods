@@ -720,32 +720,20 @@ async function handleInit(letta: any, rest: string): Promise<string> {
         rulesNote = `Wrote ${result.ruleCount} rules to ${result.path}`;
       }
     }
-    // Push steward memory blocks back to the agent. Reseed is a good
-    // moment to refresh them in case they got overwritten (e.g. by a
-    // chat session that drifted the persona).
+    // Refresh the persona block in case it drifted. Schema and rules
+    // live in the OKF bundle, not as memory blocks.
     let personaNote = "";
     const personaAsset = readAsset("steward-persona.md");
-    const schemaAsset = readAsset("steward-schema.md");
-    const stewardRulesBlock = rulesContent || readAsset("steward-rules.md");
-    if (personaAsset && schemaAsset && stewardRulesBlock) {
-      const blocks = [
-        { label: "persona", value: personaAsset },
-        { label: "schema", value: schemaAsset },
-        { label: "rules", value: stewardRulesBlock },
-      ];
-      let updatedBlocks = 0;
-      for (const b of blocks) {
-        try {
-          await letta.client.agents.blocks.update(b.label, {
-            agent_id: state.stewardAgentId,
-            value: b.value,
-          });
-          updatedBlocks += 1;
-        } catch (err: any) {
-          // ignore per-block failures; we'll still report partial success
-        }
+    if (personaAsset) {
+      try {
+        await letta.client.agents.blocks.update("persona", {
+          agent_id: state.stewardAgentId,
+          value: personaAsset,
+        });
+        personaNote = "Refreshed persona memory block.";
+      } catch (err: any) {
+        personaNote = `Failed to refresh persona: ${err?.message || err}`;
       }
-      personaNote = `Updated ${updatedBlocks}/3 steward memory blocks.`;
     }
 
     writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
@@ -945,39 +933,30 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       }
     }
 
-    // Push the steward persona/schema/rules blocks to the agent's
-    // memory via the SDK. `letta agents create --pinned` pre-populates
-    // persona.md and human blocks with the Letta Code default persona;
-    // we overwrite with our steward-specific content so George
-    // responds as an organizational memory steward rather than a generic
-    // coding assistant.
+    // Push the steward persona block to the agent's memory via the
+    // SDK. `letta agents create --pinned` pre-populates persona and
+    // human blocks with the Letta Code default persona; we overwrite
+    // persona with our steward-specific content so George responds as
+    // an organizational memory steward rather than a generic coding
+    // assistant. The schema and rules live in the OKF bundle under
+    // `team/` and `system/rules.md`; we don't duplicate them as
+    // memory blocks (the steward reads them from disk on demand).
     let personaNote = "";
     const personaAsset = readAsset("steward-persona.md");
-    const schemaAsset = readAsset("steward-schema.md");
-    const stewardRulesBlock = rulesContent || readAsset("steward-rules.md");
-    if (personaAsset && schemaAsset && stewardRulesBlock) {
-      const blocks = [
-        { label: "persona", value: personaAsset },
-        { label: "schema", value: schemaAsset },
-        { label: "rules", value: stewardRulesBlock },
-      ];
-      let updatedBlocks = 0;
-      for (const b of blocks) {
-        try {
-          await letta.client.agents.blocks.update(b.label, {
-            agent_id: candidateId,
-            value: b.value,
-          });
-          updatedBlocks += 1;
-        } catch (err: any) {
-          dlog(`block update failed for ${b.label}: ${err?.message || err}`);
-        }
+    if (personaAsset) {
+      try {
+        await letta.client.agents.blocks.update("persona", {
+          agent_id: candidateId,
+          value: personaAsset,
+        });
+        personaNote = "Updated persona memory block.";
+        dlog(`updated steward persona block`);
+      } catch (err: any) {
+        personaNote = `Failed to update persona block: ${err?.message || err}`;
+        dlog(`persona update failed: ${err?.message || err}`);
       }
-      personaNote = `Updated ${updatedBlocks}/3 steward memory blocks (persona, schema, rules).`;
-      dlog(`updated ${updatedBlocks} steward memory blocks`);
     } else {
-      personaNote = "Steward memory blocks not updated (assets missing).";
-      dlog("steward assets missing — skipping block updates");
+      personaNote = "Steward persona not updated (asset missing).";
     }
 
     const seedNote = memDirFound
