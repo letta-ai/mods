@@ -365,16 +365,36 @@ function parseFlags(rest: string): ParsedFlags {
   const tokens = rest.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
   const positional: string[] = [];
   const flags: Record<string, string> = {};
+  // Two-pass: first record all tokens with their positions, then resolve
+  // bare --flag to consume the next non-flag token as its value.
+  const parsed: Array<{ kind: "flag" | "flag-eq" | "positional"; key?: string; value: string }> = [];
   for (const token of tokens) {
     if (token.startsWith("--")) {
       const eq = token.indexOf("=");
       if (eq > 0) {
-        flags[token.slice(2, eq)] = token.slice(eq + 1).replace(/^"|"$/g, "");
+        parsed.push({ kind: "flag-eq", key: token.slice(2, eq), value: token.slice(eq + 1).replace(/^"|"$/g, "") });
       } else {
-        flags[token.slice(2)] = "true";
+        parsed.push({ kind: "flag", key: token.slice(2), value: "" });
       }
     } else {
-      positional.push(token.replace(/^"|"$/g, ""));
+      parsed.push({ kind: "positional", value: token.replace(/^"|"$/g, "") });
+    }
+  }
+  for (let i = 0; i < parsed.length; i++) {
+    const p = parsed[i];
+    if (p.kind === "flag") {
+      // Look ahead: consume the next token if it is positional.
+      const next = parsed[i + 1];
+      if (next && next.kind === "positional") {
+        flags[p.key!] = next.value;
+        parsed[i + 1] = { kind: "positional", value: "" };
+      } else {
+        flags[p.key!] = "true";
+      }
+    } else if (p.kind === "flag-eq") {
+      flags[p.key!] = p.value;
+    } else if (p.kind === "positional" && p.value) {
+      positional.push(p.value);
     }
   }
   return { positional: positional.join(" "), flags };
@@ -594,7 +614,20 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
     if (!existsSync(memDir)) {
-      return `Steward MemFS dir not found on disk: ${memDir}\nWait for the clone to land, then re-run.`;
+      // Try to force-pull the clone before giving up.
+      try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execFileAsync = promisify(execFile);
+        await execFileAsync("letta", ["memory", "pull", "--agent", state.stewardAgentId], {
+          timeout: 25_000,
+        });
+      } catch (err: any) {
+        return `Steward MemFS dir not found on disk: ${memDir}\nletta memory pull failed: ${err?.message || err}\nRun \`letta memory pull --agent ${state.stewardAgentId}\` manually, then re-run.`;
+      }
+      if (!existsSync(memDir)) {
+        return `letta memory pull succeeded but MemFS dir still missing: ${memDir}\nInvestigate manually.`;
+      }
     }
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
@@ -710,13 +743,28 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     // Trust the requested name; create response shape varies.
     const displayName = name;
 
-    // Persist the binding immediately. The local MemFS clone is async and
-    // we shouldn't block the command on it (the harness has a 30s timeout
-    // and the clone can take longer). /teamtalk init --reseed or
-    // /teamtalk search will populate the local bundle once the clone lands.
+    // Force-pull the local MemFS clone via the CLI. The harness clone is
+    // async and unreliable for steward agents that the user agent didn't
+    // create itself; `letta memory pull` is the supported way to bring
+    // it down to ~/.letta/agents/<id>/memory.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
+    let pullNote = "";
+    try {
+      const { execFile: execFileCb } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFileCb);
+      await execFileAsync("letta", ["memory", "pull", "--agent", candidateId], {
+        timeout: 25_000,
+      });
+      dlog(`letta memory pull OK`);
+      pullNote = "Pulled local MemFS clone via `letta memory pull`.";
+    } catch (err: any) {
+      dlog(`letta memory pull FAILED: ${err?.message || err}`);
+      pullNote = `Could not pull local MemFS clone: ${err?.message || err}. Run \`letta memory pull --agent ${candidateId}\` manually.`;
+    }
+
     const memDirFound = existsSync(memDir);
     let seededFiles = 0;
     if (memDirFound) {
@@ -754,6 +802,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- Agent: ${displayName} (${candidateId})`,
       `- Tagged: ${STEWARD_TAG}`,
       `- Verified: retrieve succeeded`,
+      `- ${pullNote}`,
       `- MemFS dir: ${memDir} (${memDirFound ? "present" : "not yet present"})`,
       `- ${seedNote}`,
       "",
