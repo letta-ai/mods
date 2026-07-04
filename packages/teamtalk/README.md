@@ -69,31 +69,68 @@ See [`GETTING_STARTED.md`](./GETTING_STARTED.md) for the full manual
 workflow. Short version:
 
 ```
-/teamtalk init --confirm        # create steward + seed MemFS
-/teamtalk status                # confirm binding
-/teamtalk search think          # exercise read path
+/teamtalk init --name George --confirm   # create steward agent in your org
+                                         # (also materializes local MemFS clone
+                                         #  via background `letta --agent`)
+/teamtalk status                          # confirm binding + paths
+/teamtalk init --reseed                   # seed OKF bundle + render rules.md
+                                         # (safe to re-run)
+/teamtalk search think                    # exercise read path
 ```
 
 The model can also call `teamtalk_search` and `teamtalk_propose`
 directly — no need to invoke the slash command.
 
+## How it works
+
+The steward agent owns the team's OKF bundle in its own MemFS. Other
+agents on the team read directly from the steward's local MemFS clone
+at `~/.letta/agents/<steward-id>/memory/team/` and route writes through
+the steward via a structured `PROPOSE_NEW_CONCEPT` message.
+
+The mod does **not** create the steward through the Letta SDK directly.
+`letta.client.agents.create` produces a half-baked agent with no local
+MemFS clone and no auto-applied tags. Instead, the mod shells out to
+`letta agents create --tags teamtalk-steward,git-memory-enabled --pinned
+--model letta/auto`, which is the supported CLI path that sets up MemFS
+and pre-populates `persona.md`.
+
+After agent creation, the local MemFS clone at
+`~/.letta/agents/<steward-id>/memory/` only materializes once a
+user-agent session opens with that agent. To trigger this without
+manual chat interaction, the init flow spawns a backgrounded
+`letta --agent <steward-id>` with `stdio: "ignore"`; the harness exits
+promptly when no TTY is attached, and the clone appears within a few
+seconds.
+
+If the clone isn't present after 5 seconds, init returns and prompts
+the user to run `/teamtalk init --reseed` once it lands. Reseed also
+calls `letta memory pull --agent <id>` as a fallback.
+
 ## Commands
 
 - `/teamtalk init [--name <name>] [--confirm]` — create a steward agent
-  in your org (with confirmation) and seed its MemFS.
+  in your org (with confirmation), materialize the local MemFS clone,
+  and seed the OKF bundle.
+- `/teamtalk init [--name <name>] [--reseed]` — re-seed the OKF
+  bundle and re-render `system/rules.md` for the bound steward without
+  recreating the agent. Use when the bundle is stale or missing.
 - `/teamtalk enable [agent-id]` — bind to an existing steward agent.
   Without ID, lists candidates tagged `teamtalk-steward`.
 - `/teamtalk disable` — clear the local binding.
 - `/teamtalk status` — show binding, steward ID, local MemFS path, OKF
-  bundle root, concept count.
+  bundle root, rules file, concept count.
 - `/teamtalk search <query> [--limit N]` — search the steward's OKF
   bundle.
 - `/teamtalk propose` — open the proposal flow.
+- `/teamtalk debug` — self-check: list agents, list tagged agents,
+  retrieve the bound steward, check local filesystem state. Use to
+  diagnose org scoping and missing-agent issues.
 
 ## Tools (model-callable)
 
-- `teamtalk_search(query, limit?)` — search the steward's OKF bundle.
-  Read-only, parallel-safe.
+- `teamtalk_search(query, limit?)` — keyword search over markdown files
+  in the steward's OKF bundle. Read-only, parallel-safe.
 - `teamtalk_propose(type, title, proposed_path, body, tags?)` — send a
   `PROPOSE_NEW_CONCEPT` message to the steward. Requires approval;
   the steward may reject.
@@ -111,14 +148,14 @@ The mod persists a small state file at `~/.letta/mods/teamtalk.state.json`:
 ```json
 {
   "stewardAgentId": "agent-XXXXXXXX",
-  "stewardAgentName": "teamtalk-steward",
-  "lastSyncAt": "2026-07-03T16:45:00.000Z",
+  "stewardAgentName": "George",
+  "lastSyncAt": "2026-07-04T12:37:00.000Z",
   "bundlePath": "/Users/you/.letta/agents/agent-XXXXXXXX/memory/team"
 }
 ```
 
-State refreshes implicitly on each read; there is no manual sync
-command.
+State refreshes implicitly on each read. `bundlePath` is repopulated by
+`teamtalk_search` if it was missing on the last status check.
 
 ## Safety
 
@@ -128,9 +165,11 @@ This is trusted local code. The mod:
 - Writes to `~/.letta/mods/teamtalk.state.json` for local binding state.
 - Calls `letta.client.agents.messages.create` against the bound
   steward ID for write proposals.
-- Calls `letta.client.agents.create` exactly once, during `/teamtalk
-  init --confirm`, with the steward persona/schema/rules as memory
-  blocks.
+- Calls `letta.client.agents.retrieve` to verify a created agent is
+  accessible in the session's org.
+- Shells out to `letta agents create` during init, and to
+  `letta --agent <id>` (backgrounded) and `letta memory pull` during
+  init/reseed.
 
 If a mod breaks startup or command handling, recover with:
 
@@ -152,11 +191,16 @@ See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.
   want semantic search over the bundle as a complement, install
   `npm:@letta-ai/memfs-search` separately; TeamTalk does not
   currently delegate to it.
+- **Requires the `letta` CLI to be on PATH.** The mod shells out to
+  `letta agents create`, `letta --agent`, and `letta memory pull`
+  during init and reseed. The Desktop listener loads provider-only mods
+  anyway, so this does not affect Desktop, but headless installs
+  without the CLI are unsupported.
+- **Cloud OAuth path only.** Self-hosted deployments using API keys
+  are not explicitly tested.
 - No permission overlay for non-maintainer writes. Anyone with org
   access can propose; gating is the steward's job via its persona.
 - Project-scoped rule triggering is out of scope for v1.
-- Cloud OAuth path only. Self-hosted deployments using API keys are not
-  explicitly tested.
 
 ## License
 
