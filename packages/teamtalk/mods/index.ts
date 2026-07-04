@@ -390,6 +390,7 @@ function buildHelp(): string {
     "- `/teamtalk status` — show binding, steward ID, local MemFS path, OKF bundle root, concept count.",
     "- `/teamtalk search <query> [--limit N]` — search the steward's OKF bundle.",
     "- `/teamtalk propose` — open the proposal flow (use `teamtalk_propose` from the model for a structured write).",
+    "- `/teamtalk debug` — self-check: list agents in the active org, list tagged agents, retrieve the bound steward, check local filesystem state. Use to diagnose org scoping and missing-agent issues.",
     "",
     "Tools available to the model:",
     "",
@@ -638,6 +639,16 @@ async function handleInit(letta: any, rest: string): Promise<string> {
   }
 
   try {
+    const debugLog: string[] = [];
+    const dlog = (line: string) => {
+      debugLog.push(line);
+      try {
+        const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+        writeFileSync(logPath, `[teamtalk-init] ${line}\n`, { flag: "a" });
+      } catch {}
+    };
+    dlog(`init start: name=${name}`);
+
     const agent = await letta.client.agents.create({
       name,
       model: DEFAULT_STEWARD_MODEL,
@@ -650,16 +661,61 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       tags: [STEWARD_TAG],
     });
 
-    // Always trust the requested name; the create response shape can vary.
+    dlog(`create response keys: ${Object.keys(agent || {}).sort().join(",")}`);
+    dlog(`create response: ${JSON.stringify({
+      id: agent?.id,
+      name: agent?.name,
+      tags: agent?.tags,
+    })}`);
+
+    // Verify the create actually produced a usable agent. If the response
+    // shape is unexpected (e.g. an error envelope with an id field) or
+    // retrieve fails, refuse to bind.
+    const candidateId = agent?.id;
+    if (!candidateId || typeof candidateId !== "string" || !candidateId.startsWith("agent-")) {
+      const msg = `Agent create returned no usable id. Response: ${JSON.stringify(agent)}`;
+      dlog(`FAIL: ${msg}`);
+      return [
+        "# TeamTalk init FAILED",
+        "",
+        msg,
+        "",
+        "Debug log: ~/.letta/mods/teamtalk-debug.log",
+      ].join("\n");
+    }
+
+    let verified = false;
+    let verifyError: string | null = null;
+    try {
+      const retrieved = await letta.client.agents.retrieve(candidateId);
+      dlog(`retrieve OK: id=${retrieved?.id} name=${JSON.stringify(retrieved?.name)}`);
+      verified = true;
+    } catch (err: any) {
+      verifyError = err?.message || String(err);
+      dlog(`retrieve FAIL: ${verifyError}`);
+    }
+
+    if (!verified) {
+      return [
+        "# TeamTalk init FAILED",
+        "",
+        `Created agent ${candidateId} but cannot retrieve it: ${verifyError}`,
+        "The agent may have been created in a different org than this session is bound to.",
+        "Run `/teamtalk debug` to inspect the org context.",
+        "",
+        "Debug log: ~/.letta/mods/teamtalk-debug.log",
+      ].join("\n");
+    }
+
+    // Trust the requested name; create response shape varies.
     const displayName = name;
 
     // Wait for MemFS clone to land locally, then seed the OKF bundle.
     const home = process.env.HOME || homedir();
-    const memDir = join(home, ".letta", "agents", agent.id, "memory");
+    const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
     let seededFiles = 0;
     let memDirFound = false;
-    // Poll up to 30 seconds for the local clone.
     for (let attempt = 0; attempt < 60; attempt++) {
       if (existsSync(memDir)) {
         memDirFound = true;
@@ -667,6 +723,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       }
       await new Promise((r) => setTimeout(r, 500));
     }
+    dlog(`memDir found after poll: ${memDirFound}`);
     if (memDirFound) {
       const assetFiles = listAssetFiles("team");
       for (const rel of assetFiles) {
@@ -679,7 +736,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     }
 
     writeState({
-      stewardAgentId: agent.id,
+      stewardAgentId: candidateId,
       stewardAgentName: displayName,
       lastSyncAt: new Date().toISOString(),
       bundlePath: existsSync(bundleDir) ? bundleDir : null,
@@ -689,22 +746,103 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       ? seededFiles > 0
         ? `Seeded ${seededFiles} bundle files.`
         : "Bundle directory exists but no files were seeded (check assets)."
-      : "MemFS clone did not land within 30s. Run `/teamtalk init --reseed` once the clone is available, or check that the steward agent was created successfully.";
+      : "MemFS clone did not land within 30s. Run `/teamtalk init --reseed` once the clone is available.";
 
     return [
       "# TeamTalk steward created",
       "",
-      `- Agent: ${displayName} (${agent.id})`,
+      `- Agent: ${displayName} (${candidateId})`,
       `- Tagged: ${STEWARD_TAG}`,
+      `- Verified: retrieve succeeded`,
       `- MemFS dir: ${memDir}`,
       `- OKF bundle: ${existsSync(bundleDir) ? bundleDir : "(not yet present locally)"}`,
       `- ${seedNote}`,
       "",
+      "Debug:",
+      ...debugLog.map((l) => `  ${l}`),
+      "",
       "Next: run `/teamtalk status` to verify, or `/teamtalk search` to exercise the read path.",
     ].join("\n");
   } catch (err: any) {
-    return `Failed to create steward: ${err?.message || String(err)}`;
+    const msg = err?.message || String(err);
+    try {
+      const logPath = join(homedir(), ".letta", "mods", "teamtalk-debug.log");
+      writeFileSync(logPath, `[teamtalk-init] EXCEPTION: ${msg}\n${err?.stack || ""}\n`, { flag: "a" });
+    } catch {}
+    return `Failed to create steward: ${msg}\nDebug log: ~/.letta/mods/teamtalk-debug.log`;
   }
+}
+
+// ============================================================================
+// Debug self-check
+// ============================================================================
+
+async function handleDebug(letta: any): Promise<string> {
+  const lines: string[] = [];
+  lines.push("# TeamTalk debug");
+  lines.push("");
+  const state = readState();
+  lines.push(`Local state file: ${STATE_PATH}`);
+  lines.push(`State: ${JSON.stringify(state, null, 2)}`);
+  lines.push("");
+
+  // 1. Try to list agents to verify API connectivity.
+  lines.push("## API check");
+  try {
+    const response = await letta.client.agents.list({ limit: 3 });
+    const items: any[] = Array.isArray(response) ? response : response?.items || response?.data || [];
+    lines.push(`list({ limit: 3 }) returned ${items.length} agent(s):`);
+    for (const a of items.slice(0, 3)) {
+      lines.push(`  - id=${a.id} name=${JSON.stringify(a.name)} tags=${JSON.stringify(a.tags)}`);
+    }
+  } catch (err: any) {
+    lines.push(`list FAILED: ${err?.message || String(err)}`);
+  }
+  lines.push("");
+
+  // 2. Try to list agents with the teamtalk-steward tag.
+  lines.push("## Tagged agents");
+  try {
+    const response = await letta.client.agents.list({ tags: [STEWARD_TAG], limit: 10 });
+    const items: any[] = Array.isArray(response) ? response : response?.items || response?.data || [];
+    lines.push(`list({ tags: [${STEWARD_TAG}] }) returned ${items.length} agent(s):`);
+    for (const a of items) {
+      lines.push(`  - id=${a.id} name=${JSON.stringify(a.name)}`);
+    }
+  } catch (err: any) {
+    lines.push(`list by tag FAILED: ${err?.message || String(err)}`);
+  }
+  lines.push("");
+
+  // 3. Try to retrieve the bound steward, if any.
+  if (state.stewardAgentId) {
+    lines.push(`## Bound steward: ${state.stewardAgentId}`);
+    try {
+      const agent = await letta.client.agents.retrieve(state.stewardAgentId);
+      lines.push(`retrieve OK: id=${agent.id} name=${JSON.stringify(agent.name)}`);
+    } catch (err: any) {
+      lines.push(`retrieve FAILED: ${err?.message || String(err)}`);
+      lines.push(`This means the bound agent id is not accessible from this session's org.`);
+    }
+  } else {
+    lines.push("## No steward bound");
+  }
+  lines.push("");
+
+  // 4. Local filesystem checks.
+  lines.push("## Local filesystem");
+  lines.push(`HOME: ${process.env.HOME || homedir()}`);
+  for (const p of candidateStewardMemoryPaths(state)) {
+    lines.push(`  ${existsSync(p) ? "EXISTS" : "missing"}: ${p}`);
+  }
+  if (state.stewardAgentId) {
+    const home = process.env.HOME || homedir();
+    const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
+    const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
+    lines.push(`  ${existsSync(memDir) ? "EXISTS" : "missing"}: ${memDir}`);
+    lines.push(`  ${existsSync(bundleDir) ? "EXISTS" : "missing"}: ${bundleDir}`);
+  }
+  return lines.join("\n");
 }
 
 // ============================================================================
@@ -751,6 +889,9 @@ export default function activate(letta: any) {
                 break;
               case "propose":
                 result = await handlePropose(letta, rest, ctx);
+                break;
+              case "debug":
+                result = await handleDebug(letta);
                 break;
               case "help":
               default:
