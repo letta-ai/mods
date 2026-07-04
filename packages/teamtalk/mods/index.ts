@@ -46,11 +46,20 @@ const __dirname = dirname(__filename);
 const ASSETS_DIR = join(__dirname, "..", "assets");
 
 // Patterns that signal likely secrets in proposed content.
+// These are intentionally conservative — false positives are
+// preferable to publishing a credential into a team's shared
+// knowledge base. Each pattern's `source` is reported in the
+// refusal message so the caller knows what triggered.
 const SECRET_PATTERNS: RegExp[] = [
-  /AKIA[0-9A-Z]{16}/,
-  /sk-[A-Za-z0-9]{20,}/,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /(api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}/i,
+  /AKIA[0-9A-Z]{16}/,                       // AWS access key
+  /sk-[A-Za-z0-9]{20,}/,                   // OpenAI project key
+  /ghp_[A-Za-z0-9]{30,}/,                   // GitHub PAT
+  /xoxb-[A-Za-z0-9-]{10,}/,                 // Slack bot token
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,     // PEM private key
+  /(api[_-]?key|secret|password)\s*[:=]\s*['"][^'"]{8,}/i, // quoted assignment
+  // Unquoted .env-style: KEY=value or KEY="value". Common with
+  // docker-compose, .env files, README secrets, and shell snippets.
+  /\b(?:API_KEY|SECRET|PASSWORD|TOKEN|ACCESS_KEY|PRIVATE_KEY)\s*[:=]\s*\S{8,}/i,
 ];
 
 // ============================================================================
@@ -1402,11 +1411,21 @@ export default function activate(letta: any) {
               content: "proposed_path must start with `team/` and end with `.md`",
             };
           }
-          const secretHit = containsSecret(`${title}\n${body}`);
+          // Scan every user-supplied field, not just title/body.
+          // Tags can carry credentials (e.g. an "auth=jwt" tag) and
+          // paths can encode intent ("team/secrets/aws.md" is itself
+          // a leak vector if filed under team/).
+          const allFieldsText = [
+            title,
+            body,
+            proposedPath,
+            ...tags.map(String),
+          ].join("\n");
+          const secretHit = containsSecret(allFieldsText);
           if (secretHit) {
             return {
               status: "error",
-              content: `Refused: proposal matches secret pattern (${secretHit}). Remove sensitive content.`,
+              content: `Refused: proposal matches secret pattern (${secretHit}). Remove sensitive content from title, body, tags, or path.`,
             };
           }
 
