@@ -496,6 +496,62 @@ function handleStatus(cwd: string): string {
   return formatStatus(readState(), cwd);
 }
 
+// ============================================================================
+// Rules rendering (turn_start injection source)
+// ============================================================================
+
+function renderRulesFile(bundleDir: string, rulesRelDir: string = "rules/global"): string {
+  // Walk <bundleDir>/<rulesRelDir>/*.md, parse frontmatter + body, render
+  // a compact summary suitable for projection into the steward's system
+  // prompt. One section per rule.
+  const rulesDir = join(bundleDir, rulesRelDir);
+  if (!existsSync(rulesDir)) return "";
+  const files = walkMarkdownFiles(rulesDir);
+  const entries: { relPath: string; title: string; description: string; tags: string[] }[] = [];
+  for (const f of files) {
+    const { frontmatter, body } = parseFrontmatter(f.content);
+    if (frontmatter.type !== "Rule") continue;
+    const relPath = relative(bundleDir, f.path).replace(/\.md$/, "");
+    const heading = body.match(/^#\s+(.+)/m);
+    entries.push({
+      relPath,
+      title: frontmatter.title || heading?.[1]?.trim() || relPath,
+      description: frontmatter.description || "",
+      tags: frontmatter.tags || [],
+    });
+  }
+  if (entries.length === 0) return "";
+  entries.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  const lines: string[] = [
+    "# Global Rules",
+    "",
+    "These are the team's always-on rules. Each entry links to the full concept in the OKF bundle.",
+    "",
+  ];
+  for (const e of entries) {
+    lines.push(`## ${e.title}`);
+    lines.push(`**Path:** \`${e.relPath}\``);
+    if (e.description) lines.push(`**Description:** ${e.description}`);
+    if (e.tags.length) lines.push(`**Tags:** ${e.tags.join(", ")}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function writeRulesFile(memDir: string, rulesContent: string): { written: boolean; path: string; ruleCount: number } {
+  if (!rulesContent) return { written: false, path: "", ruleCount: 0 };
+  const rulesPath = join(memDir, "system", "rules.md");
+  try {
+    mkdirSync(join(memDir, "system"), { recursive: true });
+    writeFileSync(rulesPath, rulesContent);
+    // Count rules in the rendered output.
+    const ruleCount = (rulesContent.match(/^## /gm) || []).length;
+    return { written: true, path: rulesPath, ruleCount };
+  } catch (err: any) {
+    return { written: false, path: "", ruleCount: 0 };
+  }
+}
+
 async function handleSearch(rest: string): Promise<string> {
   const state = readState();
   if (!state.stewardAgentId) {
@@ -638,6 +694,15 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       copyFileSync(src, dst);
       seededFiles += 1;
     }
+    // Render rules.md so turn_start has something to read.
+    let rulesNote = "";
+    const rulesContent = renderRulesFile(bundleDir);
+    if (rulesContent) {
+      const result = writeRulesFile(memDir, rulesContent);
+      if (result.written) {
+        rulesNote = `Wrote ${result.ruleCount} rules to ${result.path}`;
+      }
+    }
     writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
     return [
       "# TeamTalk reseed",
@@ -645,6 +710,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- MemFS dir: ${memDir}`,
       `- OKF bundle: ${bundleDir}`,
       `- Seeded ${seededFiles} files.`,
+      rulesNote ? `- ${rulesNote}` : "",
     ].join("\n");
   }
   if (!confirmed) {
@@ -826,6 +892,19 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       bundlePath: memDirFound && existsSync(bundleDir) ? bundleDir : null,
     });
 
+    // Render rules.md from OKF bundle so turn_start has something to read.
+    let rulesNote = "";
+    if (memDirFound) {
+      const rulesContent = renderRulesFile(bundleDir);
+      if (rulesContent) {
+        const result = writeRulesFile(memDir, rulesContent);
+        if (result.written) {
+          rulesNote = `Wrote ${result.ruleCount} rules to ${result.path}`;
+          dlog(`rules file written: ${result.path} (${result.ruleCount} rules)`);
+        }
+      }
+    }
+
     const seedNote = memDirFound
       ? seededFiles > 0
         ? `Seeded ${seededFiles} bundle files.`
@@ -840,6 +919,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- Verified: retrieve succeeded`,
       `- MemFS dir: ${memDir} (${memDirFound ? "present" : "not yet present"})`,
       `- ${seedNote}`,
+      rulesNote ? `- ${rulesNote}` : "",
       "",
       "Debug:",
       ...debugLog.map((l) => `  ${l}`),
