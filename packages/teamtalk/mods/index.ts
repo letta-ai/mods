@@ -1506,16 +1506,21 @@ export default function activate(letta: any) {
           // clone. The `letta memory` CLI has no commit subcommand
           // (`letta memory --help` confirms: "Memory is git-backed.
           // Use git commands for commit/push."), so we shell out to
-          // `git add . && git commit`. We use `git -C memDir` to
-          // scope to the steward's repo without changing our cwd.
+          // `git add <files> && git commit`. We use `git -C memDir`
+          // to scope to the steward's repo without changing our cwd.
+          //
+          // Stage ONLY the files this proposal touched — never
+          // `git add .`. Any unrelated dirty files (e.g. earlier
+          // uncommitted writes from another tool, secrets left in
+          // memory, partially-applied updates) would otherwise be
+          // swept into our commit and published. If `git status`
+          // reports other dirty files, refuse and ask the user to
+          // resolve them first.
           let commitNote = "";
           try {
             const { execFile } = await import("node:child_process");
             const { promisify } = await import("node:util");
             const execFileP = promisify(execFile);
-            // Author identity matches the Letta Code convention so
-            // git log shows a recognizable identity for the bot
-            // commits.
             const commitEnv = {
               ...process.env,
               GIT_AUTHOR_NAME: "teamtalk-mod",
@@ -1523,27 +1528,78 @@ export default function activate(letta: any) {
               GIT_COMMITTER_NAME: "teamtalk-mod",
               GIT_COMMITTER_EMAIL: "teamtalk@letta.local",
             };
-            const commitMsg = `teamtalk_propose: add ${proposedPath} (${type})`;
-            await execFileP("git", ["-C", memDir, "add", "."], { timeout: 10000 });
-            await execFileP(
-              "git",
-              ["-C", memDir, "commit", "-m", commitMsg, "--author=teamtalk-mod <teamtalk@letta.local>"],
-              { timeout: 15000, env: commitEnv },
-            );
-            commitNote = " Committed to steward MemFS.";
-            dlog(`git commit OK: ${commitMsg}`);
-          } catch (err: any) {
-            // Non-fatal: file is written locally even if commit fails.
-            // Often the failure is "nothing to commit" if a parallel
-            // write already committed — that's still a success.
-            const msg = err?.stderr || err?.message || String(err);
-            if (/nothing to commit/i.test(msg)) {
-              commitNote = " (already committed).";
-              dlog(`commit no-op: ${msg.slice(0, 200)}`);
-            } else {
-              commitNote = ` Commit skipped: ${msg.slice(0, 200)}.`;
-              dlog(`commit failed: ${msg.slice(0, 400)}`);
+
+            // Build the list of paths to stage. Always include the
+            // proposed concept file and the log update. Include
+            // system/rules.md only when the proposal wrote it.
+            const touchedPaths = [proposedPath, "team/log.md"];
+            if (rulesNote) touchedPaths.push("system/rules.md");
+
+            // Inspect full repo status to detect unrelated dirty
+            // files. If any exist, refuse the commit and surface
+            // them to the caller.
+            const statusOut = (await execFileP("git", ["-C", memDir, "status", "--porcelain"], {
+              timeout: 10000,
+            })).stdout;
+            const dirtyPaths: string[] = [];
+            for (const line of statusOut.split("\n")) {
+              if (!line.trim()) continue;
+              // porcelain format: XY <space> <path> (or "XY <space> <old> -> <new>" for renames)
+              const m = line.match(/^..\s+(.+?)(?:\s+->\s+.+)?$/);
+              if (!m) continue;
+              let p = m[1];
+              if (p.startsWith('"') && p.endsWith('"')) p = JSON.parse(p);
+              dirtyPaths.push(p);
             }
+            // Files we expect to be dirty from this proposal:
+            const expectedSet = new Set(touchedPaths);
+            const unexpected = dirtyPaths.filter((p) => !expectedSet.has(p));
+            if (unexpected.length > 0) {
+              const errMsg = `Refused to commit: ${unexpected.length} unrelated dirty file(s) in steward MemFS (${unexpected.slice(0, 5).join(", ")}${unexpected.length > 5 ? ", ..." : ""}). Resolve them via git status in ${memDir} before retrying.`;
+              dlog(`unexpected dirty paths: ${unexpected.join(", ")}`);
+              return { status: "error", content: errMsg };
+            }
+
+            // Stage exactly the touched paths.
+            const commitMsg = `teamtalk_propose: add ${proposedPath} (${type})`;
+            for (const p of touchedPaths) {
+              try {
+                await execFileP("git", ["-C", memDir, "add", "--", p], { timeout: 10000 });
+              } catch (err: any) {
+                const msg = err?.stderr || err?.message || String(err);
+                // "did not match any files" is benign if a sibling
+                // rule wasn't touched (e.g. log append was a no-op).
+                if (!/did not match/i.test(msg)) throw err;
+              }
+            }
+            // Commit. If there's nothing staged, that's a no-op.
+            try {
+              await execFileP(
+                "git",
+                ["-C", memDir, "commit", "-m", commitMsg, "--author=teamtalk-mod <teamtalk@letta.local>"],
+                { timeout: 15000, env: commitEnv },
+              );
+              commitNote = " Committed to steward MemFS.";
+              dlog(`git commit OK: ${commitMsg}`);
+            } catch (err: any) {
+              const msg = err?.stderr || err?.message || String(err);
+              if (/nothing to commit/i.test(msg)) {
+                commitNote = " (already committed).";
+                dlog(`commit no-op: ${msg.slice(0, 200)}`);
+              } else {
+                throw err;
+              }
+            }
+          } catch (err: any) {
+            // Surface real commit failures (not 'nothing to commit')
+            // as errors. Files are written on disk; the caller can
+            // resolve manually with git status / git commit.
+            const msg = err?.stderr || err?.message || String(err);
+            dlog(`commit failed: ${msg.slice(0, 400)}`);
+            return {
+              status: "error",
+              content: `Wrote ${proposedPath} to disk but git commit failed: ${msg.slice(0, 200)}. Resolve manually in ${memDir} and rerun.`,
+            };
           }
 
           // Update local state lastSyncAt so /teamtalk status is fresh.
