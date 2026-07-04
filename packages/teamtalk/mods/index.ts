@@ -593,7 +593,7 @@ function listAssetFiles(subdir: string): string[] {
 
 async function handleInit(letta: any, rest: string): Promise<string> {
   const state = readState();
-  if (state.stewardAgentId && !rest.includes("--force")) {
+  if (state.stewardAgentId && !rest.includes("--force") && !rest.includes("--reseed")) {
     return `Already bound to ${state.stewardAgentName || state.stewardAgentId}.\nRun \`/teamtalk disable\` first to rebind, or pass --force.`;
   }
 
@@ -772,13 +772,27 @@ async function handleInit(letta: any, rest: string): Promise<string> {
 
     const displayName = name;
 
-    // The CLI's `agents create` sets up MemFS and the local clone. Wait
-    // briefly for the clone to land. If it doesn't, return and tell the
-    // user to run /teamtalk init --reseed; bundling the wait into init
-    // blew the 30s harness timeout in earlier iterations.
+    // The CLI's `agents create` does NOT materialize the local MemFS
+    // clone. That only happens when a user-agent session opens with the
+    // agent. Run `letta --agent <id>` in the background using spawn;
+    // it reads no stdin (stdio: "ignore"), and the harness exits
+    // promptly on a no-TTY invocation. Wait for the clone to appear,
+    // then seed the OKF bundle.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
+    try {
+      const { spawn: spawnCb } = await import("node:child_process");
+      const child = spawnCb(
+        "letta",
+        ["--agent", candidateId],
+        { stdio: "ignore", detached: true },
+      );
+      child.unref();
+      dlog(`spawned letta --agent ${candidateId} pid=${child.pid ?? "?"}`);
+    } catch (err: any) {
+      dlog(`background letta --agent failed to spawn: ${err?.message || err}`);
+    }
     let memDirFound = false;
     for (let attempt = 0; attempt < 10; attempt++) {
       if (existsSync(memDir)) {
