@@ -1349,12 +1349,13 @@ export default function activate(letta: any) {
           "USE THIS WHEN the user wants to: add a new team rule, document a " +
           "playbook or runbook, record an architectural decision (ADR), create " +
           "a person page, or otherwise add structured content to the team's " +
-          "OKF bundle. The proposal is sent to the steward agent, which " +
-          "validates OKF conformance and policy (no secrets, no duplicates, " +
-          "paths under team/) and commits to its own MemFS. The steward may " +
-          "reject — treat a rejection as a revision request and adjust the " +
-          "proposal. Do NOT use this for ephemeral notes, project state, or " +
-          "anything that belongs on a per-user agent.",
+          "OKF bundle. The mod validates OKF conformance and policy (no " +
+          "secrets, no duplicates, paths under team/) and writes the concept " +
+          "directly to the steward's local MemFS clone, then commits via " +
+          "git. Do NOT use this for ephemeral notes, project state, or " +
+          "anything that belongs on a per-user agent. The steward remains " +
+          "the audit point: the user is the steward of the team's corpus; " +
+          "the mod is the writer on the user's behalf.",
         parameters: {
           type: "object",
           properties: {
@@ -1370,7 +1371,7 @@ export default function activate(letta: any) {
             },
             title: {
               type: "string",
-              description: "Human-readable title. The steward converts this to a slug in the proposed_path if not supplied.",
+              description: "Human-readable display title. Stored verbatim in the OKF frontmatter. The proposed_path is supplied independently and does not need to be derived from the title.",
             },
             proposed_path: {
               type: "string",
