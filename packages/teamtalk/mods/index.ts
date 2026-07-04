@@ -458,7 +458,7 @@ async function handleEnable(letta: any, rest: string): Promise<string> {
   }
   if (!positional) {
     try {
-      const response = await letta.client.agents.list({ tags: [STEWARD_TAG], limit: 20 });
+      const response = await letta.client.agents.list({ tags: [STEWARD_TAG, "git-memory-enabled"], limit: 20 });
       const candidates: any[] = Array.isArray(response)
         ? response
         : response?.items || response?.data || [];
@@ -614,20 +614,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
     if (!existsSync(memDir)) {
-      // Try to force-pull the clone before giving up.
-      try {
-        const { execFile } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const execFileAsync = promisify(execFile);
-        await execFileAsync("letta", ["memory", "pull", "--agent", state.stewardAgentId], {
-          timeout: 25_000,
-        });
-      } catch (err: any) {
-        return `Steward MemFS dir not found on disk: ${memDir}\nletta memory pull failed: ${err?.message || err}\nRun \`letta memory pull --agent ${state.stewardAgentId}\` manually, then re-run.`;
-      }
-      if (!existsSync(memDir)) {
-        return `letta memory pull succeeded but MemFS dir still missing: ${memDir}\nInvestigate manually.`;
-      }
+      return `Steward MemFS dir not found on disk: ${memDir}\nWait for the clone to land, then re-run.`;
     }
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
@@ -743,28 +730,9 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     // Trust the requested name; create response shape varies.
     const displayName = name;
 
-    // Force-pull the local MemFS clone via the CLI. The harness clone is
-    // async and unreliable for steward agents that the user agent didn't
-    // create itself; `letta memory pull` is the supported way to bring
-    // it down to ~/.letta/agents/<id>/memory.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
-    let pullNote = "";
-    try {
-      const { execFile: execFileCb } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execFileAsync = promisify(execFileCb);
-      await execFileAsync("letta", ["memory", "pull", "--agent", candidateId], {
-        timeout: 25_000,
-      });
-      dlog(`letta memory pull OK`);
-      pullNote = "Pulled local MemFS clone via `letta memory pull`.";
-    } catch (err: any) {
-      dlog(`letta memory pull FAILED: ${err?.message || err}`);
-      pullNote = `Could not pull local MemFS clone: ${err?.message || err}. Run \`letta memory pull --agent ${candidateId}\` manually.`;
-    }
-
     const memDirFound = existsSync(memDir);
     let seededFiles = 0;
     if (memDirFound) {
@@ -802,7 +770,6 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- Agent: ${displayName} (${candidateId})`,
       `- Tagged: ${STEWARD_TAG}`,
       `- Verified: retrieve succeeded`,
-      `- ${pullNote}`,
       `- MemFS dir: ${memDir} (${memDirFound ? "present" : "not yet present"})`,
       `- ${seedNote}`,
       "",
