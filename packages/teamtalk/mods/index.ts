@@ -320,6 +320,22 @@ function containsSecret(text: string): string | null {
 // Status formatting
 // ============================================================================
 
+function formatDisplayPath(absolutePath: string, cwd: string): string {
+  // Try to express relative to cwd, but if that escapes cwd (starts with
+  // ../), use the absolute path with $HOME replaced by ~ for readability.
+  try {
+    const rel = relative(cwd, absolutePath);
+    if (rel && !rel.startsWith("..")) return rel;
+  } catch {
+    // fall through
+  }
+  const home = process.env.HOME || homedir();
+  if (home && absolutePath.startsWith(home + "/")) {
+    return "~/" + absolutePath.slice(home.length + 1);
+  }
+  return absolutePath;
+}
+
 function formatStatus(state: TeamTalkState, cwd: string): string {
   const lines: string[] = [];
   lines.push("# TeamTalk status");
@@ -337,7 +353,7 @@ function formatStatus(state: TeamTalkState, cwd: string): string {
   lines.push(`- Local MemFS dir: ${memDir || "(not found on disk)"}`);
   lines.push(`- OKF bundle: ${bundleDir || "(missing)"}`);
   lines.push(
-    `- Rules file: ${rulesFile ? relative(cwd, rulesFile) || rulesFile : "(missing)"}`,
+    `- Rules file: ${rulesFile ? formatDisplayPath(rulesFile, cwd) : "(missing)"}`,
   );
   lines.push(`- Concepts in bundle: ${countConcepts(bundleDir)}`);
   lines.push(`- Last sync: ${state.lastSyncAt || "(never)"}`);
