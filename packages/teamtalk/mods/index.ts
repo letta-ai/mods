@@ -307,6 +307,53 @@ function countConcepts(bundleDir: string | null): number {
 }
 
 // ============================================================================
+// Steward tool provisioning
+// ============================================================================
+
+// `letta agents create --pinned` produces an agent with the default
+// Letta Code tool set (memory, web_search, etc.) but NOT file tools.
+// Without Read/Glob/Grep/Write the steward can't navigate or update
+// the OKF bundle in its own MemFS, so the PROPOSE protocol would
+// silently fail. We list the global tool registry, attach the
+// steward-specific subset on init/reseed.
+const STEWARD_TOOL_NAMES = ["Read", "Glob", "Grep", "Write"] as const;
+
+async function attachStewardTools(letta: any, agentId: string): Promise<{ attached: string[]; failed: string[] }> {
+  const attached: string[] = [];
+  const failed: string[] = [];
+  // List tools by name in one round-trip each; the API supports name
+  // filter and returns a paginated async-iterable. We only attach
+  // each named tool (Read, Glob, Grep, Write) — not Bash, not MultiEdit,
+  // not any general-purpose tool — because the steward is meant to
+  // navigate and update its OKF bundle, not run arbitrary code.
+  for (const toolName of STEWARD_TOOL_NAMES) {
+    let toolId: string | undefined;
+    try {
+      // PagePromise is async-iterable; collecting first match.
+      for await (const tool of letta.client.tools.list({ name: toolName })) {
+        if (tool?.id) {
+          toolId = tool.id;
+          break;
+        }
+      }
+    } catch (err: any) {
+      // fall through, treat as not-found
+    }
+    if (!toolId) {
+      failed.push(`${toolName} (not found in registry)`);
+      continue;
+    }
+    try {
+      await letta.client.agents.tools.attach(toolId, { agent_id: agentId });
+      attached.push(toolName);
+    } catch (err: any) {
+      failed.push(`${toolName} (${err?.message || err})`);
+    }
+  }
+  return { attached, failed };
+}
+
+// ============================================================================
 // Secret detection
 // ============================================================================
 
@@ -734,6 +781,23 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       }
     }
 
+    // Reattach steward tools in case they got removed (e.g. a chat
+    // session drifted the agent's tool set). Idempotent — attach is
+    // a no-op when the tool is already present.
+    let toolsNote = "";
+    try {
+      const toolResult = await attachStewardTools(letta, state.stewardAgentId);
+      if (toolResult.attached.length > 0) {
+        toolsNote = `Attached ${toolResult.attached.length}/4 steward tools.`;
+      }
+      if (toolResult.failed.length > 0) {
+        toolsNote += (toolsNote ? " " : "") +
+          `Failed: ${toolResult.failed.join("; ")}.`;
+      }
+    } catch (err: any) {
+      toolsNote = `Tool attach failed: ${err?.message || err}`;
+    }
+
     writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
     return [
       "# TeamTalk reseed",
@@ -743,6 +807,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- Seeded ${seededFiles} files.`,
       rulesNote ? `- ${rulesNote}` : "",
       personaNote ? `- ${personaNote}` : "",
+      toolsNote ? `- ${toolsNote}` : "",
     ].join("\n");
   }
   if (!confirmed) {
@@ -752,8 +817,10 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       "This will:",
       "  1. Create a new agent named `" + name + "` in your Letta org.",
       "  2. Tag it with `teamtalk-steward`.",
-      "  3. Seed its MemFS with persona, schema, and starter rules memory blocks.",
-      "  4. Bind this install to the new agent.",
+      "  3. Seed its MemFS with the steward persona and OKF bundle.",
+      "  4. Attach the steward toolset (Read, Glob, Grep, Write) so it",
+      "     can navigate and update the bundle.",
+      "  5. Bind this install to the new agent.",
       "",
       "Re-run with `--confirm` to proceed:",
       "  /teamtalk init --name " + name + " --confirm",
@@ -957,6 +1024,26 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       personaNote = "Steward persona not updated (asset missing).";
     }
 
+    // Attach the steward toolset (Read, Glob, Grep, Write) so the
+    // steward can navigate and update its OKF bundle. Without these
+    // the PROPOSE protocol fails silently — the steward accepts the
+    // proposal but cannot act on it.
+    let toolsNote = "";
+    try {
+      const toolResult = await attachStewardTools(letta, candidateId);
+      if (toolResult.attached.length > 0) {
+        toolsNote = `Attached ${toolResult.attached.length}/4 steward tools (${toolResult.attached.join(", ")}).`;
+      }
+      if (toolResult.failed.length > 0) {
+        toolsNote += (toolsNote ? " " : "") +
+          `Failed: ${toolResult.failed.join("; ")}.`;
+      }
+      dlog(`steward tools: ${toolResult.attached.join(",")} attached; ${toolResult.failed.join(";")} failed`);
+    } catch (err: any) {
+      toolsNote = `Tool attach failed: ${err?.message || err}`;
+      dlog(`tool attach failed: ${err?.message || err}`);
+    }
+
     const seedNote = memDirFound
       ? seededFiles > 0
         ? `Seeded ${seededFiles} bundle files.`
@@ -973,6 +1060,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- ${seedNote}`,
       rulesNote ? `- ${rulesNote}` : "",
       personaNote ? `- ${personaNote}` : "",
+      toolsNote ? `- ${toolsNote}` : "",
       "",
       "Debug:",
       ...debugLog.map((l) => `  ${l}`),
