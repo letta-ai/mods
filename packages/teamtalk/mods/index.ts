@@ -310,44 +310,55 @@ function countConcepts(bundleDir: string | null): number {
 // Steward tool provisioning
 // ============================================================================
 
-// `letta agents create --pinned` produces an agent with the default
-// Letta Code tool set (memory, web_search, etc.) but NOT file tools.
-// Without Read/Glob/Grep/Write the steward can't navigate or update
-// the OKF bundle in its own MemFS, so the PROPOSE protocol would
-// silently fail. We list the global tool registry, attach the
-// steward-specific subset on init/reseed.
-const STEWARD_TOOL_NAMES = ["Read", "Glob", "Grep", "Write"] as const;
+// Letta Code agents are created with `include_base_tools: false` and
+// the static tool list `["web_search", "fetch_webpage"]`. Tools like
+// Read/Glob/Grep/Write are session-attached dynamically when a
+// user-agent session opens. For the steward we want them persistently
+// attached so PROPOSE proposals can be committed without depending on
+// an active user-agent session.
+//
+// The server-side names may be `Read`, `read_file`, `ReadFile`,
+// etc. depending on the Letta Code version. We match the server
+// `tool.type === 'letta_files_core'` and pick the names we want.
+// If your Letta Code version uses different names, update this list
+// or extend the matcher below.
+const STEWARD_TOOL_NAMES = ["Read", "Glob", "Grep", "Write", "Edit"] as const;
 
 async function attachStewardTools(letta: any, agentId: string): Promise<{ attached: string[]; failed: string[] }> {
   const attached: string[] = [];
   const failed: string[] = [];
-  // List tools by name in one round-trip each; the API supports name
-  // filter and returns a paginated async-iterable. We only attach
-  // each named tool (Read, Glob, Grep, Write) — not Bash, not MultiEdit,
-  // not any general-purpose tool — because the steward is meant to
-  // navigate and update its OKF bundle, not run arbitrary code.
-  for (const toolName of STEWARD_TOOL_NAMES) {
-    let toolId: string | undefined;
-    try {
-      // PagePromise is async-iterable; collecting first match.
-      for await (const tool of letta.client.tools.list({ name: toolName })) {
-        if (tool?.id) {
-          toolId = tool.id;
-          break;
-        }
-      }
-    } catch (err: any) {
-      // fall through, treat as not-found
+  // Step 1: list all letta_files_core tools. PagePromise is
+  // async-iterable. Build a name → id map.
+  const fileTools = new Map<string, string>();
+  try {
+    for await (const tool of letta.client.tools.list({ tool_types: ["letta_files_core"] })) {
+      if (tool?.name && tool?.id) fileTools.set(tool.name, tool.id);
     }
-    if (!toolId) {
-      failed.push(`${toolName} (not found in registry)`);
+  } catch (err: any) {
+    return { attached: [], failed: [`list failed: ${err?.message || err}`] };
+  }
+  // Step 2: attach each steward-required tool by name match.
+  for (const want of STEWARD_TOOL_NAMES) {
+    // Try exact case, then lowercase, then lower-no-underscore.
+    const candidates = [want, want.toLowerCase(), want.toLowerCase().replace("_", ""), want.toLowerCase().replace("_", "").toLowerCase()];
+    let matchedId: string | undefined;
+    let matchedName: string | undefined;
+    for (const name of candidates) {
+      if (fileTools.has(name)) {
+        matchedId = fileTools.get(name);
+        matchedName = name;
+        break;
+      }
+    }
+    if (!matchedId) {
+      failed.push(`${want} (not in registry; available: ${Array.from(fileTools.keys()).join(", ") || "none"})`);
       continue;
     }
     try {
-      await letta.client.agents.tools.attach(toolId, { agent_id: agentId });
-      attached.push(toolName);
+      await letta.client.agents.tools.attach(matchedId, { agent_id: agentId });
+      attached.push(matchedName!);
     } catch (err: any) {
-      failed.push(`${toolName} (${err?.message || err})`);
+      failed.push(`${want} (attach failed: ${err?.message || err})`);
     }
   }
   return { attached, failed };
