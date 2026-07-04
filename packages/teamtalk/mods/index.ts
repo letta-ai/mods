@@ -961,7 +961,7 @@ async function handleDebug(letta: any): Promise<string> {
   lines.push("# TeamTalk debug");
   lines.push("");
   const state = readState();
-  lines.push(`Local state file: ${STATE_PATH}`);
+  lines.push(`Local state file: ${formatDisplayPath(STATE_PATH, "/")}`);
   lines.push(`State: ${JSON.stringify(state, null, 2)}`);
   lines.push("");
 
@@ -1010,16 +1010,16 @@ async function handleDebug(letta: any): Promise<string> {
 
   // 4. Local filesystem checks.
   lines.push("## Local filesystem");
-  lines.push(`HOME: ${process.env.HOME || homedir()}`);
+  const home = process.env.HOME || homedir();
+  lines.push(`HOME: ~`);
   for (const p of candidateStewardMemoryPaths(state)) {
-    lines.push(`  ${existsSync(p) ? "EXISTS" : "missing"}: ${p}`);
+    lines.push(`  ${existsSync(p) ? "EXISTS" : "missing"}: ${formatDisplayPath(p, "/")}`);
   }
   if (state.stewardAgentId) {
-    const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
-    lines.push(`  ${existsSync(memDir) ? "EXISTS" : "missing"}: ${memDir}`);
-    lines.push(`  ${existsSync(bundleDir) ? "EXISTS" : "missing"}: ${bundleDir}`);
+    lines.push(`  ${existsSync(memDir) ? "EXISTS" : "missing"}: ${formatDisplayPath(memDir, "/")}`);
+    lines.push(`  ${existsSync(bundleDir) ? "EXISTS" : "missing"}: ${formatDisplayPath(bundleDir, "/")}`);
   }
   return lines.join("\n");
 }
