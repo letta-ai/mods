@@ -710,43 +710,43 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     // Trust the requested name; create response shape varies.
     const displayName = name;
 
-    // Wait for MemFS clone to land locally, then seed the OKF bundle.
+    // Persist the binding immediately. The local MemFS clone is async and
+    // we shouldn't block the command on it (the harness has a 30s timeout
+    // and the clone can take longer). /teamtalk init --reseed or
+    // /teamtalk search will populate the local bundle once the clone lands.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
+    const memDirFound = existsSync(memDir);
     let seededFiles = 0;
-    let memDirFound = false;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      if (existsSync(memDir)) {
-        memDirFound = true;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    dlog(`memDir found after poll: ${memDirFound}`);
     if (memDirFound) {
       const assetFiles = listAssetFiles("team");
       for (const rel of assetFiles) {
         const src = join(ASSETS_DIR, "team", rel);
         const dst = join(bundleDir, rel);
-        mkdirSync(dirname(dst), { recursive: true });
-        copyFileSync(src, dst);
-        seededFiles += 1;
+        try {
+          mkdirSync(dirname(dst), { recursive: true });
+          copyFileSync(src, dst);
+          seededFiles += 1;
+        } catch (err: any) {
+          dlog(`seed error for ${rel}: ${err?.message || err}`);
+        }
       }
     }
+    dlog(`memDir present at init: ${memDirFound}, seeded: ${seededFiles}`);
 
     writeState({
       stewardAgentId: candidateId,
       stewardAgentName: displayName,
       lastSyncAt: new Date().toISOString(),
-      bundlePath: existsSync(bundleDir) ? bundleDir : null,
+      bundlePath: memDirFound && existsSync(bundleDir) ? bundleDir : null,
     });
 
     const seedNote = memDirFound
       ? seededFiles > 0
         ? `Seeded ${seededFiles} bundle files.`
-        : "Bundle directory exists but no files were seeded (check assets)."
-      : "MemFS clone did not land within 30s. Run `/teamtalk init --reseed` once the clone is available.";
+        : "Bundle directory present but no files seeded; run `/teamtalk init --reseed` to retry."
+      : `MemFS clone not yet local. Run \`/teamtalk init --reseed\` once \`${memDir}\` exists.`;
 
     return [
       "# TeamTalk steward created",
@@ -754,8 +754,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- Agent: ${displayName} (${candidateId})`,
       `- Tagged: ${STEWARD_TAG}`,
       `- Verified: retrieve succeeded`,
-      `- MemFS dir: ${memDir}`,
-      `- OKF bundle: ${existsSync(bundleDir) ? bundleDir : "(not yet present locally)"}`,
+      `- MemFS dir: ${memDir} (${memDirFound ? "present" : "not yet present"})`,
       `- ${seedNote}`,
       "",
       "Debug:",
