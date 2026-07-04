@@ -1,7 +1,4 @@
 ---
-type: Reference
-title: TeamTalk Bundle Index
-description: Top-level index for the team's OKF bundle in TeamTalk's MemFS.
 okf_version: "0.1"
 ---
 
