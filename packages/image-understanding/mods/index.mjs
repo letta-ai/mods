@@ -55,6 +55,7 @@ const CONFIG_KEYS = {
   autoCaption: "boolean",
   autoMode: "string",
   stripImages: "boolean",
+  agents: "string",
 };
 
 function parseConfigValue(key, value) {
@@ -131,7 +132,30 @@ function getConfig() {
     autoCaption: runtimeOverrides.autoCaption ?? envBool("IMAGE_UNDERSTANDING_AUTO_CAPTION", false),
     autoMode: runtimeOverrides.autoMode ?? (process.env.IMAGE_UNDERSTANDING_AUTO_MODE || "describe"),
     stripImages: runtimeOverrides.stripImages ?? envBool("IMAGE_UNDERSTANDING_STRIP_IMAGES", false),
+    agents: runtimeOverrides.agents ?? (process.env.IMAGE_UNDERSTANDING_AGENTS || ""),
   };
+}
+
+/**
+ * Agent allowlist for turn-level behavior (auto-caption / strip-images).
+ * `agents` is a comma-separated list of agent IDs or names. When empty, turn
+ * handlers apply to every agent (previous behavior). When set, they only apply
+ * to matching agents, so a globally installed mod does not silently change
+ * message content for every agent on the machine.
+ */
+function agentAllowed(config, ctx) {
+  const allowlist = String(config.agents || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (allowlist.length === 0) return true;
+  const agentId = ctx?.agent?.id ?? null;
+  const agentName = ctx?.agent?.name ?? null;
+  return allowlist.some((entry) => {
+    if (agentId && entry === agentId) return true;
+    if (agentName && entry.toLowerCase() === String(agentName).toLowerCase()) return true;
+    return false;
+  });
 }
 
 function isHttpUrl(value) {
@@ -347,6 +371,7 @@ async function providerStatus() {
     `auto_caption: ${config.autoCaption ? "yes" : "no"}`,
     `auto_mode: ${config.autoMode}`,
     `strip_images: ${config.stripImages ? "yes" : "no"}`,
+    `agents: ${config.agents || "(all)"}`,
     `config_file: ${PERSISTENT_CONFIG_PATH}`,
     `supported_providers: openai-compatible, ollama`,
     `modes: ${Object.keys(MODE_PROMPTS).join(", ")}`,
@@ -459,6 +484,7 @@ function createSystemMessage(content) {
 async function autoCaptionTurn(event, ctx) {
   const config = getConfig();
   if (!config.autoCaption) return;
+  if (!agentAllowed(config, ctx)) return;
   const input = Array.isArray(event.input) ? event.input : [];
   const descriptions = [];
 
@@ -501,9 +527,10 @@ async function autoCaptionTurn(event, ctx) {
  * protects text-only models from 400 errors without requiring a vision
  * backend call.
  */
-function stripImagesTurn(event) {
+function stripImagesTurn(event, ctx) {
   const config = getConfig();
   if (!config.stripImages || config.autoCaption) return;
+  if (!agentAllowed(config, ctx)) return;
   const input = Array.isArray(event.input) ? event.input : [];
   let changed = false;
   let totalImages = 0;

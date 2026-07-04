@@ -39,6 +39,8 @@ Configuration is controlled by environment variables, especially:
 - `IMAGE_UNDERSTANDING_REQUIRE_LOCAL`
 - `IMAGE_UNDERSTANDING_AUTO_CAPTION`
 - `IMAGE_UNDERSTANDING_AUTO_MODE`
+- `IMAGE_UNDERSTANDING_STRIP_IMAGES`
+- `IMAGE_UNDERSTANDING_AGENTS` (comma-separated agent IDs or names; scopes auto-caption/strip-images to specific agents)
 
 ## Tool behavior
 

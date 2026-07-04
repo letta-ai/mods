@@ -89,6 +89,8 @@ Any Ollama model that supports image input should work. Other possible models in
 | `IMAGE_UNDERSTANDING_REQUIRE_LOCAL` | `0` | Set `1` to require local provider use. Currently this requires `provider=ollama`. |
 | `IMAGE_UNDERSTANDING_AUTO_CAPTION` | `0` | Set `1` to enable automatic image caption injection on `turn_start`. |
 | `IMAGE_UNDERSTANDING_AUTO_MODE` | `describe` | Mode used for auto-captioning. Supports `describe`, `ocr`, `ui_debug`, `diagram`, `accessibility`. |
+| `IMAGE_UNDERSTANDING_STRIP_IMAGES` | `0` | Set `1` to strip image parts from user messages on `turn_start` without captioning (protects text-only models without requiring a vision backend). Ignored when auto-caption is enabled. |
+| `IMAGE_UNDERSTANDING_AGENTS` | unset | Comma-separated agent IDs or names. When set, auto-caption and strip-images only apply to matching agents; other agents' messages are left untouched. Unset applies to all agents. |
 
 ## Tool usage
 
