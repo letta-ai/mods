@@ -1087,6 +1087,18 @@ async function handleInit(letta: any, rest: string): Promise<string> {
         : "Bundle directory present but no files seeded; run `/teamtalk init --reseed` to retry."
       : `MemFS clone not yet local. Run \`/teamtalk init --reseed\` once \`${memDir}\` exists.`;
 
+    // Persist binding state before returning. Even if memDirFound is
+    // false (clone not yet materialized), we still want the binding
+    // written so the user can run `/teamtalk init --reseed` without
+    // first re-binding via enable.
+    writeState({
+      stewardAgentId: candidateId,
+      stewardAgentName: displayName,
+      lastSyncAt: new Date().toISOString(),
+      bundlePath: memDirFound && existsSync(bundleDir) ? bundleDir : null,
+    });
+    dlog(`init binding written: steward=${candidateId} bundlePath=${memDirFound ? bundleDir : "(not yet)"}`);
+
     return [
       "# TeamTalk steward created",
       "",
