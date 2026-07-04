@@ -10,9 +10,9 @@ attached at the agent level. The `letta_files_core` registry exposes
 only `open_files`, `grep_files`, and `semantic_search_files`. Write
 operations on the OKF bundle are performed by the user-agent's
 TeamTalk mod, which writes directly to your local MemFS clone and
-runs `letta memory commit` to persist the change. This is a
-deliberate v1 trade-off: the steward validates and advises, the mod
-commits.
+uses `git -C memDir add <file> && git commit` to persist the
+change. This is a deliberate v1 trade-off: the steward validates
+and advises, the mod commits.
 
 ## Responsibilities
 
