@@ -575,13 +575,17 @@ async function handleEnable(letta: any, rest: string): Promise<string> {
   const agentId = positional.trim();
   try {
     const agent = await letta.client.agents.retrieve(agentId);
+    // Clear bundlePath and lastSyncAt on a rebind so the next read
+    // discovers the new steward's path. Carrying over bundlePath
+    // from a previous binding would point propose/propose handlers
+    // at the old steward's MemFS directory.
     writeState({
       stewardAgentId: agent.id,
       stewardAgentName: agent.name || null,
-      lastSyncAt: state.lastSyncAt,
-      bundlePath: state.bundlePath,
+      lastSyncAt: null,
+      bundlePath: null,
     });
-    return `Bound to steward: ${agent.name || "(unnamed)"} (${agent.id}).`;
+    return `Bound to steward: ${agent.name || "(unnamed)"} (${agent.id}). Run \`/teamtalk status\` to discover the bundle path.`;
   } catch (err: any) {
     return `Failed to bind to ${agentId}: ${err?.message || String(err)}`;
   }
