@@ -35,8 +35,6 @@ const STEWARD_TAG = "teamtalk-steward";
 const STATE_PATH = join(homedir(), ".letta", "mods", "teamtalk.state.json");
 const RULES_RELATIVE_PATH = "system/rules.md";
 const TEAM_BUNDLE_DIRNAME = "team";
-const DEFAULT_STEWARD_MODEL = "anthropic/claude-sonnet-4-5-20250929";
-const DEFAULT_EMBEDDING = "openai/text-embedding-3-small";
 const SEARCH_DEFAULT_LIMIT = 8;
 const SEARCH_MAX_FILE_BYTES = 1_000_000;
 
@@ -614,7 +612,22 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
     if (!existsSync(memDir)) {
-      return `Steward MemFS dir not found on disk: ${memDir}\nWait for the clone to land, then re-run.`;
+      // Try to pull the local clone via the CLI before giving up.
+      try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execFileAsync = promisify(execFile);
+        await execFileAsync(
+          "letta",
+          ["memory", "pull", "--agent", state.stewardAgentId],
+          { timeout: 25_000 },
+        );
+      } catch (err: any) {
+        return `Steward MemFS dir not found on disk: ${memDir}\nletta memory pull failed: ${err?.message || err}\nRun \`letta memory pull --agent ${state.stewardAgentId}\` manually, then re-run.`;
+      }
+      if (!existsSync(memDir)) {
+        return `letta memory pull succeeded but MemFS dir still missing: ${memDir}\nInvestigate manually.`;
+      }
     }
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
@@ -669,41 +682,72 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     };
     dlog(`init start: name=${name}`);
 
-    const agent = await letta.client.agents.create({
-      name,
-      model: DEFAULT_STEWARD_MODEL,
-      embedding: DEFAULT_EMBEDDING,
-      memory_blocks: [
-        { label: "persona", value: persona },
-        { label: "schema", value: schema },
-        { label: "rules", value: rules },
-      ],
-      tags: [STEWARD_TAG],
-    });
-
-    dlog(`create response keys: ${Object.keys(agent || {}).sort().join(",")}`);
-    dlog(`create response: ${JSON.stringify({
-      id: agent?.id,
-      name: agent?.name,
-      tags: agent?.tags,
-    })}`);
-
-    // Verify the create actually produced a usable agent. If the response
-    // shape is unexpected (e.g. an error envelope with an id field) or
-    // retrieve fails, refuse to bind.
-    const candidateId = agent?.id;
-    if (!candidateId || typeof candidateId !== "string" || !candidateId.startsWith("agent-")) {
-      const msg = `Agent create returned no usable id. Response: ${JSON.stringify(agent)}`;
-      dlog(`FAIL: ${msg}`);
+    // Use the letta CLI to create the agent. The CLI sets up MemFS,
+    // pre-populates persona.md, and applies the right tags automatically.
+    // The SDK path (letta.client.agents.create) does NOT do this — it
+    // creates a half-baked agent with no local clone.
+    const { execFile: execFileCb } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFileCb);
+    const tagsArg = `${STEWARD_TAG},git-memory-enabled`;
+    const modelHandle = process.env.TEAMTALK_STEWARD_MODEL || "letta/auto";
+    let cliStdout = "";
+    let cliStderr = "";
+    try {
+      const result = await execFileAsync(
+        "letta",
+        [
+          "agents", "create",
+          "--name", name,
+          "--tags", tagsArg,
+          "--model", modelHandle,
+          "--pinned",
+          "--description", "TeamTalk organizational memory steward",
+        ],
+        { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      cliStdout = result.stdout;
+      cliStderr = result.stderr;
+      dlog(`letta agents create OK, ${cliStdout.length} bytes stdout`);
+    } catch (err: any) {
+      cliStderr = err?.stderr || err?.message || String(err);
+      cliStdout = err?.stdout || "";
+      dlog(`letta agents create FAILED: ${cliStderr.slice(0, 500)}`);
       return [
         "# TeamTalk init FAILED",
         "",
-        msg,
+        `\`letta agents create\` failed: ${cliStderr.slice(0, 500)}`,
         "",
+        "The mod requires the letta CLI to be on PATH. Verify with `which letta`.",
         "Debug log: ~/.letta/mods/teamtalk-debug.log",
       ].join("\n");
     }
 
+    // Parse the agent id from the JSON output.
+    let candidateId: string | null = null;
+    try {
+      const parsed = JSON.parse(cliStdout);
+      candidateId = parsed?.id || null;
+    } catch {
+      const m = cliStdout.match(/"id":\s*"(agent-[0-9a-f-]+)"/);
+      if (m) candidateId = m[1];
+    }
+    if (!candidateId || !candidateId.startsWith("agent-")) {
+      dlog(`could not parse agent id from CLI output`);
+      return [
+        "# TeamTalk init FAILED",
+        "",
+        `Could not parse agent id from \`letta agents create\` output.`,
+        `stdout (first 500 chars): ${cliStdout.slice(0, 500)}`,
+        "",
+        "Debug log: ~/.letta/mods/teamtalk-debug.log",
+      ].join("\n");
+    }
+    dlog(`parsed agent id: ${candidateId}`);
+
+    // Verify via the SDK that we can actually see this agent in the
+    // session's org. If retrieve fails, the agent is in a different org
+    // than we're bound to.
     let verified = false;
     let verifyError: string | null = null;
     try {
@@ -714,7 +758,6 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       verifyError = err?.message || String(err);
       dlog(`retrieve FAIL: ${verifyError}`);
     }
-
     if (!verified) {
       return [
         "# TeamTalk init FAILED",
@@ -727,13 +770,24 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       ].join("\n");
     }
 
-    // Trust the requested name; create response shape varies.
     const displayName = name;
 
+    // The CLI's `agents create` sets up MemFS and the local clone. Wait
+    // briefly for the clone to land. If it doesn't, return and tell the
+    // user to run /teamtalk init --reseed; bundling the wait into init
+    // blew the 30s harness timeout in earlier iterations.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
-    const memDirFound = existsSync(memDir);
+    let memDirFound = false;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (existsSync(memDir)) {
+        memDirFound = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    dlog(`memDir present after init: ${memDirFound}`);
     let seededFiles = 0;
     if (memDirFound) {
       const assetFiles = listAssetFiles("team");
