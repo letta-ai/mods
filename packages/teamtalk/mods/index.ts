@@ -720,6 +720,34 @@ async function handleInit(letta: any, rest: string): Promise<string> {
         rulesNote = `Wrote ${result.ruleCount} rules to ${result.path}`;
       }
     }
+    // Push steward memory blocks back to the agent. Reseed is a good
+    // moment to refresh them in case they got overwritten (e.g. by a
+    // chat session that drifted the persona).
+    let personaNote = "";
+    const personaAsset = readAsset("steward-persona.md");
+    const schemaAsset = readAsset("steward-schema.md");
+    const stewardRulesBlock = rulesContent || readAsset("steward-rules.md");
+    if (personaAsset && schemaAsset && stewardRulesBlock) {
+      const blocks = [
+        { label: "persona", value: personaAsset },
+        { label: "schema", value: schemaAsset },
+        { label: "rules", value: stewardRulesBlock },
+      ];
+      let updatedBlocks = 0;
+      for (const b of blocks) {
+        try {
+          await letta.client.agents.blocks.update(b.label, {
+            agent_id: state.stewardAgentId,
+            value: b.value,
+          });
+          updatedBlocks += 1;
+        } catch (err: any) {
+          // ignore per-block failures; we'll still report partial success
+        }
+      }
+      personaNote = `Updated ${updatedBlocks}/3 steward memory blocks.`;
+    }
+
     writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
     return [
       "# TeamTalk reseed",
@@ -728,6 +756,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- OKF bundle: ${bundleDir}`,
       `- Seeded ${seededFiles} files.`,
       rulesNote ? `- ${rulesNote}` : "",
+      personaNote ? `- ${personaNote}` : "",
     ].join("\n");
   }
   if (!confirmed) {
@@ -902,17 +931,11 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     }
     dlog(`memDir present at init: ${memDirFound}, seeded: ${seededFiles}`);
 
-    writeState({
-      stewardAgentId: candidateId,
-      stewardAgentName: displayName,
-      lastSyncAt: new Date().toISOString(),
-      bundlePath: memDirFound && existsSync(bundleDir) ? bundleDir : null,
-    });
-
     // Render rules.md from OKF bundle so turn_start has something to read.
     let rulesNote = "";
+    let rulesContent = "";
     if (memDirFound) {
-      const rulesContent = renderRulesFile(bundleDir);
+      rulesContent = renderRulesFile(bundleDir);
       if (rulesContent) {
         const result = writeRulesFile(memDir, rulesContent);
         if (result.written) {
@@ -920,6 +943,41 @@ async function handleInit(letta: any, rest: string): Promise<string> {
           dlog(`rules file written: ${result.path} (${result.ruleCount} rules)`);
         }
       }
+    }
+
+    // Push the steward persona/schema/rules blocks to the agent's
+    // memory via the SDK. `letta agents create --pinned` pre-populates
+    // persona.md and human blocks with the Letta Code default persona;
+    // we overwrite with our steward-specific content so George
+    // responds as an organizational memory steward rather than a generic
+    // coding assistant.
+    let personaNote = "";
+    const personaAsset = readAsset("steward-persona.md");
+    const schemaAsset = readAsset("steward-schema.md");
+    const stewardRulesBlock = rulesContent || readAsset("steward-rules.md");
+    if (personaAsset && schemaAsset && stewardRulesBlock) {
+      const blocks = [
+        { label: "persona", value: personaAsset },
+        { label: "schema", value: schemaAsset },
+        { label: "rules", value: stewardRulesBlock },
+      ];
+      let updatedBlocks = 0;
+      for (const b of blocks) {
+        try {
+          await letta.client.agents.blocks.update(b.label, {
+            agent_id: candidateId,
+            value: b.value,
+          });
+          updatedBlocks += 1;
+        } catch (err: any) {
+          dlog(`block update failed for ${b.label}: ${err?.message || err}`);
+        }
+      }
+      personaNote = `Updated ${updatedBlocks}/3 steward memory blocks (persona, schema, rules).`;
+      dlog(`updated ${updatedBlocks} steward memory blocks`);
+    } else {
+      personaNote = "Steward memory blocks not updated (assets missing).";
+      dlog("steward assets missing — skipping block updates");
     }
 
     const seedNote = memDirFound
@@ -937,6 +995,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- MemFS dir: ${memDir} (${memDirFound ? "present" : "not yet present"})`,
       `- ${seedNote}`,
       rulesNote ? `- ${rulesNote}` : "",
+      personaNote ? `- ${personaNote}` : "",
       "",
       "Debug:",
       ...debugLog.map((l) => `  ${l}`),
