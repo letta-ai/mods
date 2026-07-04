@@ -11,6 +11,8 @@ Use this package when the current model cannot inspect images directly but needs
 
 The package does not make the main model natively multimodal. It sends the image to a separate configured vision backend and returns text.
 
+Note: on Letta Code's local backend, text-only models never receive raw image parts even without this package — the provider runtime replaces them with a lossy placeholder. This package exists to replace that discarded content with useful text (captions or an inspect-on-demand note), not to guard against provider errors. The configured vision backend itself must be a vision-capable model.
+
 ## Capabilities
 
 This package registers:

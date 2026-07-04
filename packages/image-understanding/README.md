@@ -9,6 +9,14 @@ This does not make the main model natively multimodal. It adds a trusted bridge:
 3. The backend returns a text description, OCR extraction, UI-debug analysis, diagram explanation, or accessibility description.
 4. The text-only agent uses that returned text like any other context.
 
+## How this relates to the model pipeline
+
+On Letta Code's local backend, text-only models never receive raw image parts even without this mod: the provider runtime (pi-ai) replaces unsupported image parts with a `(image omitted: model does not support images)` placeholder based on the model's catalog capabilities. Images are not a crash risk there — they are silently *discarded*.
+
+This mod's purpose is to replace that discarded content with something useful: a real caption (auto-caption mode), or a note telling the agent the images exist and can be inspected on demand (strip-images mode, `image_understand` tool).
+
+**The vision backend must be vision-capable.** The mod's vision request is a direct API call that bypasses the provider runtime's capability handling. If you point `IMAGE_UNDERSTANDING_MODEL` / `IMAGE_UNDERSTANDING_BASE_URL` at a text-only model (for example a GLM text handle), the *mod's own request* will fail with a provider 400 rejecting image content — an error that is easy to misread as your conversation model failing.
+
 Original source: <https://tangled.org/cameron.stream/image-understanding>
 
 ## Install
