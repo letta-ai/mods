@@ -311,69 +311,52 @@ function countConcepts(bundleDir: string | null): number {
 // ============================================================================
 
 // Letta Code agents are created with `include_base_tools: false` and
-// the static tool list `["web_search", "fetch_webpage"]`. Tools like
-// Read/Glob/Grep/Write are session-attached dynamically when a
-// user-agent session opens. For the steward we want them persistently
-// attached so PROPOSE proposals can be committed without depending on
-// an active user-agent session.
+// the static tool list `["web_search", "fetch_webpage"]`. Read tools
+// (open_files, grep_files, semantic_search_files) and write tools are
+// session-attached dynamically when a user-agent session opens.
 //
-// The server-side names may be `Read`, `read_file`, `ReadFile`,
-// etc. depending on the Letta Code version. We match the server
-// `tool.type === 'letta_files_core'` and pick the names we want.
-// If your Letta Code version uses different names, update this list
-// or extend the matcher below.
-const STEWARD_TOOL_NAMES = ["Read", "Glob", "Grep", "Write", "Edit"] as const;
+// For the steward we deliberately do NOT attach file-write tools:
+// in Letta Code 0.27.x this org's `letta_files_core` registry has
+// only read tools, no Write/Edit equivalents. Writes on the OKF
+// bundle are performed by the user-agent's TeamTalk mod (see
+// teamtalk_propose), which writes directly to the steward's local
+// MemFS clone and shells out to `letta memory commit` to persist.
+// This keeps the steward as a read-only curator: validate, advise,
+// answer questions — but never write to the corpus from the model.
+//
+// If a future Letta Code version adds a `Write` tool, the mod can
+// re-enable the attach path here.
 
-async function attachStewardTools(letta: any, agentId: string): Promise<{ attached: string[]; failed: string[] }> {
+async function attachStewardReadTools(letta: any, agentId: string): Promise<{ attached: string[]; failed: string[] }> {
+  // Attach the read tools so the steward can navigate the OKF bundle
+  // when answering questions about it. Names may vary across Letta
+  // Code versions; we filter by tool_type and accept whatever
+  // read-side tools the server exposes.
   const attached: string[] = [];
   const failed: string[] = [];
-  // Step 1: list all letta_files_core tools. The server returns a
-  // paginated object with an .items array (NOT async-iterable; the
-  // `letta-code` source uses .items[0]?.id directly). Filter on
-  // tool_type so we only see file-system tools and not unrelated
-  // registry entries.
-  const fileTools = new Map<string, string>();
+  let items: any[] = [];
   try {
     const resp = await letta.client.tools.list({
       tool_types: ["letta_files_core"],
       limit: 100,
     });
-    const items = (resp as any)?.items ?? [];
-    for (const tool of items) {
-      if (tool?.name && tool?.id) fileTools.set(tool.name, tool.id);
-    }
+    items = (resp as any)?.items ?? [];
   } catch (err: any) {
     return { attached: [], failed: [`list failed: ${err?.message || err}`] };
   }
-  // Step 2: attach each steward-required tool by name match.
-  for (const want of STEWARD_TOOL_NAMES) {
-    // Try the canonical capitalized name, then common lowercase
-    // variants the server might use.
-    const candidates = [
-      want,
-      want.toLowerCase(),
-      want.toLowerCase().replace(/_/g, ""),
-    ];
-    let matchedId: string | undefined;
-    let matchedName: string | undefined;
-    for (const name of candidates) {
-      if (fileTools.has(name)) {
-        matchedId = fileTools.get(name);
-        matchedName = name;
-        break;
-      }
-    }
-    if (!matchedId) {
-      const available = Array.from(fileTools.keys()).slice(0, 20).join(", ") || "none";
-      failed.push(`${want} (not in registry; available: ${available})`);
-      continue;
-    }
+  // Heuristic: only attach obvious read tools (no `write` in name).
+  for (const tool of items) {
+    if (!tool?.name || !tool?.id) continue;
+    if (/write|edit|multi_edit/i.test(tool.name)) continue;
     try {
-      await letta.client.agents.tools.attach(matchedId, { agent_id: agentId });
-      attached.push(matchedName!);
+      await letta.client.agents.tools.attach(tool.id, { agent_id: agentId });
+      attached.push(tool.name);
     } catch (err: any) {
-      failed.push(`${want} (attach failed: ${err?.message || err})`);
+      failed.push(`${tool.name} (attach failed: ${err?.message || err})`);
     }
+  }
+  if (items.length === 0) {
+    failed.push("no letta_files_core tools registered on this server");
   }
   return { attached, failed };
 }
@@ -806,14 +789,14 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       }
     }
 
-    // Reattach steward tools in case they got removed (e.g. a chat
-    // session drifted the agent's tool set). Idempotent — attach is
-    // a no-op when the tool is already present.
+    // Reattach steward read tools in case they got removed (e.g. a
+    // chat session drifted the agent's tool set). Idempotent — attach
+    // is a no-op when the tool is already present.
     let toolsNote = "";
     try {
-      const toolResult = await attachStewardTools(letta, state.stewardAgentId);
+      const toolResult = await attachStewardReadTools(letta, state.stewardAgentId);
       if (toolResult.attached.length > 0) {
-        toolsNote = `Attached ${toolResult.attached.length}/4 steward tools.`;
+        toolsNote = `Attached ${toolResult.attached.length} read tools (${toolResult.attached.join(", ")}).`;
       }
       if (toolResult.failed.length > 0) {
         toolsNote += (toolsNote ? " " : "") +
@@ -843,8 +826,8 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       "  1. Create a new agent named `" + name + "` in your Letta org.",
       "  2. Tag it with `teamtalk-steward`.",
       "  3. Seed its MemFS with the steward persona and OKF bundle.",
-      "  4. Attach the steward toolset (Read, Glob, Grep, Write) so it",
-      "     can navigate and update the bundle.",
+      "  4. Attach the steward read toolset (open_files, grep_files, etc.)",
+      "     so it can navigate the bundle when answering questions.",
       "  5. Bind this install to the new agent.",
       "",
       "Re-run with `--confirm` to proceed:",
@@ -1049,21 +1032,23 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       personaNote = "Steward persona not updated (asset missing).";
     }
 
-    // Attach the steward toolset (Read, Glob, Grep, Write) so the
-    // steward can navigate and update its OKF bundle. Without these
-    // the PROPOSE protocol fails silently — the steward accepts the
-    // proposal but cannot act on it.
+    // Attach the steward read tools (any letta_files_core tool except
+    // write/edit by name match) so the steward can navigate the OKF
+    // bundle when answering questions. We do NOT attach write tools
+    // because Letta Code 0.27.x doesn't expose Write in this org's
+    // letta_files_core registry — writes happen via the mod's
+    // teamtalk_propose tool.
     let toolsNote = "";
     try {
-      const toolResult = await attachStewardTools(letta, candidateId);
+      const toolResult = await attachStewardReadTools(letta, candidateId);
       if (toolResult.attached.length > 0) {
-        toolsNote = `Attached ${toolResult.attached.length}/4 steward tools (${toolResult.attached.join(", ")}).`;
+        toolsNote = `Attached ${toolResult.attached.length} read tools (${toolResult.attached.join(", ")}).`;
       }
       if (toolResult.failed.length > 0) {
         toolsNote += (toolsNote ? " " : "") +
           `Failed: ${toolResult.failed.join("; ")}.`;
       }
-      dlog(`steward tools: ${toolResult.attached.join(",")} attached; ${toolResult.failed.join(";")} failed`);
+      dlog(`steward read tools: ${toolResult.attached.join(",")} attached; ${toolResult.failed.join(";")} failed`);
     } catch (err: any) {
       toolsNote = `Tool attach failed: ${err?.message || err}`;
       dlog(`tool attach failed: ${err?.message || err}`);
@@ -1379,27 +1364,123 @@ export default function activate(letta: any) {
             };
           }
 
-          const message = [
-            "PROPOSE_NEW_CONCEPT",
+          // Resolve the steward local MemFS clone path. State
+          // usually has bundlePath populated; if not, derive it from
+          // stewardAgentId.
+          let memDir = state.bundlePath ? dirname(state.bundlePath) : null;
+          if (!memDir && state.stewardAgentId) {
+            memDir = join(homedir(), ".letta", "agents", state.stewardAgentId, "memory");
+          }
+          if (!memDir || !existsSync(memDir)) {
+            return {
+              status: "error",
+              content: `Steward local MemFS clone not found at ${memDir || "(unknown)"}. Run /teamtalk init --reseed to set up.`,
+            };
+          }
+          const bundleDir = join(memDir, "team");
+          if (!existsSync(bundleDir)) {
+            return {
+              status: "error",
+              content: `OKF bundle directory not found at ${bundleDir}. Run /teamtalk init --reseed.`,
+            };
+          }
+          const targetFile = join(memDir, proposedPath);
+          // Path traversal guard: the resolved file must be inside
+          // the bundle directory.
+          if (!targetFile.startsWith(bundleDir + "/") && targetFile !== bundleDir) {
+            return {
+              status: "error",
+              content: `Refused: proposed_path resolves outside the team/ bundle (${targetFile}).`,
+            };
+          }
+          // Duplicate guard: existing concept files in the bundle
+          // block writes unless the user re-issues the same proposal.
+          if (existsSync(targetFile)) {
+            return {
+              status: "error",
+              content: `Refused: ${proposedPath} already exists in the bundle. Use PROPOSE_EDIT instead.`,
+            };
+          }
+
+          // Build the OKF-compliant concept file: YAML frontmatter
+          // with required `type`, optional title/description/tags/
+          // timestamp, followed by the markdown body.
+          const frontmatterLines = [
+            "---",
             `type: ${type}`,
             `title: ${title}`,
-            `proposed_path: ${proposedPath}`,
-            "body: |",
-            body.split("\n").map((l) => `  ${l}`).join("\n"),
+            `description: ${""}`, // no description provided by caller; OKF allows absent
             `tags: [${tags.join(", ")}]`,
-            `source_agent: ${ctx?.agent?.id || "unknown"}`,
-          ].join("\n");
+            `timestamp: ${new Date().toISOString()}`,
+            "---",
+          ];
+          const fileContent = frontmatterLines.join("\n") + "\n\n" + body.trimEnd() + "\n";
 
           try {
-            const response = await letta.client.agents.messages.create(state.stewardAgentId, {
-              messages: [{ role: "user", content: message }],
-            });
-            const messages: any[] = response?.messages || [];
-            const assistant = messages.filter((m) => m.message_type === "assistant_message").pop();
-            return assistant?.content || "Proposal sent to steward (no assistant message in response).";
+            mkdirSync(dirname(targetFile), { recursive: true });
+            writeFileSync(targetFile, fileContent, "utf8");
           } catch (err: any) {
-            return { status: "error", content: `Failed to send proposal: ${err?.message || String(err)}` };
+            return { status: "error", content: `Failed to write file: ${err?.message || String(err)}` };
           }
+
+          // Append to team/log.md.
+          const logFile = join(bundleDir, "log.md");
+          try {
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const logEntry = `\n## ${dateStr}\n* **Creation**: Added [${title}](/${proposedPath}) (proposed via teamtalk_propose).\n`;
+            if (existsSync(logFile)) {
+              const existing = readFileSync(logFile, "utf8");
+              writeFileSync(logFile, existing + logEntry, "utf8");
+            } else {
+              writeFileSync(logFile, `# Directory Update Log\n${logEntry}`, "utf8");
+            }
+          } catch (err: any) {
+            // Non-fatal: log append failure shouldn't block the commit.
+            dlog(`log append failed: ${err?.message || err}`);
+          }
+
+          // If this is a global rule, re-render system/rules.md so
+          // the new rule shows up in turn_start injection.
+          let rulesNote = "";
+          if (proposedPath.startsWith("team/rules/global/") && proposedPath.endsWith(".md")) {
+            try {
+              const rulesContent = renderRulesFile(bundleDir);
+              if (rulesContent) {
+                const result = writeRulesFile(memDir, rulesContent);
+                if (result.written) {
+                  rulesNote = ` Updated rules.md (${result.ruleCount} rules).`;
+                }
+              }
+            } catch (err: any) {
+              dlog(`rules re-render failed: ${err?.message || err}`);
+            }
+          }
+
+          // Commit the change via the `letta memory commit` CLI
+          // shell-out. This persists the new file to the steward's
+          // git-backed MemFS repo.
+          let commitNote = "";
+          try {
+            const { execFile } = await import("node:child_process");
+            const { promisify } = await import("node:util");
+            const execFileP = promisify(execFile);
+            const { stdout } = await execFileP("letta", ["memory", "commit", "--agent", state.stewardAgentId!], {
+              timeout: 15000,
+            });
+            if (stdout) dlog(`commit stdout: ${stdout.slice(0, 200)}`);
+            commitNote = " Committed to steward MemFS.";
+          } catch (err: any) {
+            // Non-fatal: file is written locally even if commit fails.
+            commitNote = ` Commit skipped: ${err?.message || err}.`;
+            dlog(`commit failed: ${err?.message || err}`);
+          }
+
+          // Update local state lastSyncAt so /teamtalk status is fresh.
+          writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
+
+          return {
+            content: `Wrote ${proposedPath} (type: ${type}).${rulesNote}${commitNote}`,
+          };
         },
       }),
     );
