@@ -116,8 +116,15 @@ function writeState(state: TeamTalkState): void {
 // ============================================================================
 
 function candidateStewardMemoryPaths(state: TeamTalkState): string[] {
+  // When the steward agent itself runs, MEMORY_DIR points to its own
+  // memory — that's the steward's clone. When a user-agent runs with
+  // TeamTalk installed (the common case), MEMORY_DIR points to the
+  // user-agent's memory, NOT the steward's. We therefore ignore
+  // MEMORY_DIR for steward lookup and only consider paths derived
+  // from stewardAgentId. To find the steward's clone, only check
+  // the explicit steward paths under ~/.letta/agents/<id>/memory
+  // and ~/.letta/lc-local-backend/memfs/<id>/memory.
   const candidates: string[] = [];
-  if (process.env.MEMORY_DIR) candidates.push(process.env.MEMORY_DIR);
   const home = process.env.HOME || homedir();
   if (state.stewardAgentId) {
     candidates.push(join(home, ".letta", "agents", state.stewardAgentId, "memory"));
