@@ -327,11 +327,19 @@ const STEWARD_TOOL_NAMES = ["Read", "Glob", "Grep", "Write", "Edit"] as const;
 async function attachStewardTools(letta: any, agentId: string): Promise<{ attached: string[]; failed: string[] }> {
   const attached: string[] = [];
   const failed: string[] = [];
-  // Step 1: list all letta_files_core tools. PagePromise is
-  // async-iterable. Build a name → id map.
+  // Step 1: list all letta_files_core tools. The server returns a
+  // paginated object with an .items array (NOT async-iterable; the
+  // `letta-code` source uses .items[0]?.id directly). Filter on
+  // tool_type so we only see file-system tools and not unrelated
+  // registry entries.
   const fileTools = new Map<string, string>();
   try {
-    for await (const tool of letta.client.tools.list({ tool_types: ["letta_files_core"] })) {
+    const resp = await letta.client.tools.list({
+      tool_types: ["letta_files_core"],
+      limit: 100,
+    });
+    const items = (resp as any)?.items ?? [];
+    for (const tool of items) {
       if (tool?.name && tool?.id) fileTools.set(tool.name, tool.id);
     }
   } catch (err: any) {
@@ -339,8 +347,13 @@ async function attachStewardTools(letta: any, agentId: string): Promise<{ attach
   }
   // Step 2: attach each steward-required tool by name match.
   for (const want of STEWARD_TOOL_NAMES) {
-    // Try exact case, then lowercase, then lower-no-underscore.
-    const candidates = [want, want.toLowerCase(), want.toLowerCase().replace("_", ""), want.toLowerCase().replace("_", "").toLowerCase()];
+    // Try the canonical capitalized name, then common lowercase
+    // variants the server might use.
+    const candidates = [
+      want,
+      want.toLowerCase(),
+      want.toLowerCase().replace(/_/g, ""),
+    ];
     let matchedId: string | undefined;
     let matchedName: string | undefined;
     for (const name of candidates) {
@@ -351,7 +364,8 @@ async function attachStewardTools(letta: any, agentId: string): Promise<{ attach
       }
     }
     if (!matchedId) {
-      failed.push(`${want} (not in registry; available: ${Array.from(fileTools.keys()).join(", ") || "none"})`);
+      const available = Array.from(fileTools.keys()).slice(0, 20).join(", ") || "none";
+      failed.push(`${want} (not in registry; available: ${available})`);
       continue;
     }
     try {
