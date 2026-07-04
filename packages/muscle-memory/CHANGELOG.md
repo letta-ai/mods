@@ -12,6 +12,38 @@ All notable changes to `@letta-ai/muscle-memory`. Format loosely follows [Keep a
   `test/native-fit.test.ts`, live block-readback verified.
 
 ### Added
+- **E4 · Semantic routing (hybrid recall/precision, opt-in `MM_NATIVE=passages`)** — the managed-skill
+  index is mirrored into Letta archival memory as `mm:skill`-tagged passages (`syncSkillPassages`,
+  refreshed at `conversation_close`), and update-first routing gains an embedding-search recall lane
+  (`semanticSkillCandidates` → `client.agents.passages.search`). Embedding results carry rank order but
+  no absolute score (verified against the live wire), so semantic evidence can only (a) **boost** a
+  candidate the lexical scorer already found distinctive overlap for (`SEMANTIC_RANK_BONUS`,
+  corroboration — a boost alone can never route an update), or (b) **park** an autonomous CREATE as a
+  semantic-duplicate suspect (`park-semantic`) — the paraphrase-duplicate class lexical routing misses
+  by construction (previously "0% semantic-only duplicate catch"). It never auto-patches on semantic
+  evidence alone. The full decision head is the pure `routeSkill()`, consumed by `reviewAndAuthor` and
+  measured by the eval so the benchmark cannot drift from shipped behavior. Fallback: without
+  `MM_NATIVE=passages`, a client, or on any passages error, routing is byte-identical to lexical-only.
+- **Canary calibration (rank → relevance)** — `passages.search` returns the k *nearest* passages with
+  no score, and "nearest" is not "relevant": in a production-shaped index (index ≡ shelf) every novel
+  query still nominates *some* nearest managed skill, so a rank-trusting suspect rule would park every
+  novel CREATE once a few skills exist. `syncSkillPassages` now seeds two fixed **canary reference
+  passages** (generic software work / the bare repair shape with no domain nouns) alongside the skill
+  index; `calibrateSkillHits` marks each real hit `aboveCanary` iff it out-ranked every canary in the
+  same window. A calibrated window trusts the highest-ranked on-shelf above-canary hit as the
+  duplicate suspect at ANY rank (stale off-shelf hits are transparent); a hit below the canary line is
+  never a suspect even at rank 0 — killing the novel-evidence over-park by construction. Uncalibrated
+  windows (no canary present — e.g. sync hasn't run) keep the legacy conservative rank-0-only rule.
+  Live receipts (Letta Cloud, 3 consecutive runs, byte-identical routes): decision quality vs class
+  intent **lexical 7/16 → hybrid 15/16 (93.8%)**, up from 13/16 pre-calibration; all four novel cases
+  still CREATE; the one standing miss (B1, alembic ↔ schema-change twin) is an embedding-model limit —
+  the live embedder ranks generic-repair prose above the twin for that evidence, and the median-floor
+  alternative that would flip it also over-parks two novel cases, so the strict floor stays. Offline
+  eval remains 16/16; semantic recall@1 8/12 (unchanged — an embedder diagnostic, not the decision
+  metric). Skill passages also embed the de-hyphenated name words (densest domain vocabulary).
+- **`test/routing.eval.ts` + `eval:routing` in `verify`** — a 16-case labeled routing eval (strong
+  lexical dupes / paraphrase dupes / borderline corroboration / genuinely novel) run through the
+  production `routeSkill()`; CI-gated so hybrid can never silently regress below lexical.
 - **n=1 CREATE gate** (`multiInstanceSupport`, wired into the reflect lane) — a reflect-lane CREATE must
   be topically grounded in an evidence signal observed **≥2 distinct instances** (count or conversation
   spread). The aggregate items floor was not enough: an n=1 repair could ride in on an unrelated recurring

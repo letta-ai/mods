@@ -1,7 +1,7 @@
 // muscle-memory · engram module (split from index.ts — behavior-preserving).
 import { join } from "node:path";
 import { NEOCORTEX_BLOCK, Row } from "./core";
-import { HIGH_SIGNAL_TOOL_SET, detectAntiPatterns, detectInvocationGotchas, detectRepairChains, fingerprint, stepSig } from "./detect";
+import { HIGH_SIGNAL_TOOL_SET, detectAntiPatterns, detectInvocationGotchas, detectRepairChains, fingerprint, isValidSkillName, stepSig } from "./detect";
 import { skillVerbs } from "./lifecycle";
 
 
@@ -22,7 +22,6 @@ export function preActionDefense(stepSignature: string, defenses: Defense[]): De
   const s = stepSignature.toLowerCase();
   return defenses.find((d) => d.trigger.toLowerCase() === s) || defenses.find((d) => s.includes(d.trigger.toLowerCase()) && d.trigger.length > 3) || null;
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 // v5 ENGRAM — the Complementary-Learning-Systems loop (neuroscience-rooted).
@@ -328,4 +327,123 @@ export async function archivePassage(client: unknown, agentId: string | null | u
   const create = reachFn(client, ["agents", "passages", "create"]); // client.agents.passages.create(agentId, body)
   if (!create) return false;
   try { await create(agentId, { text, tags }); return true; } catch { return false; }
+}
+
+
+// ── E4 · SEMANTIC SKILL ROUTING (opt-in: MM_NATIVE has "passages") ───────────────────────────
+// The skill index lives as tagged archival passages; routing recall becomes an embedding search
+// (client.agents.passages.search) instead of token overlap. Search results carry rank order but
+// no absolute score, so semantic evidence is RECALL ONLY — the deterministic lexical gates
+// (pickUpdateTarget / isAmbiguousExistingRoute) keep precision. Everything here is best-effort
+// and never throws; with MM_NATIVE unset every function is a cheap no-op.
+
+export type SemanticSkillHit = {
+  name: string;
+  rank: number;
+  /** Rank-to-relevance calibration: true when this hit out-ranked EVERY canary reference passage
+   * in the same search window; false when at least one canary beat it; undefined when the window
+   * carried no canary (uncalibrated — consumers must fall back to rank-0-only trust). */
+  aboveCanary?: boolean;
+};
+
+export const SKILL_PASSAGE_TAG = "mm:skill";
+
+export function skillPassageTag(name: string): string { return `${SKILL_PASSAGE_TAG}:${name}`; }
+
+// ── Rank-to-relevance calibration ──────────────────────────────────────────────────────────────
+// passages.search returns the k NEAREST passages with rank order but NO absolute score — so
+// "rank 0" only means "nearest", never "relevant": in a production-shaped index (index ≡ shelf)
+// every novel query still nominates some nearest managed skill. The canaries manufacture the
+// missing absolute reference: fixed generic-software passages synced alongside the skill index.
+// A skill hit that cannot out-rank generic-repair prose is merely nearest, not related; a hit
+// that beats every canary shares real domain vocabulary with the evidence. Names are valid
+// skill-name shaped (so parseSkillHits sees them) but namespaced to never collide with a shelf.
+export const SKILL_CANARY_NAMES = ["mm-canary-general-software-work", "mm-canary-generic-repair-shape"] as const;
+
+export function isCanaryName(name: string): boolean {
+  return (SKILL_CANARY_NAMES as readonly string[]).includes(name);
+}
+
+/** The reference passages. Deliberately in-domain (software) but off-topic for any specific
+ * skill: the first is broad software work, the second is the bare shape of every repair chain
+ * with no domain nouns — the aggressive floor a genuine paraphrase twin must beat. */
+export function canaryPassages(): Array<{ name: string; text: string }> {
+  return [
+    { name: SKILL_CANARY_NAMES[0], text: `skill: ${SKILL_CANARY_NAMES[0]}\ngeneral software work\nWriting code, editing files, running commands in the terminal, reading documentation, checking output, and re-running until it works.` },
+    { name: SKILL_CANARY_NAMES[1], text: `skill: ${SKILL_CANARY_NAMES[1]}\ngeneric repair shape\nSomething failed during a run: investigate the cause of the failure, apply a change, run it again, and verify the fix worked.` },
+  ];
+}
+
+/** One passage per managed skill: name line + de-hyphenated name words + squashed description
+ * (embedding food). The name words line is load-bearing for recall@1: skill names carry the
+ * densest domain vocabulary ("handling-broken-schema-changes"), but hyphen-glued tokens embed
+ * poorly — spelling them out as words lets the embedding actually see them. The `skill: <name>`
+ * first line stays verbatim: parseSkillHits' tag-less fallback parses it. Pure. */
+export function skillPassageText(name: string, description: string): string {
+  return `skill: ${name}\n${name.replace(/-/g, " ")}\n${String(description || "").replace(/\s+/g, " ").slice(0, 500)}`;
+}
+
+/** Parse passages.search results into ordered hits — canaries included, in wire rank order.
+ * Pure over an unknown response; calibration happens in calibrateSkillHits. */
+export function parseSkillHits(resp: unknown): SemanticSkillHit[] {
+  if (!resp || typeof resp !== "object" || !("results" in resp) || !Array.isArray(resp.results)) return [];
+  const out: SemanticSkillHit[] = [];
+  for (const r of resp.results) {
+    if (!r || typeof r !== "object") continue;
+    const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+    const named = tags.find((t): t is string => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+    let name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+    if (!name && "content" in r && typeof r.content === "string") name = r.content.match(/^skill:\s*([a-z0-9-]+)/i)?.[1] ?? "";
+    if (name && isValidSkillName(name) && !out.some((h) => h.name === name)) out.push({ name, rank: out.length });
+  }
+  return out;
+}
+
+/** Split raw hits into calibrated skill hits: canaries are removed, surviving hits are re-ranked
+ * densely, and each carries aboveCanary vs the BEST canary rank in the window. No canary in the
+ * window → aboveCanary stays undefined (uncalibrated; consumers fall back to rank-0-only trust).
+ * Pure. */
+export function calibrateSkillHits(raw: SemanticSkillHit[], k: number): SemanticSkillHit[] {
+  const canaryRank = raw.reduce((best, h) => (isCanaryName(h.name) && h.rank < best ? h.rank : best), Infinity);
+  return raw
+    .filter((h) => !isCanaryName(h.name))
+    .slice(0, k)
+    .map((h, i) => (canaryRank === Infinity ? { name: h.name, rank: i } : { name: h.name, rank: i, aboveCanary: h.rank < canaryRank }));
+}
+
+/** Semantic routing recall: embedding-search the mm:skill passage index. Over-fetches by the
+ * canary count so calibration never crowds real candidates out of the window. Opt-in, never throws. */
+export async function semanticSkillCandidates(client: unknown, agentId: string | null | undefined, query: string, k = 3): Promise<SemanticSkillHit[]> {
+  if (!agentId || !nativeEnabled("passages") || !query.trim()) return [];
+  const search = reachFn(client, ["agents", "passages", "search"]); // client.agents.passages.search(agentId, params)
+  if (!search) return [];
+  try {
+    const resp = await search(agentId, { query: query.slice(0, 4000), tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: k + SKILL_CANARY_NAMES.length });
+    return calibrateSkillHits(parseSkillHits(resp), k);
+  } catch { return []; }
+}
+
+/** Upsert the mm:skill passage index (delete-by-tag then create — the API has no update), plus
+ * the canary reference passages that calibrate rank into relevance. Opt-in, never throws. */
+export async function syncSkillPassages(client: unknown, agentId: string | null | undefined, managed: Array<{ name: string; description: string }>): Promise<number> {
+  if (!agentId || !nativeEnabled("passages") || !managed.length) return 0;
+  const search = reachFn(client, ["agents", "passages", "search"]);
+  const create = reachFn(client, ["agents", "passages", "create"]);
+  const del = reachFn(client, ["agents", "passages", "delete"]);
+  if (!create) return 0;
+  let synced = 0;
+  const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
+  for (const m of entries) {
+    try {
+      if (search && del) {
+        const prior: unknown = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
+        if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
+          for (const r of prior.results) { if (r && typeof r === "object" && "id" in r && typeof r.id === "string") await del(r.id, { agent_id: agentId }); }
+        }
+      }
+      await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
+      if (!isCanaryName(m.name)) synced++; // canaries are calibration plumbing, not shelf state
+    } catch { /* best-effort per skill — a failed sync never blocks the lifecycle */ }
+  }
+  return synced;
 }
