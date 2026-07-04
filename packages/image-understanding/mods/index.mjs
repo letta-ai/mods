@@ -302,9 +302,18 @@ async function askOpenAiCompatible({ image, prompt, detail }, config, ctx) {
   const body = parseJson(await response.text());
   if (!response.ok) {
     const rendered = typeof body === "string" ? body : JSON.stringify(body);
-    const hint = response.status === 400
-      ? " The configured endpoint/model may not support image input. Use a vision-capable model or provider=ollama with a vision model."
-      : "";
+    // A 400 rejecting the content type means the configured vision backend
+    // model is itself text-only (e.g. a GLM text handle). This error comes
+    // from the mod's own vision request, not the conversation model — say so
+    // explicitly, because these errors have historically been misattributed
+    // to core model dispatch.
+    const textOnlyRejection = response.status === 400 &&
+      /content(\.|\s|_)?type|allowed values|does not support image|invalid content/i.test(rendered);
+    const hint = textOnlyRejection
+      ? ` The configured vision backend model "${config.model}" rejected image input — it appears to be a text-only model. This error is from the image-understanding mod's own vision request, not your conversation model. Configure a vision-capable model (image_understand action=config key=model) or use provider=ollama with a vision model.`
+      : response.status === 400
+        ? " The configured endpoint/model may not support image input. Use a vision-capable model or provider=ollama with a vision model."
+        : "";
     return { status: "error", content: errorContent(`Vision request failed: HTTP ${response.status} ${response.statusText}: ${rendered}.${hint}`, config) };
   }
 
@@ -476,10 +485,17 @@ function createSystemMessage(content) {
 
 /**
  * Turn handler for auto-caption mode: sends images to a vision backend,
- * gets text descriptions back, then STRIPS image parts from the user message
- * and appends a system message with the caption text. This prevents text-only
- * providers from rejecting the request with 400 "content.type is invalid,
- * allowed values: ['text']".
+ * gets text descriptions back, then strips the image parts from the user
+ * message and appends a system message with the caption text.
+ *
+ * Why this exists: on Letta Code's local backend, image parts never reach a
+ * text-only model in the first place — pi-ai's message transform replaces
+ * them with a lossy "(image omitted: model does not support images)"
+ * placeholder based on the model's catalog capabilities. This handler's job
+ * is enrichment, not protection: it replaces that otherwise-discarded image
+ * content with a real caption the model can reason over. Stripping the
+ * original parts here keeps the turn canonical and avoids shipping image
+ * bytes that would be placeholdered anyway.
  */
 async function autoCaptionTurn(event, ctx) {
   const config = getConfig();
@@ -523,9 +539,14 @@ async function autoCaptionTurn(event, ctx) {
 /**
  * Turn handler for strip-images mode: when auto-caption is off but
  * strip_images is on, removes image parts from user messages and appends a
- * system message pointing the agent to the image_understand tool. This
- * protects text-only models from 400 errors without requiring a vision
- * backend call.
+ * system message pointing the agent to the image_understand tool.
+ *
+ * On Letta Code's local backend this is not needed as a 400 guard — pi-ai
+ * already downgrades image parts to a placeholder for text-only models. The
+ * value of this mode is the actionable note: instead of a silent
+ * "(image omitted)" placeholder, the agent learns the images exist and can
+ * inspect them on demand with image_understand, without requiring a vision
+ * call on every turn.
  */
 function stripImagesTurn(event, ctx) {
   const config = getConfig();
