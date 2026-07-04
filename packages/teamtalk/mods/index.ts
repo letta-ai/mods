@@ -208,13 +208,15 @@ type Frontmatter = {
 };
 
 function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
-  if (!content.startsWith("---\n")) return { frontmatter: {}, body: content };
-  const end = content.indexOf("\n---", 4);
-  if (end < 0) return { frontmatter: {}, body: content };
-  const raw = content.slice(4, end);
-  const body = content.slice(end + 4).replace(/^\n/, "");
+  // Tolerate CRLF (Windows-checked-out files) by matching either line
+  // ending. The strict `"\n"` check would miss `---\r\n` and return
+  // empty frontmatter, breaking every search and count.
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { frontmatter: {}, body: content };
+  const raw = match[1];
+  const body = match[2];
   const fm: Frontmatter = {};
-  for (const line of raw.split("\n")) {
+  for (const line of raw.split(/\r?\n/)) {
     const idx = line.indexOf(":");
     if (idx < 0) continue;
     const key = line.slice(0, idx).trim();
@@ -762,18 +764,25 @@ function listAssetFiles(subdir: string): string[] {
 
 async function handleInit(letta: any, rest: string): Promise<string> {
   const state = readState();
-  if (state.stewardAgentId && !rest.includes("--force") && !rest.includes("--reseed")) {
-    return `Already bound to ${state.stewardAgentName || state.stewardAgentId}.\nRun \`/teamtalk disable\` first to rebind, or pass --force.`;
-  }
-
+  // Parse flags once at the top. The previous version used
+  // `rest.includes("--force")` for the already-bound gate, which
+  // a custom-name like "my-team-steward-force" or a body mentioning
+  // "--reseed" would match accidentally. The parsed flag values
+  // are unambiguous.
   const { flags } = parseFlags(rest);
   const name = flags.name || "teamtalk-steward";
   const confirmed = flags.confirm === "true" || flags.yes === "true" || flags.y === "true";
+  const isForce = flags.force === "true";
+  const isReseed = flags.reseed === "true";
+
+  if (state.stewardAgentId && !isForce && !isReseed) {
+    return `Already bound to ${state.stewardAgentName || state.stewardAgentId}.\nRun \`/teamtalk disable\` first to rebind, or pass --force.`;
+  }
 
   // --reseed: re-seed the OKF bundle for an already-bound steward without
   // recreating the agent. Useful when the MemFS clone landed late or was
   // wiped.
-  if (flags.reseed === "true" || flags.reseed === "yes") {
+  if (isReseed) {
     if (!state.stewardAgentId) {
       return "No steward bound. Run `/teamtalk init --confirm` first.";
     }
@@ -800,12 +809,25 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     }
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
+    const seedErrors: string[] = [];
     for (const rel of assetFiles) {
       const src = join(ASSETS_DIR, "team", rel);
       const dst = join(bundleDir, rel);
-      mkdirSync(dirname(dst), { recursive: true });
-      copyFileSync(src, dst);
-      seededFiles += 1;
+      try {
+        mkdirSync(dirname(dst), { recursive: true });
+        copyFileSync(src, dst);
+        seededFiles += 1;
+      } catch (err: any) {
+        // Per-file permission/disk errors are non-fatal in reseed
+        // (we'd rather report partial success than crash). Surface
+        // them in the final message but keep going.
+        seedErrors.push(`${rel}: ${err?.message || String(err)}`);
+        dlog(`reseed copy failed for ${rel}: ${err?.message || err}`);
+      }
+    }
+    if (seedErrors.length > 0) {
+      // Continue to rules.md render — partial bundle is still useful.
+      dlog(`reseed had ${seedErrors.length} file errors`);
     }
     // Render rules.md so turn_start has something to read.
     let rulesNote = "";
@@ -859,6 +881,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       rulesNote ? `- ${rulesNote}` : "",
       personaNote ? `- ${personaNote}` : "",
       toolsNote ? `- ${toolsNote}` : "",
+      seedErrors.length > 0 ? `- Copy errors: ${seedErrors.length} (see debug log)` : "",
     ].join("\n");
   }
   if (!confirmed) {
@@ -1475,6 +1498,13 @@ export default function activate(letta: any) {
           // Build the OKF-compliant concept file: YAML frontmatter
           // with required `type`, optional title/description/tags/
           // timestamp, followed by the markdown body.
+          //
+          // The LLM may include its own frontmatter block in the body
+          // (since OKF concepts are commonly written that way). Strip
+          // it before prepending our synthesized frontmatter, or the
+          // resulting file would have two frontmatter blocks and fail
+          // to parse.
+          const { body: bodyWithoutFm } = parseFrontmatter(body);
           const frontmatterLines = [
             "---",
             `type: ${type}`,
@@ -1484,7 +1514,7 @@ export default function activate(letta: any) {
             `timestamp: ${new Date().toISOString()}`,
             "---",
           ];
-          const fileContent = frontmatterLines.join("\n") + "\n\n" + body.trimEnd() + "\n";
+          const fileContent = frontmatterLines.join("\n") + "\n\n" + bodyWithoutFm.trimEnd() + "\n";
 
           try {
             mkdirSync(dirname(targetFile), { recursive: true });
@@ -1493,11 +1523,20 @@ export default function activate(letta: any) {
             return { status: "error", content: `Failed to write file: ${err?.message || String(err)}` };
           }
 
-          // Append to team/log.md.
+          // Append to team/log.md. The link is computed relative to
+          // the team/ directory (where log.md lives), not absolute —
+          // an absolute /path/to/concept link would resolve to the
+          // bundle root and break inside subdirectories or when the
+          // bundle is rendered standalone.
           const logFile = join(bundleDir, "log.md");
           try {
             const dateStr = new Date().toISOString().slice(0, 10);
-            const logEntry = `\n## ${dateStr}\n* **Creation**: Added [${title}](/${proposedPath}) (proposed via teamtalk_propose).\n`;
+            // proposedPath starts with "team/", strip that prefix to
+            // get a path relative to the team/ directory.
+            const relPath = proposedPath.startsWith("team/")
+              ? proposedPath.slice("team/".length)
+              : proposedPath;
+            const logEntry = `\n## ${dateStr}\n* **Creation**: Added [${title}](${relPath}) (proposed via teamtalk_propose).\n`;
             if (existsSync(logFile)) {
               const existing = readFileSync(logFile, "utf8");
               writeFileSync(logFile, existing + logEntry, "utf8");
