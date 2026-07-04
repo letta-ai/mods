@@ -350,8 +350,8 @@ function formatStatus(state: TeamTalkState, cwd: string): string {
   lines.push(
     `- Steward agent: ${state.stewardAgentName || "(unnamed)"} (${state.stewardAgentId})`,
   );
-  lines.push(`- Local MemFS dir: ${memDir || "(not found on disk)"}`);
-  lines.push(`- OKF bundle: ${bundleDir || "(missing)"}`);
+  lines.push(`- Local MemFS dir: ${memDir ? formatDisplayPath(memDir, cwd) : "(not found on disk)"}`);
+  lines.push(`- OKF bundle: ${bundleDir ? formatDisplayPath(bundleDir, cwd) : "(missing)"}`);
   lines.push(
     `- Rules file: ${rulesFile ? formatDisplayPath(rulesFile, cwd) : "(missing)"}`,
   );
