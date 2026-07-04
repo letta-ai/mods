@@ -26,6 +26,7 @@ import {
 import { dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 // ============================================================================
 // Constants
@@ -377,42 +378,39 @@ function parseSubcommand(args: string): ParsedArgs {
 }
 
 function parseFlags(rest: string): ParsedFlags {
+  // Use Node's built-in util.parseArgs to tokenize the arg string into
+  // flags and positionals. We declare every flag the mod accepts as a
+  // typed option; util.parseArgs handles --name George, --name=George,
+  // --confirm, and repeated flags correctly without custom code.
+  if (!rest.trim()) return { positional: "", flags: {} };
+  // Tokenize the same way util.parseArgs does: split on whitespace,
+  // respecting double-quoted strings.
   const tokens = rest.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
-  const positional: string[] = [];
+  const parsed = parseArgs({
+    args: tokens,
+    options: {
+      name: { type: "string" },
+      limit: { type: "string" },
+      description: { type: "string" },
+      confirm: { type: "boolean" },
+      yes: { type: "boolean" },
+      y: { type: "boolean" },
+      force: { type: "boolean" },
+      reseed: { type: "boolean" },
+    },
+    strict: false,
+    allowPositionals: true,
+  });
   const flags: Record<string, string> = {};
-  // Two-pass: first record all tokens with their positions, then resolve
-  // bare --flag to consume the next non-flag token as its value.
-  const parsed: Array<{ kind: "flag" | "flag-eq" | "positional"; key?: string; value: string }> = [];
-  for (const token of tokens) {
-    if (token.startsWith("--")) {
-      const eq = token.indexOf("=");
-      if (eq > 0) {
-        parsed.push({ kind: "flag-eq", key: token.slice(2, eq), value: token.slice(eq + 1).replace(/^"|"$/g, "") });
-      } else {
-        parsed.push({ kind: "flag", key: token.slice(2), value: "" });
-      }
+  for (const [key, val] of Object.entries(parsed.values)) {
+    if (val === true) flags[key] = "true";
+    else if (val === false) {
+      // Absent boolean flag — skip.
     } else {
-      parsed.push({ kind: "positional", value: token.replace(/^"|"$/g, "") });
+      flags[key] = String(val);
     }
   }
-  for (let i = 0; i < parsed.length; i++) {
-    const p = parsed[i];
-    if (p.kind === "flag") {
-      // Look ahead: consume the next token if it is positional.
-      const next = parsed[i + 1];
-      if (next && next.kind === "positional") {
-        flags[p.key!] = next.value;
-        parsed[i + 1] = { kind: "positional", value: "" };
-      } else {
-        flags[p.key!] = "true";
-      }
-    } else if (p.kind === "flag-eq") {
-      flags[p.key!] = p.value;
-    } else if (p.kind === "positional" && p.value) {
-      positional.push(p.value);
-    }
-  }
-  return { positional: positional.join(" "), flags };
+  return { positional: parsed.positionals.join(" "), flags };
 }
 
 function buildHelp(): string {
