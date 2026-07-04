@@ -321,17 +321,18 @@ function containsSecret(text: string): string | null {
 // ============================================================================
 
 function formatDisplayPath(absolutePath: string, cwd: string): string {
-  // Try to express relative to cwd, but if that escapes cwd (starts with
-  // ../), use the absolute path with $HOME replaced by ~ for readability.
+  // Always prefer ~/-prefix for paths under $HOME, regardless of cwd.
+  // This gives consistent display in /teamtalk status and /teamtalk debug.
+  const home = process.env.HOME || homedir();
+  if (home && absolutePath.startsWith(home + "/")) {
+    return "~/" + absolutePath.slice(home.length + 1);
+  }
+  // Fall back to relative-to-cwd for paths outside $HOME.
   try {
     const rel = relative(cwd, absolutePath);
     if (rel && !rel.startsWith("..")) return rel;
   } catch {
     // fall through
-  }
-  const home = process.env.HOME || homedir();
-  if (home && absolutePath.startsWith(home + "/")) {
-    return "~/" + absolutePath.slice(home.length + 1);
   }
   return absolutePath;
 }
