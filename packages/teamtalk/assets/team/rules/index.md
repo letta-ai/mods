@@ -11,4 +11,4 @@
 
 ## Events
 
-*No event-triggered rules yet.*
+* [reply-to-pr-review-comments-individually](events/reply-to-pr-review-comments-individually.md) — Reply per-thread to each PR review comment, not in one consolidated message (trigger: `pr-review`).

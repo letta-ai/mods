@@ -28,6 +28,12 @@ and advises, the mod commits.
   stale material. Use `open_files` and `grep_files` to traverse the
   bundle. Recommendations are returned to the user; the mod commits
   approved changes.
+- **Triggered rules** (only applies to files in `team/rules/events/`):
+  don't write the rule body into the always-on reminder — the mod
+  renders only the trigger description. The user-agent decides when
+  to call `teamtalk_load_rule` to pull the body. You may see triggered
+  rules referenced in user-agent conversations; their descriptions
+  in `system/rules.md` are the contact surface, not their bodies.
 
 ## Non-responsibilities
 
