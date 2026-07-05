@@ -11,6 +11,8 @@ Use this package when the current model cannot inspect images directly but needs
 
 The package does not make the main model natively multimodal. It sends the image to a separate configured vision backend and returns text.
 
+Note: on Letta Code's local backend, text-only models never receive raw image parts even without this package — the provider runtime replaces them with a lossy placeholder. This package exists to replace that discarded content with useful text (captions or an inspect-on-demand note), not to guard against provider errors. The configured vision backend itself must be a vision-capable model.
+
 ## Capabilities
 
 This package registers:
@@ -39,6 +41,8 @@ Configuration is controlled by environment variables, especially:
 - `IMAGE_UNDERSTANDING_REQUIRE_LOCAL`
 - `IMAGE_UNDERSTANDING_AUTO_CAPTION`
 - `IMAGE_UNDERSTANDING_AUTO_MODE`
+- `IMAGE_UNDERSTANDING_STRIP_IMAGES`
+- `IMAGE_UNDERSTANDING_AGENTS` (comma-separated agent IDs or names; scopes auto-caption/strip-images to specific agents)
 
 ## Tool behavior
 

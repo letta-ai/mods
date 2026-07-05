@@ -295,15 +295,21 @@ export function nativeEnabled(channel: string): boolean {
 
 
 // Walk a nested path on an unknown SDK client with typeof narrowing — no fabricated object shape,
-// no inline cast-to-read. Returns the verified callable at the end of the path, or null.
+// no inline cast-to-read. Returns the verified callable at the end of the path, BOUND to its
+// receiver, or null. The binding is load-bearing: SDK resource methods (letta-client APIResource)
+// read `this._client`, so an unbound extraction throws "undefined is not an object" at call time —
+// which the best-effort catch blocks then swallow into a silent no-op (caught benchmarking live
+// against the real letta-client SDK; the MM_NATIVE=blocks neocortex sync was silently failing).
 export function reachFn(root: unknown, path: readonly string[]): ((...args: unknown[]) => unknown) | null {
   let cur: unknown = root;
+  let receiver: unknown = null;
   for (const key of path) {
     if (!cur || typeof cur !== "object") return null;
+    receiver = cur;
     cur = Reflect.get(cur, key); // unknown-assignable; no shape assertion
   }
   // A verified function whose call signature can't be runtime-checked → narrow cast at the boundary.
-  return typeof cur === "function" ? (cur as (...args: unknown[]) => unknown) : null;
+  return typeof cur === "function" ? (cur as (...args: unknown[]) => unknown).bind(receiver) : null;
 }
 
 
