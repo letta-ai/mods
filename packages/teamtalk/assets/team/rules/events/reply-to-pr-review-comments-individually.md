@@ -2,15 +2,7 @@
 type: Rule
 title: Reply Individually to PR Review Comments
 trigger: pr-review
-trigger-description: |
-  You are addressing pull-request review feedback on a branch that
-  just received review comments. Detect via one or more of: a
-  `pull/<n>` URL in context; `gh pr review`, `gh api .../reviews`,
-  `/teamtalk debug` followed by inline review discussion;
-  `gemini-code-assist[bot]` or `github-copilot[bot]` comments in
-  the thread; an explicit user request to "address the review" or
-  "reply to comments." Load this rule when the conversation is in
-  PR-review workflow rather than when merely reading a diff.
+trigger-description: You are addressing pull-request review feedback on a branch that just received review comments. Detect via one or more of a `pull/<n>` URL in context; `gh pr review` or `gh api .../reviews` invocations; `/teamtalk debug` followed by inline review discussion; `gemini-code-assist[bot]` or `github-copilot[bot]` comments in the thread; an explicit user request to address the review or reply to comments. Load this rule when the conversation is in PR-review workflow rather than when merely reading a diff.
 ttl: 12
 cacheable: true
 tags: [communication, github, code-review]

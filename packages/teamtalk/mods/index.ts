@@ -205,6 +205,10 @@ type Frontmatter = {
   description?: string;
   tags?: string[];
   timestamp?: string;
+  trigger?: string;
+  "trigger-description"?: string;
+  ttl?: number | string;
+  cacheable?: boolean | string;
 };
 
 function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
@@ -235,6 +239,15 @@ function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: st
     else if (key === "description") fm.description = value as string;
     else if (key === "tags") fm.tags = value as string[];
     else if (key === "timestamp") fm.timestamp = value as string;
+    else if (key === "trigger") fm.trigger = String(value);
+    else if (key === "trigger-description") fm["trigger-description"] = String(value);
+    else if (key === "ttl") {
+      const n = Number.parseInt(String(value), 10);
+      fm.ttl = Number.isFinite(n) ? n : undefined;
+    } else if (key === "cacheable") {
+      const v = String(value).toLowerCase();
+      fm.cacheable = v === "true" || v === "yes" || v === "1";
+    }
   }
   return { frontmatter: fm, body };
 }
@@ -606,10 +619,39 @@ function handleStatus(cwd: string): string {
 // Rules rendering (turn_start injection source)
 // ============================================================================
 
-function renderRulesFile(bundleDir: string, rulesRelDir: string = "rules/global"): string {
-  // Walk <bundleDir>/<rulesRelDir>/*.md, parse frontmatter + body, render
-  // a compact summary suitable for projection into the steward's system
-  // prompt. One section per rule.
+function renderRulesFile(bundleDir: string): string {
+  // Build the system/rules.md content. Three sections, top to bottom:
+  //   1. Always-on rules from team/rules/global/
+  //   2. Triggered-rule catalog from team/rules/events/  (descriptions only)
+  //   3. (Loaded dynamic rules are appended at turn_start, not here, so
+  //      we don't dirty George's git repo on every turn.)
+  const lines: string[] = [];
+  const globalLines = renderAlwaysOnSection(bundleDir, "rules/global");
+  if (globalLines) lines.push(globalLines);
+  const catalogLines = renderTriggerCatalogSection(bundleDir, "rules/events");
+  if (catalogLines) lines.push(catalogLines);
+  if (lines.length === 0) return "";
+  return wrapSystemReminderBody(lines.join("\n\n"));
+}
+
+function wrapSystemReminderBody(body: string): string {
+  // OKF-compliant YAML frontmatter + a small human heading. The
+  // frontmatter is required because the steward's pre-commit hook
+  // validates that every .md file in memory has it.
+  return [
+    "---",
+    "description: The team's always-on global rules, trigger catalog, and currently-loaded dynamic rules.",
+    "---",
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+function renderAlwaysOnSection(
+  bundleDir: string,
+  rulesRelDir: string,
+): string {
   const rulesDir = join(bundleDir, rulesRelDir);
   if (!existsSync(rulesDir)) return "";
   const files = walkMarkdownFiles(rulesDir);
@@ -628,16 +670,7 @@ function renderRulesFile(bundleDir: string, rulesRelDir: string = "rules/global"
   }
   if (entries.length === 0) return "";
   entries.sort((a, b) => a.relPath.localeCompare(b.relPath));
-  // Wrap with OKF-compliant YAML frontmatter so the steward's
-  // pre-commit hook (which validates frontmatter on every .md in
-  // memory) accepts the rendered summary file. Allowed keys per the
-  // hook: description, read_only, limit. We need a non-empty
-  // description.
   const lines: string[] = [
-    "---",
-    "description: The team's always-on global rules, linking to full OKF concepts.",
-    "---",
-    "",
     "# Global Rules",
     "",
     "These are the team's always-on rules. Each entry links to the full concept in the OKF bundle.",
@@ -648,6 +681,65 @@ function renderRulesFile(bundleDir: string, rulesRelDir: string = "rules/global"
     lines.push(`**Path:** \`${e.relPath}\``);
     if (e.description) lines.push(`**Description:** ${e.description}`);
     if (e.tags.length) lines.push(`**Tags:** ${e.tags.join(", ")}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function renderTriggerCatalogSection(
+  bundleDir: string,
+  rulesRelDir: string,
+): string {
+  // The catalog surface: trigger name + title + trigger-description,
+  // never the body. Lets the user-agent decide whether to call
+  // teamtalk_load_rule to pull the body. Sorts by trigger name for
+  // stable output across renders.
+  const rulesDir = join(bundleDir, rulesRelDir);
+  if (!existsSync(rulesDir)) return "";
+  const files = walkMarkdownFiles(rulesDir);
+  type Entry = {
+    trigger: string;
+    title: string;
+    relPath: string;
+    triggerDesc: string;
+    ttl: number | string | undefined;
+  };
+  const entries: Entry[] = [];
+  for (const f of files) {
+    const { frontmatter, body } = parseFrontmatter(f.content);
+    if (frontmatter.type !== "Rule") continue;
+    if (!frontmatter.trigger) continue;
+    const relPath = relative(bundleDir, f.path).replace(/\.md$/, "");
+    const heading = body.match(/^#\s+(.+)/m);
+    entries.push({
+      trigger: frontmatter.trigger,
+      title: frontmatter.title || heading?.[1]?.trim() || relPath,
+      relPath,
+      triggerDesc: frontmatter["trigger-description"] || "",
+      ttl: frontmatter.ttl,
+    });
+  }
+  if (entries.length === 0) return "";
+  entries.sort((a, b) => a.trigger.localeCompare(b.trigger));
+  const lines: string[] = [
+    "# Triggered Rules",
+    "",
+    "These rules apply only when their trigger conditions are met. Use",
+    "teamtalk_load_rule(trigger) to load a rule's full body; the body",
+    "persists in context for the rule's TTL of activity-reset inactivity.",
+    "Default TTL is 8 turns; check the rule's frontmatter for the",
+    "configured value.",
+    "",
+  ];
+  for (const e of entries) {
+    lines.push(`## ${e.title}`);
+    lines.push(`**Trigger:** \`${e.trigger}\``);
+    lines.push(`**Path:** \`${e.relPath}\``);
+    if (typeof e.ttl === "number") lines.push(`**TTL (turns):** ${e.ttl}`);
+    if (e.triggerDesc) {
+      lines.push("");
+      lines.push(e.triggerDesc);
+    }
     lines.push("");
   }
   return lines.join("\n");

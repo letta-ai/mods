@@ -44,9 +44,7 @@ external-facing material.
 type: Rule
 title: Reply Individually to PR Review Comments
 trigger: pr-review
-trigger-description: |
-  Two paragraphs max. Describe the conditions that make this rule
-  load — keywords, command shapes, conversation context.
+trigger-description: Single line of prose describing when the rule fires. Multi-line block scalars (`|` and `>`) are not parsed by the mod's frontmatter reader; keep this value on one line.
 ttl: 8                    # activity-reset; see "TTL semantics" below
 cacheable: true            # default true; set false for one-shot rules
 tags: [communication, github]
@@ -59,6 +57,11 @@ always rendered into the user-agent's reminder.
 `ttl`: turns of inactivity before the loaded body drops out of context.
 `cacheable`: whether the body is retained after the first load.
 Default `true` with `ttl: 8`.
+
+**Parser constraint**: the mod uses a single-pass frontmatter reader
+that doesn't understand YAML block scalars. Every frontmatter value
+must fit on a single line. Multi-line prose goes in the markdown
+body, not the frontmatter.
 
 ## TTL semantics (activity-reset)
 
