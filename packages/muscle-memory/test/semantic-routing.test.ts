@@ -135,12 +135,56 @@ test("semanticSkillCandidates + syncSkillPassages: gated off without MM_NATIVE=p
     expect(hits).toEqual([{ name: "a-skill", rank: 0 }]);
     calls.length = 0;
     expect(await syncSkillPassages(client, "agent-1", [{ name: "a-skill", description: "does the thing" }])).toBe(1); // canaries excluded from the count
-    // upsert per entry (stale removed first), managed skill first, then the two canary reference passages
-    expect(calls.map((c) => c.op)).toEqual(["search", "delete", "create", "search", "delete", "create", "search", "delete", "create"]);
+    // upsert per entry (stale removed first), managed skill first, then the two canary reference
+    // passages — plus ONE trailing reconciliation search (its only hit, a-skill, is live → no delete).
+    expect(calls.map((c) => c.op)).toEqual(["search", "delete", "create", "search", "delete", "create", "search", "delete", "create", "search"]);
     const created = calls[2].args[1];
     expect(created && typeof created === "object" && "text" in created ? created.text : "").toBe(skillPassageText("a-skill", "does the thing"));
     const canaryCreate = calls[5].args[1];
     expect(canaryCreate && typeof canaryCreate === "object" && "tags" in canaryCreate ? canaryCreate.tags : []).toEqual([SKILL_PASSAGE_TAG, skillPassageTag(SKILL_CANARY_NAMES[0])]);
+  } finally {
+    if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
+  }
+});
+
+test("sync hygiene: unchanged skills skip the round-trip; removed skills get reconciled; canaries survive", async () => {
+  const keptText = skillPassageText("kept-skill", "does the thing");
+  const calls: Array<{ op: string; args: unknown[] }> = [];
+  const client = { agents: { passages: {
+    search: (...args: unknown[]) => {
+      calls.push({ op: "search", args });
+      const params = args[1] as { tags?: string[] };
+      const tags = params?.tags ?? [];
+      // per-skill lookup for the kept skill: exactly one prior passage, byte-identical text → skip
+      if (tags[0] === skillPassageTag("kept-skill")) {
+        return Promise.resolve({ results: [{ id: "k1", text: keptText, tags: [SKILL_PASSAGE_TAG, skillPassageTag("kept-skill")] }] });
+      }
+      // reconciliation sweep (bare mm:skill tag): live skill + a ghost + a canary
+      if (tags.length === 1 && tags[0] === SKILL_PASSAGE_TAG) {
+        return Promise.resolve({ results: [
+          { id: "k1", tags: [SKILL_PASSAGE_TAG, skillPassageTag("kept-skill")] },
+          { id: "g1", tags: [SKILL_PASSAGE_TAG, skillPassageTag("ghost-skill")] },   // deleted skill's leftover
+          { id: "c1", tags: [SKILL_PASSAGE_TAG, skillPassageTag(SKILL_CANARY_NAMES[0])] },
+        ] });
+      }
+      return Promise.resolve({ results: [] }); // canary per-entry lookups: nothing prior
+    },
+    create: (...args: unknown[]) => { calls.push({ op: "create", args }); return Promise.resolve([]); },
+    delete: (...args: unknown[]) => { calls.push({ op: "delete", args }); return Promise.resolve({}); },
+  } } };
+  const prev = process.env.MM_NATIVE;
+  process.env.MM_NATIVE = "passages";
+  try {
+    const synced = await syncSkillPassages(client, "agent-1", [{ name: "kept-skill", description: "does the thing" }]);
+    expect(synced).toBe(1); // skipped-unchanged still counts as synced (it IS on the index)
+    const deletes = calls.filter((c) => c.op === "delete").map((c) => c.args[0]);
+    expect(deletes).toEqual(["g1"]); // ONLY the ghost — kept skill skipped, canary immune
+    const creates = calls.filter((c) => c.op === "create");
+    expect(creates.length).toBe(2); // the two canaries; kept-skill's round-trip was skipped entirely
+    for (const c of creates) {
+      const body = c.args[1] as { tags?: string[] };
+      expect((body.tags ?? []).some((t) => t.includes("mm-canary-"))).toBe(true);
+    }
   } finally {
     if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
   }

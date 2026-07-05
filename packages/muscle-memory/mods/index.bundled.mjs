@@ -2041,6 +2041,15 @@ async function semanticSkillCandidates(client, agentId, query, k = 3) {
     return [];
   }
 }
+function passageText(r) {
+  if (!r || typeof r !== "object")
+    return null;
+  if ("text" in r && typeof r.text === "string")
+    return r.text;
+  if ("content" in r && typeof r.content === "string")
+    return r.content;
+  return null;
+}
 async function syncSkillPassages(client, agentId, managed) {
   if (!agentId || !nativeEnabled("passages") || !managed.length)
     return 0;
@@ -2053,18 +2062,40 @@ async function syncSkillPassages(client, agentId, managed) {
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
   for (const m of entries) {
     try {
+      let skip = false;
       if (search && del) {
         const prior = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
         if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
-          for (const r of prior.results) {
-            if (r && typeof r === "object" && "id" in r && typeof r.id === "string")
-              await del(r.id, { agent_id: agentId });
+          skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text;
+          if (!skip) {
+            for (const r of prior.results) {
+              if (r && typeof r === "object" && "id" in r && typeof r.id === "string")
+                await del(r.id, { agent_id: agentId });
+            }
           }
         }
       }
-      await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
+      if (!skip)
+        await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
       if (!isCanaryName(m.name))
         synced++;
+    } catch {}
+  }
+  if (search && del) {
+    try {
+      const live = new Set([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
+      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 100 });
+      if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
+        for (const r of all.results) {
+          if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string")
+            continue;
+          const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+          const named = tags.find((t) => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+          const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+          if (name && !live.has(name))
+            await del(r.id, { agent_id: agentId });
+        }
+      }
     } catch {}
   }
   return synced;

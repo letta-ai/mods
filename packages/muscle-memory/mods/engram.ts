@@ -423,8 +423,23 @@ export async function semanticSkillCandidates(client: unknown, agentId: string |
   } catch { return []; }
 }
 
+/** Passage text of a search result, wherever the SDK surface puts it. Null → unknown (no skip). */
+function passageText(r: unknown): string | null {
+  if (!r || typeof r !== "object") return null;
+  if ("text" in r && typeof r.text === "string") return r.text;
+  if ("content" in r && typeof r.content === "string") return r.content;
+  return null;
+}
+
 /** Upsert the mm:skill passage index (delete-by-tag then create — the API has no update), plus
- * the canary reference passages that calibrate rank into relevance. Opt-in, never throws. */
+ * the canary reference passages that calibrate rank into relevance. Opt-in, never throws.
+ * Sync hygiene (review follow-up, 2026-07-05): (1) UNCHANGED-SKIP — if exactly one prior passage
+ * exists with byte-identical text, the delete+create round-trip is skipped (kills steady-state
+ * API churn; a search surface that returns no passage text degrades to the old upsert). (2)
+ * RECONCILIATION — after upserting, any mm:skill:* passage whose skill is no longer on the
+ * managed shelf (and is not a canary) is deleted, so removed/renamed skills stop accumulating
+ * stale index entries. onShelf guards already made stale hits routing-inert; this stops them
+ * existing at all. */
 export async function syncSkillPassages(client: unknown, agentId: string | null | undefined, managed: Array<{ name: string; description: string }>): Promise<number> {
   if (!agentId || !nativeEnabled("passages") || !managed.length) return 0;
   const search = reachFn(client, ["agents", "passages", "search"]);
@@ -435,15 +450,35 @@ export async function syncSkillPassages(client: unknown, agentId: string | null 
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
   for (const m of entries) {
     try {
+      let skip = false;
       if (search && del) {
         const prior: unknown = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
         if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
-          for (const r of prior.results) { if (r && typeof r === "object" && "id" in r && typeof r.id === "string") await del(r.id, { agent_id: agentId }); }
+          skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text; // unchanged → no round-trip
+          if (!skip) {
+            for (const r of prior.results) { if (r && typeof r === "object" && "id" in r && typeof r.id === "string") await del(r.id, { agent_id: agentId }); }
+          }
         }
       }
-      await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
+      if (!skip) await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
       if (!isCanaryName(m.name)) synced++; // canaries are calibration plumbing, not shelf state
     } catch { /* best-effort per skill — a failed sync never blocks the lifecycle */ }
+  }
+  // Reconcile removals: the shelf is the source of truth; the index must not outlive it.
+  if (search && del) {
+    try {
+      const live = new Set<string>([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
+      const all: unknown = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 100 });
+      if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
+        for (const r of all.results) {
+          if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string") continue;
+          const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+          const named = tags.find((t): t is string => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+          const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+          if (name && !live.has(name)) await del(r.id, { agent_id: agentId });
+        }
+      }
+    } catch { /* best-effort — reconciliation failure never blocks the lifecycle */ }
   }
   return synced;
 }
