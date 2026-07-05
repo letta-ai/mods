@@ -10,29 +10,37 @@ description: "Share organizational knowledge across a team via a dedicated stewa
 Use `teamtalk_search` before non-trivial implementation work, when the
 user asks about team conventions, or when a relevant rule may already
 exist. Use `teamtalk_propose` when the team should adopt a new rule,
-playbook, decision, or person entry.
+playbook, decision, or person entry. Use `teamtalk_load_rule` when the
+rendered `<system-reminder>` lists a trigger description that matches
+your current task and you want the rule's full body in context.
 
 ## Architecture summary
 
 - **Steward agent** — a designated agent (bound via `/teamtalk enable`
   or created via `/teamtalk init`) whose MemFS holds the OKF bundle
-  under `team/` and whose `system/` directory holds persona, human, and
-  the rendered `rules.md`. Tagged `teamtalk-steward`. The mod uses
-  `letta/auto` as the model so the steward is routed to whatever
-  provider is currently available.
+  under `team/`. Tagged `teamtalk-steward`. The mod uses `letta/auto`
+  as the model so the steward is routed to whatever provider is
+  currently available.
 - **Reads** — direct filesystem reads from the steward's local MemFS
   clone at `~/.letta/agents/<steward-id>/memory/team/` (or
   `~/.letta/lc-local-backend/memfs/<steward-id>/memory/team/` for
   local-backend agents). No remote API calls on the hot path.
-- **Writes** — routed through the steward via a structured
-  `PROPOSE_NEW_CONCEPT` message. The steward's persona validates OKF
-  conformance and policy (no secrets, no duplicates, paths under
-  `team/`) before committing to its own MemFS.
+- **Writes** — in Letta Code 0.27.x the steward agent has no file-write
+  tools (`letta_files_core` exposes only read tools), so
+  `teamtalk_propose` writes the concept directly to the steward's
+  local MemFS clone, then shells out to `git -C memDir add <file> && git
+  commit` to persist the change. OKF conformance, secret patterns, and
+  path shape are enforced by the mod before writing.
 - **Rule injection** — `events.turns.onTurnStart` reads
-  `~/.letta/agents/<steward-id>/memory/system/rules.md` and prepends
-  it as a transient system reminder to the user's turn context. No
+  `~/.letta/agents/<steward-id>/memory/system/rules.md` and prepends it
+  as a transient system reminder to the user's turn context. No
   remote API call. The file is rendered from the OKF bundle on
   init/reseed.
+- **Triggered-rule loader** — the rules file has two sections:
+  always-on rules (`team/rules/global/`) and a triggered-rule catalog
+  (`team/rules/events/`). The catalog lists each trigger's
+  description, never the body. The model calls `teamtalk_load_rule`
+  to pull a body into context; see "Triggered rules" below.
 
 ## Init flow
 
@@ -44,6 +52,12 @@ agent creation, the local MemFS clone only materializes once a
 user-agent session opens with that agent; the mod spawns a
 backgrounded `letta --agent <steward-id>` with `stdio: "ignore"` to
 trigger that session-open, then polls for the clone to appear.
+
+After agent creation the mod overwrites the persona block with
+`steward-persona.md` via the SDK and attaches the read tools
+(`open_files`, `grep_files`, `semantic_search_files` — the read subset
+of `letta_files_core` for that org) so the steward can navigate the
+bundle when answering questions. No write tools are attached.
 
 ## Commands
 
@@ -75,24 +89,84 @@ trigger that session-open, then polls for the clone to appear.
   concepts with OKF `type` frontmatter. Read-only, parallel-safe.
   Default limit 8, max 50.
 
-- `teamtalk_propose(type, title, proposed_path, body, tags?)` — sends
-  a `PROPOSE_NEW_CONCEPT` message to the bound steward. Requires
-  approval. The steward validates and commits, or replies with a
-  rejection. The mod pre-validates against secret patterns and path
-  shape before sending.
+- `teamtalk_propose(type, title, proposed_path, body, tags?)` — writes
+  the concept directly to the steward's local MemFS clone (in
+  Letta Code 0.27.x the steward agent has no file-write tools).
+  Enforces OKF conformance (frontmatter, path under `team/`,
+  reserved filenames), no-secrets, and no-duplicates. Commits via
+  `git -C memDir add <file> && git commit`. Refuses to commit if any
+  unrelated dirty file is present in the steward's MemFS — the file
+  stays written locally and the call surfaces a tool error so the
+  operator can resolve manually.
+
+- `teamtalk_load_rule(trigger)` — pulls a triggered rule's body
+  into the calling agent's session cache and resets its activity
+  timer to the current turn. The body persists in `<system-reminder>`
+  blocks until the rule's TTL of inactivity elapses. The trigger
+  catalog (always-on) tells the model which rules exist and when to
+  load them; the model decides when this tool is appropriate.
+
+## Triggered rules (dynamic loading)
+
+Rules under `team/rules/events/` are not always-on. The rules file's
+triggered-rules catalog lists each rule's:
+
+- `trigger` — short identifier, used as the load argument.
+- `trigger-description` — human prose describing when the rule fires.
+- `ttl` — inactivity threshold (turns) before the body ages out.
+- `cacheable: true` (default) — body is retained after first load.
+
+### When to call `teamtalk_load_rule`
+
+The model calls the tool when:
+
+- A trigger description in the catalog matches the current task.
+- The rule body is needed for the next response (rather than just for
+  reference).
+- The user explicitly invokes a triggered rule's workflow.
+
+If unsure, the agent can search for the trigger name via
+`teamtalk_search` to find the full body, but `teamtalk_load_rule` is
+the structured way and resets the TTL.
+
+### TTL semantics (activity-reset)
+
+The TTL countdown resets to the rule's full value on any of:
+
+- An explicit `teamtalk_load_rule` call (resets to full).
+- A `teamtalk_search` hit on this rule (resets to full).
+- A `turn_start` keyword match against the rule's trigger description
+  (resets to full — heuristic; see `TRIGGER_KEYWORDS` in
+  `mods/index.ts`).
+
+After `ttl` turns of no matching activity, the body stops appearing
+in the reminder but stays in cache (re-loadable without cost).
+
+### Per-agent cache
+
+The mod keeps a session-local map keyed by `agent_id` (the calling
+user-agent) and `trigger`. Two agents in the same conversation have
+independent loaded-rule sets. Cache resets on session restart.
 
 ## Events
 
 - `turn_start` — when the bound steward has a non-empty
   `system/rules.md`, prepends it as a transient system reminder on
-  the user's turn. Skipped when not bound or when the rules file is
-  missing/empty.
+  the user's turn. The reminder has two sections:
+  1. Always-on rules (global) — full path/description per rule.
+  2. Triggered-rules catalog — trigger + path + TTL + description,
+     body omitted.
+  3. Loaded dynamic rules — bodies of rules that were loaded (or
+     auto-detected) this session, plus their remaining TTL.
+
+  The reminder also carries the agent's session cache so bodies
+  remain across turns until the TTL elapses.
 
 ## Identity discipline
 
 - The steward agent and the user's agent are separate. The mod never
-  writes to the steward's MemFS directly; it forwards proposals and
-  lets the steward apply policy.
+  asks the steward to write its own MemFS — writes flow through
+  `teamtalk_propose` after OKF validation.
 - The mod does not modify the user's agent's permanent memory. Rule
   injection is transient — the system reminder exists only for the
   duration of the turn.
@@ -115,17 +189,20 @@ trigger that session-open, then polls for the clone to appear.
 
 - Use `teamtalk_search` before answering questions about team
   conventions from general knowledge.
+- Use `teamtalk_load_rule` when the rendered reminder lists a
+  triggered rule whose trigger description matches your task.
 - Prefer `teamtalk_propose` for new rules or playbooks over writing
   directly to the user's own memory.
-- The steward may reject proposals that violate policy (secrets,
-  duplicates, schema violations). Treat a rejection as a revision
-  request, not a failure — read the steward's reply text, adjust, and
-  resubmit.
-- Global rules are injected automatically; do not re-paste them in
-  responses unless the user asks.
+- Triggered rules age out of context after their TTL of inactivity
+  elapses. Re-load via `teamtalk_load_rule` when needed again; the
+  tool call is cheap.
 - When proposing, paths must start with `team/` and end with `.md`.
-  Body is markdown. Frontmatter fields (`type`, `title`, optional
-  `description`, `tags`, `timestamp`) follow OKF v0.1.
+  Body is markdown. Frontmatter fields for global rules: `type`,
+  `title`, optional `description`, `tags`, `timestamp`. Frontmatter
+  fields for triggered rules add: `trigger`, `trigger-description`,
+  `ttl`, `cacheable`. Multi-line block scalars (`|`, `>`) are not
+  supported by the mod's frontmatter reader — keep every
+  frontmatter value on one line.
 
 ## Recovery
 
