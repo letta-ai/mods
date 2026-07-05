@@ -180,18 +180,181 @@ function readRulesSummary(state: TeamTalkState): string | null {
   }
 }
 
-function buildRulesReminder(state: TeamTalkState, agentName: string | null): string | null {
+// ============================================================================
+// Triggered-rule session cache
+// ============================================================================
+//
+// The mod maintains an in-memory cache of "loaded" triggered rules per
+// agent. Each entry tracks the rule body, the frontmatter TTL, and the
+// last-turn-on-which-the-rule-saw-activity. Activity sources:
+//
+//   - Direct: teamtalk_load_rule(trigger) call (resets to full).
+//   - Indirect: teamtalk_search(query) returns a hit whose trigger
+//     matches the loaded rule (resets to full).
+//   - Heuristic: turn_start keyword pattern matches the rule's trigger
+//     description (resets to full).
+//
+// After ttl turns of no matching activity, the body stops being
+// injected into <system-reminder> blocks; the entry stays in cache so
+// re-loading is cheap.
+
+type TriggeredRuleEntry = {
+  trigger: string;
+  rulePath: string; // bundle-relative
+  body: string;
+  ttl: number;
+  loadedAtTurn: number;
+  lastActivityTurn: number;
+  contentHash: string;
+};
+
+let sessionTurn = 0;
+const sessionCache = new Map<string, Map<string, TriggeredRuleEntry>>(); // agent_id -> trigger -> entry
+
+const DEFAULT_RULE_TTL = 8;
+
+// Keyword triggers — heuristic detection when the user-agent's
+// turn_start input matches a trigger. Each entry maps a trigger name
+// to a list of substring/regex patterns; any match resets activity.
+const TRIGGER_KEYWORDS: Record<string, RegExp[]> = {
+  "pr-review": [
+    /pull\/\d+/,
+    /\bgh pr (review|comments)\b/,
+    /\bgh api\b.*\bpulls?\/\d+\/reviews\b/,
+    /gemini-code-assist\[bot\]/,
+    /github-copilot\[bot\]/,
+  ],
+};
+
+function getOrInitAgentCache(agentId: string): Map<string, TriggeredRuleEntry> {
+  let m = sessionCache.get(agentId);
+  if (!m) {
+    m = new Map();
+    sessionCache.set(agentId, m);
+  }
+  return m;
+}
+
+function evictExpired(agentId: string, currentTurn: number): void {
+  const m = sessionCache.get(agentId);
+  if (!m) return;
+  for (const [trigger, entry] of m.entries()) {
+    if (currentTurn - entry.lastActivityTurn > entry.ttl) {
+      m.delete(trigger);
+      dlog(`evicted expired rule: ${trigger} (last activity turn ${entry.lastActivityTurn}, current ${currentTurn})`);
+    }
+  }
+}
+
+function markActivity(agentId: string, trigger: string, currentTurn: number): void {
+  const m = getOrInitAgentCache(agentId);
+  const entry = m.get(trigger);
+  if (entry) {
+    entry.lastActivityTurn = currentTurn;
+    dlog(`activity reset for ${trigger} (turn ${currentTurn})`);
+  }
+}
+
+function hashContent(s: string): string {
+  // Cheap deterministic hash. Not cryptographically strong; we only
+  // need session-local change detection.
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return String(h >>> 0);
+}
+
+function loadTriggeredRuleByName(
+  state: TeamTalkState,
+  agentId: string,
+  trigger: string,
+  currentTurn: number,
+): TriggeredRuleEntry | { error: string } {
+  const bundleDir = findStewardBundleDir(state);
+  if (!bundleDir) return { error: "Steward bundle not found on disk." };
+  const eventsRoot = join(bundleDir, "rules", "events");
+  if (!existsSync(eventsRoot)) return { error: `No rules/events directory at ${eventsRoot}.` };
+  const files = walkMarkdownFiles(eventsRoot);
+  for (const f of files) {
+    const { frontmatter, body } = parseFrontmatter(f.content);
+    if (frontmatter.type !== "Rule") continue;
+    if (frontmatter.trigger !== trigger) continue;
+    const ttl = typeof frontmatter.ttl === "number" ? frontmatter.ttl : DEFAULT_RULE_TTL;
+    const rulePath = relative(bundleDir, f.path).replace(/\\/g, "/");
+    const entry: TriggeredRuleEntry = {
+      trigger,
+      rulePath,
+      body,
+      ttl,
+      loadedAtTurn: currentTurn,
+      lastActivityTurn: currentTurn,
+      contentHash: hashContent(body),
+    };
+    const m = getOrInitAgentCache(agentId);
+    m.set(trigger, entry);
+    dlog(`loaded triggered rule: ${trigger} (ttl ${ttl}, path ${rulePath})`);
+    return entry;
+  }
+  return { error: `No rule with trigger='${trigger}'. Use teamtalk_search on the bundle to find triggers by keyword.` };
+}
+
+function detectTriggerMatches(input: unknown, agentId: string, currentTurn: number): void {
+  if (!Array.isArray(input)) return;
+  const haystack = JSON.stringify(input).slice(0, 16_000); // first 16k chars is plenty for keyword detection
+  for (const [trigger, patterns] of Object.entries(TRIGGER_KEYWORDS)) {
+    for (const re of patterns) {
+      if (re.test(haystack)) {
+        markActivity(agentId, trigger, currentTurn);
+        break;
+      }
+    }
+  }
+}
+
+function buildLoadedRulesSection(agentId: string): string {
+  const m = sessionCache.get(agentId);
+  if (!m || m.size === 0) return "";
+  const lines: string[] = [
+    "## Loaded Dynamic Rules",
+    "",
+    "These rules were loaded during this session because their trigger",
+    "conditions matched. Each body remains in context until the rule's",
+    "TTL of inactivity elapses (per-turn-detected keyword match, an",
+    "explicit teamtalk_load_rule call, or a teamtalk_search hit on this",
+    "trigger resets the TTL). To re-load: teamtalk_load_rule(trigger).",
+    "",
+  ];
+  const entries = Array.from(m.values()).sort((a, b) => a.trigger.localeCompare(b.trigger));
+  for (const e of entries) {
+    lines.push(`### ${e.trigger} (loaded from ${e.rulePath})`);
+    lines.push("");
+    lines.push(e.body);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function buildRulesReminder(state: TeamTalkState, agentId: string | null, agentName: string | null): string | null {
   const rules = readRulesSummary(state);
-  if (!rules) return null;
+  if (!rules && (!agentId || !sessionCache.get(agentId))) return null;
   const steward = state.stewardAgentName || state.stewardAgentId || "the team steward";
   const subject = agentName ? `the ${agentName} agent` : "you";
+  const sections: string[] = [];
+  if (rules) sections.push(rules);
+  if (agentId) {
+    const dynamic = buildLoadedRulesSection(agentId);
+    if (dynamic) sections.push(dynamic);
+  }
+  if (sections.length === 0) return null;
   return `<system-reminder>
-The following are the team's global rules, sourced from ${steward}'s
-MemFS (system/rules.md). Apply them to non-trivial implementation work,
-process decisions, and any situation where the team has documented a
-convention. Use teamtalk_search for full rule content before acting.
+The following are the team's rules, sourced from ${steward}'s MemFS.
+Apply them to non-trivial implementation work, process decisions, and
+any situation where the team has documented a convention. Use
+teamtalk_search for full bundle content; use teamtalk_load_rule(trigger)
+to load a triggered rule's body. Loaded dynamic rules (below the
+catalog) are present in this session — apply them when their trigger
+conditions apply.
 
-${rules}
+${sections.join("\n\n")}
 </system-reminder>`;
 }
 
@@ -1450,7 +1613,85 @@ export default function activate(letta: any) {
             writeState({ ...state, bundlePath: bundleDir, lastSyncAt: new Date().toISOString() });
           }
           const hits = keywordSearch(bundleDir, query, limit);
+          // Activity bookkeeping: if any hit's frontmatter trigger matches
+          // a rule currently loaded in this agent's session cache, reset
+          // its TTL to full.
+          const agentId = (ctx.agent?.id as string) || (ctx.conversation?.id as string) || null;
+          if (agentId && hits.length > 0) {
+            // We need to look up triggers on hit files; search hits don't
+            // currently carry frontmatter. Cheaply re-parse each hit's
+            // path to fetch trigger.
+            for (const hit of hits) {
+              try {
+                const content = readFileSync(hit.path, "utf8");
+                const { frontmatter } = parseFrontmatter(content);
+                if (frontmatter.trigger) {
+                  const m = sessionCache.get(agentId);
+                  if (m?.has(frontmatter.trigger)) {
+                    markActivity(agentId, frontmatter.trigger, sessionTurn);
+                  }
+                }
+              } catch {
+                // skip unreadable
+              }
+            }
+          }
           return buildSearchOutput(query, hits, bundleDir);
+        },
+      }),
+
+      // -- teamtalk_load_rule tool --
+      letta.tools.register({
+        name: "teamtalk_load_rule",
+        description:
+          "Load the body of a triggered rule from the bundle into this session's context. " +
+          "USE THIS WHEN the always-on reminder lists a trigger description that matches your " +
+          "current task and you want the full rule body to follow it. The body persists in " +
+          "context for the rule's TTL (default 8 turns); activity that matches the rule resets " +
+          "the TTL. To re-load later, call this tool again with the same trigger name.",
+        parameters: {
+          type: "object",
+          properties: {
+            trigger: {
+              type: "string",
+              description: "Trigger identifier exactly as listed in the always-on reminder's " +
+                "'Triggered Rules' catalog (e.g. 'pr-review'). To list available triggers, " +
+                "read the catalog section of the rendered reminder or call teamtalk_search on " +
+                "'trigger' or 'event' keywords.",
+            },
+          },
+          required: ["trigger"],
+          additionalProperties: false,
+        },
+        requiresApproval: false,
+        parallelSafe: false,
+        async run(ctx: any) {
+          const state = readState();
+          if (!state.stewardAgentId) {
+            return { status: "error", content: "No steward bound." };
+          }
+          const agentId = (ctx.agent?.id as string) || (ctx.conversation?.id as string) || null;
+          if (!agentId) {
+            return { status: "error", content: "Could not identify the calling agent." };
+          }
+          const trigger = String(ctx.args?.trigger || "").trim();
+          if (!trigger) {
+            return { status: "error", content: "trigger is required" };
+          }
+          const result = loadTriggeredRuleByName(state, agentId, trigger, sessionTurn);
+          if ("error" in result) {
+            return { status: "error", content: result.error };
+          }
+          return {
+            content: `Loaded rule '${trigger}' from ${result.rulePath}.\n` +
+              `TTL: ${result.ttl} turns (activity-reset). Body follows:\n\n` +
+              result.body,
+            metadata: {
+              trigger: result.trigger,
+              ttl: result.ttl,
+              contentHash: result.contentHash,
+            },
+          };
         },
       }),
     );
@@ -1774,11 +2015,19 @@ export default function activate(letta: any) {
       letta.events.on("turn_start", (event: any) => {
         const state = readState();
         if (!state.stewardAgentId) return;
-        const reminder = buildRulesReminder(state, event?.agentName || null);
+        const agentId = (event?.agentId as string) || (event?.conversationId as string) || null;
+        sessionTurn += 1;
+        if (agentId) {
+          evictExpired(agentId, sessionTurn);
+          detectTriggerMatches(event.input, agentId, sessionTurn);
+        }
+        const reminder = buildRulesReminder(state, agentId, null);
         if (!reminder) return;
         const input = Array.isArray(event.input) ? event.input : [];
-        // Prepend the system reminder as a user-role turn_start injection.
-        // The harness treats prepended items as already-on-the-conversation context.
+        // Prepend the system reminder. Letta Code's mod runtime accepts
+        // either { type: "message", role: "system", content } or the older
+        // { role: "user", content } shape; we use the latter for compat
+        // with the previously-shipped version of the harness.
         return {
           input: [{ role: "user", content: reminder }, ...input],
         };
