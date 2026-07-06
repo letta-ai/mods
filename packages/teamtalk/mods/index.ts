@@ -667,8 +667,9 @@ function parseSubcommand(args: string): ParsedArgs {
 function parseFlags(rest: string): ParsedFlags {
   // Use Node's built-in util.parseArgs to tokenize the arg string into
   // flags and positionals. We declare every flag the mod accepts as a
-  // typed option; util.parseArgs handles --name George, --name=George,
-  // --confirm, and repeated flags correctly without custom code.
+  // typed option; util.parseArgs handles --name my-team-steward,
+  // --name=my-team-steward, --confirm, and repeated flags correctly
+  // without custom code.
   if (!rest.trim()) return { positional: "", flags: {} };
   // Tokenize the same way util.parseArgs does: split on whitespace,
   // respecting double-quoted strings.
@@ -811,7 +812,7 @@ function renderRulesFile(bundleDir: string): string {
   //   1. Always-on rules from team/rules/global/
   //   2. Triggered-rule catalog from team/rules/events/  (descriptions only)
   //   3. (Loaded dynamic rules are appended at turn_start, not here, so
-  //      we don't dirty George's git repo on every turn.)
+  //      we don't dirty the steward's git repo on every turn.)
   const lines: string[] = [];
   const globalLines = renderAlwaysOnSection(bundleDir, "rules/global");
   if (globalLines) lines.push(globalLines);
@@ -1358,9 +1359,10 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     // Push the steward persona block to the agent's memory via the
     // SDK. `letta agents create --pinned` pre-populates persona and
     // human blocks with the Letta Code default persona; we overwrite
-    // persona with our steward-specific content so George responds as
-    // an organizational memory steward rather than a generic coding
-    // assistant. The schema and rules live in the OKF bundle under
+    // persona with our steward-specific content so the steward
+    // responds as an organizational memory steward rather than a
+    // generic coding assistant. The schema and rules live in the
+    // OKF bundle under
     // `team/` and `system/rules.md`; we don't duplicate them as
     // memory blocks (the steward reads them from disk on demand).
     let personaNote = "";
