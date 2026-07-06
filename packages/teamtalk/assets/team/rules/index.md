@@ -8,6 +8,7 @@
   criteria up front and verify against them before declaring work done.
 * [surface-tradeoffs](global/surface-tradeoffs.md) — Explain the reasoning
   behind recommendations; do not silently choose between valid options.
+* [access-steward-bundle-via-mod-tools](global/access-steward-bundle-via-mod-tools.md) — Cross-agent MemFS access is gated by the harness; reach the steward bundle through `teamtalk_search`, `teamtalk_load_rule`, `teamtalk_propose`, or Bash.
 
 ## Events
 

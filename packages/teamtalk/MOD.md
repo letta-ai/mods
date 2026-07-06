@@ -174,6 +174,28 @@ independent loaded-rule sets. Cache resets on session restart.
   steward discoverable in the user's pinned agent list. The user
   should be aware the steward will appear in chat.letta.com.
 
+## Cross-agent MemFS access
+
+The steward agent's OKF bundle lives at
+`~/.letta/agents/<steward-id>/memory/team/`. From a user-agent session
+in the same Letta Code process, the harness blocks `Read`, `Write`,
+`Glob`, `Grep`, and `Edit` against that path with `Permission denied
+by cross-agent memory guard`. The TeamTalk mod works around this
+because its process-level `fs.readFileSync` calls bypass the
+harness — but that workaround is internal to the mod.
+
+User-agents should access the steward bundle via:
+
+- `teamtalk_search(query, limit?)` for content search.
+- `teamtalk_load_rule(trigger)` for triggered rule bodies.
+- `teamtalk_propose(...)` for new writes.
+- `Bash` (`cat`, `grep`, `find`) for direct file inspection.
+
+Trying to `Read` the steward's MemFS files directly from a
+user-agent session will always fail with the cross-agent guard error.
+The seeded rule `team/rules/global/access-steward-bundle-via-mod-tools.md`
+documents this constraint for every agent in the org.
+
 ## Local state
 
 `~/.letta/mods/teamtalk.state.json` holds:
