@@ -5,7 +5,7 @@
 // are consistent everywhere.
 
 import { homedir } from "node:os";
-import { relative } from "node:path";
+import { isAbsolute, relative } from "node:path";
 
 // Forward-slash version of path.relative(). On POSIX this is a no-op;
 // on Windows it normalizes `\` to `/` so consumers (catalog renderers,
@@ -42,7 +42,11 @@ export function formatDisplayPath(absolutePath: string, cwd: string): string {
   // Fall back to relative-to-cwd for paths outside $HOME.
   try {
     const rel = relativePosix(cwd, absolutePath);
-    if (rel && !rel.startsWith("..")) return rel;
+    // ".." or "../..." means we'd traverse up out of cwd — fall
+    // through to the absolute-path return. NOT just "startsWith ..."
+    // because that would reject legitimate paths whose segments start
+    // with two dots, e.g. files named "..hidden-config".
+    if (rel && rel !== ".." && !rel.startsWith("../")) return rel;
   } catch {
     // fall through
   }
@@ -59,14 +63,17 @@ export function formatDisplayPath(absolutePath: string, cwd: string): string {
 export function isInside(parent: string, target: string): boolean {
   try {
     const rel = relativePosix(parent, target);
-    // Empty means target === parent (allowed). ".." or absolute means
-    // target is outside parent. Forward slashes are guaranteed by
-    // relativePosix.
+    // Empty means target === parent (allowed). Actual parent traversal
+    // is exactly ".." or "../..." — NOT just "startsWith .." because
+    // that rejects legitimate paths containing segments that begin with
+    // two dots, e.g. "..hidden-config.md" or a directory named "..foo".
     if (rel === "") return true;
-    if (rel.startsWith("..")) return false;
-    // An absolute path returned by relative() means the inputs are
-    // on different drives (Windows) — treat as outside.
-    return !rel.startsWith("/") && !/^[A-Za-z]:\//.test(rel);
+    if (rel === ".." || rel.startsWith("../")) return false;
+    // An absolute path returned by relative() means the inputs are on
+    // different drives (Windows) or absolute paths on different
+    // volumes — treat as outside. node:path.isAbsolute handles POSIX
+    // "/" and Windows drive letters (C:\, D:/) portably.
+    return !isAbsolute(rel);
   } catch {
     return false;
   }

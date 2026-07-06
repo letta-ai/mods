@@ -143,6 +143,24 @@ describe("isInside — POSIX", () => {
     expect(isInside("/a/b", "/a/b/rules/etc/passwd")).toBe(true);
     expect(isInside("/a/b/rules", "/a/b")).toBe(false);
   });
+
+  // Regression: a previous implementation used `rel.startsWith("..")`
+  // which incorrectly rejected paths containing segments that begin with
+  // two dots but aren't actual traversal (e.g., a file named
+  // `..hidden-config.md` or a directory named `..foo`). The check must
+  // match only the exact `..` or `../...` form.
+  it("accepts paths whose segments start with two dots but are not actual traversal", () => {
+    // Target is a descendant of parent whose name happens to start with ".."
+    expect(isInside("/a/b", "/a/b/..hidden-config.md")).toBe(true);
+    expect(isInside("/a/b", "/a/b/..foo/bar.md")).toBe(true);
+    expect(isInside("/a/b/c", "/a/b/c/..weird-name.md")).toBe(true);
+  });
+
+  it("still rejects actual parent traversal with `..`", () => {
+    expect(isInside("/a/b", "/a/b/../etc/passwd")).toBe(false);
+    expect(isInside("/a/b/c", "/a")).toBe(false);
+    expect(isInside("/a/b/c", "/a/b")).toBe(false);
+  });
 });
 
 describe("isInside — Windows-shaped input", () => {
