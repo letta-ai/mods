@@ -49,7 +49,10 @@ export function parseFrontmatter(content: string): { frontmatter: Frontmatter; b
         .split(",")
         .map((s) => s.trim().replace(/^["']|["']$/g, ""))
         .filter(Boolean);
-    } else if (value.startsWith('"') && value.endsWith('"')) {
+    } else if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     if (key === "type") fm.type = value as string;
@@ -61,7 +64,7 @@ export function parseFrontmatter(content: string): { frontmatter: Frontmatter; b
     else if (key === "trigger-description") fm["trigger-description"] = String(value);
     else if (key === "ttl") {
       const n = Number.parseInt(String(value), 10);
-      fm.ttl = Number.isFinite(n) ? n : undefined;
+      fm.ttl = Number.isFinite(n) && n > 0 ? n : undefined;
     } else if (key === "cacheable") {
       const v = String(value).toLowerCase();
       fm.cacheable = v === "true" || v === "yes" || v === "1";

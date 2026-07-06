@@ -150,6 +150,12 @@ describe("parseFrontmatter — quoted string parsing", () => {
     expect(frontmatter.title).toBe("Quoted Title");
   });
 
+  it("strips surrounding single-quotes", () => {
+    const input = `---\ntitle: 'Quoted Title'\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.title).toBe("Quoted Title");
+  });
+
   it("preserves inner whitespace inside quotes", () => {
     const input = `---\ndescription: "two  spaces  inside"\n---\nbody\n`;
     const { frontmatter } = parseFrontmatter(input);
@@ -184,6 +190,21 @@ describe("parseFrontmatter — numeric and boolean coercion", () => {
 
   it("sets ttl to undefined when value is not a finite integer", () => {
     const input = `---\nttl: not-a-number\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.ttl).toBeUndefined();
+  });
+
+  it("sets ttl to undefined when value is zero", () => {
+    // TTL of 0 would mean "evict immediately on the next turn," which is
+    // not a useful configuration. The parser returns undefined so the
+    // runtime can apply DEFAULT_RULE_TTL (8) instead.
+    const input = `---\nttl: 0\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.ttl).toBeUndefined();
+  });
+
+  it("sets ttl to undefined when value is a negative integer", () => {
+    const input = `---\nttl: -3\n---\nbody\n`;
     const { frontmatter } = parseFrontmatter(input);
     expect(frontmatter.ttl).toBeUndefined();
   });
