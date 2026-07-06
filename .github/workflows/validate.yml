@@ -28,3 +28,42 @@ jobs:
 
       - name: Validate manifests
         run: npm run validate
+
+      # Per-package test + typecheck. Runs only for packages whose
+      # package.json declares a `test` or `typecheck` script. The intent
+      # is to catch regressions in the same CI run that gates publish,
+      # not to require every package to have tests today.
+      - name: Install deps for packages with tests
+        run: |
+          for pkg in packages/*/; do
+            if [ -f "$pkg/package.json" ] && grep -q '"test"\|"typecheck"' "$pkg/package.json"; then
+              echo "Installing in $(basename "$pkg")"
+              (cd "$pkg" && npm install --no-audit --no-fund || exit 1)
+            fi
+          done
+
+      - name: Run typecheck for changed packages
+        run: |
+          failed=0
+          for pkg in packages/*/; do
+            if [ -f "$pkg/package.json" ] && grep -q '"typecheck"' "$pkg/package.json"; then
+              echo "typecheck: $(basename "$pkg")"
+              if ! (cd "$pkg" && npm run typecheck); then
+                failed=1
+              fi
+            fi
+          done
+          exit $failed
+
+      - name: Run tests for changed packages
+        run: |
+          failed=0
+          for pkg in packages/*/; do
+            if [ -f "$pkg/package.json" ] && grep -q '"test"' "$pkg/package.json"; then
+              echo "test: $(basename "$pkg")"
+              if ! (cd "$pkg" && npm test); then
+                failed=1
+              fi
+            fi
+          done
+          exit $failed
