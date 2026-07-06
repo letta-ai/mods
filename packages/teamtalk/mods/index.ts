@@ -28,6 +28,12 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parseFrontmatter, type Frontmatter } from "./lib/frontmatter.ts";
+import { containsSecret } from "./lib/secrets.ts";
+import {
+  formatDisplayPath,
+  isInside,
+  relativePosix,
+} from "./lib/paths.ts";
 
 // ============================================================================
 // Constants
@@ -45,23 +51,6 @@ const SEARCH_MAX_FILE_BYTES = 1_000_000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ASSETS_DIR = join(__dirname, "..", "assets");
-
-// Patterns that signal likely secrets in proposed content.
-// These are intentionally conservative — false positives are
-// preferable to publishing a credential into a team's shared
-// knowledge base. Each pattern's `source` is reported in the
-// refusal message so the caller knows what triggered.
-const SECRET_PATTERNS: RegExp[] = [
-  /AKIA[0-9A-Z]{16}/,                       // AWS access key
-  /sk-[A-Za-z0-9]{20,}/,                   // OpenAI project key
-  /ghp_[A-Za-z0-9]{30,}/,                   // GitHub PAT
-  /xoxb-[A-Za-z0-9-]{10,}/,                 // Slack bot token
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,     // PEM private key
-  /(api[_-]?key|secret|password)\s*[:=]\s*['"][^'"]{8,}/i, // quoted assignment
-  // Unquoted .env-style: KEY=value or KEY="value". Common with
-  // docker-compose, .env files, README secrets, and shell snippets.
-  /\b(?:API_KEY|SECRET|PASSWORD|TOKEN|ACCESS_KEY|PRIVATE_KEY)\s*[:=]\s*\S{8,}/i,
-];
 
 // ============================================================================
 // Types
@@ -445,7 +434,7 @@ function keywordSearch(bundleDir: string, query: string, limit: number): Concept
       if (haystack.includes(token)) score += 1;
     }
     if (score === 0) continue;
-    const conceptId = relative(bundleDir, file.path).replace(/\.md$/, "");
+    const conceptId = relativePosix(bundleDir, file.path).replace(/\.md$/, "");
     const titleMatch = body.match(/^#\s+(.+)/m);
     const snippet = body.slice(0, 240).replace(/\s+/g, " ").trim();
     scored.push({
@@ -542,36 +531,8 @@ function dlog(line: string): void {
 }
 
 // ============================================================================
-// Secret detection
-// ============================================================================
-
-function containsSecret(text: string): string | null {
-  for (const pattern of SECRET_PATTERNS) {
-    if (pattern.test(text)) return pattern.source;
-  }
-  return null;
-}
-
-// ============================================================================
 // Status formatting
 // ============================================================================
-
-function formatDisplayPath(absolutePath: string, cwd: string): string {
-  // Always prefer ~/-prefix for paths under $HOME, regardless of cwd.
-  // This gives consistent display in /teamtalk status and /teamtalk debug.
-  const home = process.env.HOME || homedir();
-  if (home && absolutePath.startsWith(home + "/")) {
-    return "~/" + absolutePath.slice(home.length + 1);
-  }
-  // Fall back to relative-to-cwd for paths outside $HOME.
-  try {
-    const rel = relative(cwd, absolutePath);
-    if (rel && !rel.startsWith("..")) return rel;
-  } catch {
-    // fall through
-  }
-  return absolutePath;
-}
 
 function formatStatus(state: TeamTalkState, cwd: string): string {
   const lines: string[] = [];
@@ -795,7 +756,7 @@ function renderAlwaysOnSection(
   for (const f of files) {
     const { frontmatter, body } = parseFrontmatter(f.content);
     if (frontmatter.type !== "Rule") continue;
-    const relPath = relative(bundleDir, f.path).replace(/\.md$/, "");
+    const relPath = relativePosix(bundleDir, f.path).replace(/\.md$/, "");
     const heading = body.match(/^#\s+(.+)/m);
     entries.push({
       relPath,
@@ -845,7 +806,7 @@ function renderTriggerCatalogSection(
     const { frontmatter, body } = parseFrontmatter(f.content);
     if (frontmatter.type !== "Rule") continue;
     if (!frontmatter.trigger) continue;
-    const relPath = relative(bundleDir, f.path).replace(/\.md$/, "");
+    const relPath = relativePosix(bundleDir, f.path).replace(/\.md$/, "");
     const heading = body.match(/^#\s+(.+)/m);
     entries.push({
       trigger: frontmatter.trigger,
@@ -1786,8 +1747,9 @@ export default function activate(letta: any) {
           }
           const targetFile = join(memDir, proposedPath);
           // Path traversal guard: the resolved file must be inside
-          // the bundle directory.
-          if (!targetFile.startsWith(bundleDir + "/") && targetFile !== bundleDir) {
+          // the bundle directory. We use isInside (relative-based) so
+          // Windows backslash separators don't fool a startsWith check.
+          if (!isInside(bundleDir, targetFile)) {
             return {
               status: "error",
               content: `Refused: proposed_path resolves outside the team/ bundle (${targetFile}).`,
