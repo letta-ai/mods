@@ -79,7 +79,7 @@ Optional: name the agent something other than the default:
 ## 4. Create the steward agent (confirmed)
 
 ```
-/teamtalk init --name George --confirm
+/teamtalk init --name my-team-steward --confirm
 ```
 
 What this does:
@@ -106,7 +106,7 @@ Successful output looks like:
 ```
 # TeamTalk steward created
 
-- Agent: George (agent-aa340af3-...)
+- Agent: my-team-steward (agent-XXXXXXXX)
 - Tagged: teamtalk-steward
 - Verified: retrieve succeeded
 - MemFS dir: ~/.letta/agents/agent-aa340af3-.../memory (present)
@@ -129,7 +129,7 @@ Expected:
 ```
 # TeamTalk status
 
-- Steward agent: George (agent-aa340af3-...)
+- Steward agent: my-team-steward (agent-XXXXXXXX)
 - Local MemFS dir: ~/.letta/agents/agent-aa340af3-.../memory
 - OKF bundle: ~/.letta/agents/agent-aa340af3-.../memory/team
 - Rules file: ~/.letta/agents/agent-aa340af3-.../memory/system/rules.md

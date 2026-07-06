@@ -69,7 +69,7 @@ See [`GETTING_STARTED.md`](./GETTING_STARTED.md) for the full manual
 workflow. Short version:
 
 ```
-/teamtalk init --name George --confirm   # create steward agent in your org
+/teamtalk init --name my-team-steward --confirm   # create steward agent in your org
                                          # (also materializes local MemFS clone
                                          #  via background `letta --agent`)
 /teamtalk status                          # confirm binding + paths
@@ -158,7 +158,7 @@ The mod persists a small state file at `~/.letta/mods/teamtalk.state.json`:
 ```json
 {
   "stewardAgentId": "agent-XXXXXXXX",
-  "stewardAgentName": "George",
+  "stewardAgentName": "my-team-steward",
   "lastSyncAt": "2026-07-04T12:37:00.000Z",
   "bundlePath": "/Users/you/.letta/agents/agent-XXXXXXXX/memory/team"
 }
