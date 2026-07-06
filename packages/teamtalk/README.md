@@ -131,9 +131,19 @@ calls `letta memory pull --agent <id>` as a fallback.
 
 - `teamtalk_search(query, limit?)` — keyword search over markdown files
   in the steward's OKF bundle. Read-only, parallel-safe.
-- `teamtalk_propose(type, title, proposed_path, body, tags?)` — send a
-  `PROPOSE_NEW_CONCEPT` message to the steward. Requires approval;
-  the steward may reject.
+- `teamtalk_propose(type, title, proposed_path, body, tags?)` — write
+  the concept directly to the steward's MemFS (in Letta Code 0.27.x
+  the steward has no file-write tools), then commit via `git`. Enforces
+  OKF conformance and no-secrets in the mod. Refuses if any unrelated
+  dirty file is in the steward's MemFS.
+- `teamtalk_load_rule(trigger)` — load a triggered rule's full body
+  into the calling agent's session cache. Triggered rules live under
+  `team/rules/events/` and have `trigger: <name>` plus a
+  `trigger-description` field in frontmatter; the always-on reminder
+  lists them as a catalog without their bodies. The body persists for
+  the rule's TTL (default 8 turns of inactivity), reset on every load,
+  search hit, or keyword match. Use when the catalog says the rule
+  applies to your current task.
 
 ## Events
 
@@ -181,6 +191,36 @@ LETTA_DISABLE_MODS=1 letta
 
 See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.
 
+## Triggered rules (dynamic loading)
+
+Rules under `team/rules/events/` are not always-on — only their
+**trigger description** is rendered into the always-on reminder as a
+catalog. The model decides whether to load each rule's body via
+`teamtalk_load_rule(trigger)`. A loaded rule's body persists for the
+rule's `ttl` turns of activity-reset inactivity (default 8). Activity
+sources that reset the TTL: an explicit `teamtalk_load_rule` call, a
+`teamtalk_search` hit on the rule, or a `turn_start` keyword match
+against the trigger description.
+
+Frontmatter shape for triggered rules:
+
+```yaml
+---
+type: Rule
+title: Reply Individually to PR Review Comments
+trigger: pr-review
+trigger-description: You are addressing pull-request review feedback — see the always-on reminder for full conditions.
+ttl: 12
+cacheable: true
+tags: [communication, github]
+---
+# rule body
+```
+
+Multi-line block scalars (`|`, `>`) are not supported by the mod's
+frontmatter reader — keep every frontmatter value on one line. Use the
+markdown body for longer prose.
+
 ## Limitations
 
 - **Keyword search only.** `teamtalk_search` is keyword-based over
@@ -192,15 +232,16 @@ See [`MOD.md`](./MOD.md) for the agent-facing behavioral contract.
   `npm:@letta-ai/memfs-search` separately; TeamTalk does not
   currently delegate to it.
 - **Requires the `letta` CLI to be on PATH.** The mod shells out to
-  `letta agents create`, `letta --agent`, and `letta memory pull`
-  during init and reseed. The Desktop listener loads provider-only mods
-  anyway, so this does not affect Desktop, but headless installs
-  without the CLI are unsupported.
+  `letta agents create` and `letta --agent` during init. The Desktop
+  listener loads provider-only mods anyway, so this does not affect
+  Desktop, but headless installs without the CLI are unsupported.
 - **Cloud OAuth path only.** Self-hosted deployments using API keys
   are not explicitly tested.
 - No permission overlay for non-maintainer writes. Anyone with org
   access can propose; gating is the steward's job via its persona.
-- Project-scoped rule triggering is out of scope for v1.
+- The mod's frontmatter reader is single-pass and doesn't understand
+  YAML block scalars (`|` and `>`). Authors must keep every
+  frontmatter value on a single line.
 
 ## License
 
