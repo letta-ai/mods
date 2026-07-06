@@ -208,7 +208,14 @@ type TriggeredRuleEntry = {
   contentHash: string;
 };
 
-let sessionTurn = 0;
+// Per-agent turn counter. The previous design used a single global
+// sessionTurn counter incremented on every turn_start; a side-effect
+// review (Gemini on PR #2, comment 3528283307) flagged this as
+// unsafe — in a multi-agent or multi-conversation Letta Code
+// process, one agent's turns would prematurely evict another agent's
+// loaded rules. We now key the counter per agent_id and read with
+// getAgentTurn(agentId).
+const agentTurns = new Map<string, number>();
 const sessionCache = new Map<string, Map<string, TriggeredRuleEntry>>(); // agent_id -> trigger -> entry
 
 const DEFAULT_RULE_TTL = 8;
@@ -235,14 +242,31 @@ function getOrInitAgentCache(agentId: string): Map<string, TriggeredRuleEntry> {
   return m;
 }
 
+function getAgentTurn(agentId: string): number {
+  return agentTurns.get(agentId) ?? 0;
+}
+
+function incrementAgentTurn(agentId: string): number {
+  const next = (agentTurns.get(agentId) ?? 0) + 1;
+  agentTurns.set(agentId, next);
+  return next;
+}
+
 function evictExpired(agentId: string, currentTurn: number): void {
   const m = sessionCache.get(agentId);
   if (!m) return;
   for (const [trigger, entry] of m.entries()) {
-    if (currentTurn - entry.lastActivityTurn > entry.ttl) {
+    // Strict off-by-one: a rule with ttl=N persists through N turns
+    // of inactivity and is evicted on turn N+1.
+    if (currentTurn - entry.lastActivityTurn >= entry.ttl) {
       m.delete(trigger);
       dlog(`evicted expired rule: ${trigger} (last activity turn ${entry.lastActivityTurn}, current ${currentTurn})`);
     }
+  }
+  // If the agent now has no cached rules, drop the agent's outer-map
+  // entry to avoid a slow leak across many conversations.
+  if (m.size === 0) {
+    sessionCache.delete(agentId);
   }
 }
 
@@ -278,7 +302,7 @@ function loadTriggeredRuleByName(
     const { frontmatter, body } = parseFrontmatter(f.content);
     if (frontmatter.type !== "Rule") continue;
     if (frontmatter.trigger !== trigger) continue;
-    const ttl = typeof frontmatter.ttl === "number" ? frontmatter.ttl : DEFAULT_RULE_TTL;
+    const ttl = typeof frontmatter.ttl === "number" && frontmatter.ttl > 0 ? frontmatter.ttl : DEFAULT_RULE_TTL;
     const rulePath = relative(bundleDir, f.path).replace(/\\/g, "/");
     const entry: TriggeredRuleEntry = {
       trigger,
@@ -1628,7 +1652,7 @@ export default function activate(letta: any) {
                 if (frontmatter.trigger) {
                   const m = sessionCache.get(agentId);
                   if (m?.has(frontmatter.trigger)) {
-                    markActivity(agentId, frontmatter.trigger, sessionTurn);
+                    markActivity(agentId, frontmatter.trigger, getAgentTurn(agentId));
                   }
                 }
               } catch {
@@ -1678,7 +1702,7 @@ export default function activate(letta: any) {
           if (!trigger) {
             return { status: "error", content: "trigger is required" };
           }
-          const result = loadTriggeredRuleByName(state, agentId, trigger, sessionTurn);
+          const result = loadTriggeredRuleByName(state, agentId, trigger, getAgentTurn(agentId));
           if ("error" in result) {
             return { status: "error", content: result.error };
           }
@@ -2016,10 +2040,10 @@ export default function activate(letta: any) {
         const state = readState();
         if (!state.stewardAgentId) return;
         const agentId = (event?.agentId as string) || (event?.conversationId as string) || null;
-        sessionTurn += 1;
         if (agentId) {
-          evictExpired(agentId, sessionTurn);
-          detectTriggerMatches(event.input, agentId, sessionTurn);
+          const currentTurn = incrementAgentTurn(agentId);
+          evictExpired(agentId, currentTurn);
+          detectTriggerMatches(event.input, agentId, currentTurn);
         }
         const reminder = buildRulesReminder(state, agentId, null);
         if (!reminder) return;
