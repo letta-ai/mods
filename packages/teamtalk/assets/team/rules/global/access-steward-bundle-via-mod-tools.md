@@ -41,7 +41,7 @@ All four return `Permission denied by cross-agent memory guard` because Letta Co
 - **Right**: From a user-agent, "What does our clean-up-after-pr-merge rule say?" → call `teamtalk_search clean up after pr merge` → use the returned snippet to answer.
 - **Right**: Want to inspect the steward's `team/log.md` directly → `Bash cat ~/.letta/agents/<steward-id>/memory/team/log.md`.
 - **Right**: Want to add a rule to the team bundle → call `teamtalk_propose` with the new concept's metadata; the mod validates and writes through.
-- **Wrong**: `Read ~/.letta/agents/agent-aa340af3-.../memory/team/rules/global/clean-up-after-pr-merge.md` from a user-agent — blocked by cross-agent memory guard.
+- **Wrong**: `Read ~/.letta/agents/<steward-id>/memory/team/rules/global/clean-up-after-pr-merge.md` from a user-agent — blocked by cross-agent memory guard.
 
 # Trigger conditions for loading this rule
 
