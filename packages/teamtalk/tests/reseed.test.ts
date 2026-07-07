@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-type Decision = "copied" | "skipped" | "errored";
+type Decision = "copied" | "skipped";
 
 // Replicates the loop in mods/index.ts:handleInit --reseed branch.
 // Returns a per-file decision so we can assert on the simulated
@@ -24,16 +24,16 @@ function planReseed(srcDir: string, dstDir: string, assetFiles: string[]): Recor
   const out: Record<string, Decision> = {};
   for (const rel of assetFiles) {
     const dst = join(dstDir, rel);
+    if (existsSync(dst)) {
+      out[rel] = "skipped";
+      continue;
+    }
     try {
       mkdirSync(join(dstDir, rel, ".."), { recursive: true });
-      if (existsSync(dst)) {
-        out[rel] = "skipped";
-        continue;
-      }
-      out[rel] = "copied";
     } catch {
-      out[rel] = "errored";
+      continue;
     }
+    out[rel] = "copied";
   }
   return out;
 }

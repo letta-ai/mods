@@ -1024,28 +1024,36 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     for (const rel of assetFiles) {
       const src = join(ASSETS_DIR, "team", rel);
       const dst = join(bundleDir, rel);
+      // Skip-if-exists: the team's corpus has rules that were
+      // proposed via teamtalk_propose and live only in the
+      // steward's MemFS (not in the asset bundle). Overwriting
+      // them on a reseed would erase the team's accumulated
+      // rules. Reseed only fills in *missing* files; if the
+      // destination already exists (whether shipped or
+      // proposed), leave it alone.
+      if (existsSync(dst)) {
+        skippedFiles.push(rel);
+        dlog(`reseed: skipping existing ${rel}`);
+        continue;
+      }
+      // Per-file mkdir + copy errors are non-fatal in reseed —
+      // we'd rather report partial success than crash. We split
+      // the two operations into separate try-catch blocks so the
+      // debug log distinguishes "directory creation failed"
+      // from "copy failed".
       try {
         mkdirSync(dirname(dst), { recursive: true });
-        // Skip-if-exists: the team's corpus has rules that were
-        // proposed via teamtalk_propose and live only in the
-        // steward's MemFS (not in the asset bundle). Overwriting
-        // them on a reseed would erase the team's accumulated
-        // rules. Reseed only fills in *missing* files; if the
-        // destination already exists (whether shipped or
-        // proposed), leave it alone.
-        if (existsSync(dst)) {
-          skippedFiles.push(rel);
-          dlog(`reseed: skipping existing ${rel}`);
-          continue;
-        }
+      } catch (err: any) {
+        seedErrors.push(`${rel}: mkdir failed: ${err?.message || err}`);
+        dlog(`reseed: failed to create directory for ${rel}: ${err?.message || err}`);
+        continue;
+      }
+      try {
         copyFileSync(src, dst);
         seededFiles += 1;
       } catch (err: any) {
-        // Per-file permission/disk errors are non-fatal in reseed
-        // (we'd rather report partial success than crash). Surface
-        // them in the final message but keep going.
-        seedErrors.push(`${rel}: ${err?.message || String(err)}`);
-        dlog(`reseed copy failed for ${rel}: ${err?.message || err}`);
+        seedErrors.push(`${rel}: copy failed: ${err?.message || err}`);
+        dlog(`reseed: copy failed for ${rel}: ${err?.message || err}`);
       }
     }
     if (seedErrors.length > 0) {
