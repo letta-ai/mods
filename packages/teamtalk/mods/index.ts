@@ -716,14 +716,14 @@ function handleStatus(cwd: string): string {
 // Rules rendering (turn_start injection source)
 // ============================================================================
 
-function renderRulesFile(bundleDir: string): string {
+function renderRulesFile(bundleDir: string, audience: "user-agents" | "steward" = "user-agents"): string {
   // Build the system/rules.md content. Three sections, top to bottom:
-  //   1. Always-on rules from team/rules/global/
+  //   1. Always-on rules from team/rules/global/  (audience-filtered)
   //   2. Triggered-rule catalog from team/rules/events/  (descriptions only)
   //   3. (Loaded dynamic rules are appended at turn_start, not here, so
   //      we don't dirty the steward's git repo on every turn.)
   const lines: string[] = [];
-  const globalLines = renderAlwaysOnSection(bundleDir, "rules/global");
+  const globalLines = renderAlwaysOnSection(bundleDir, "rules/global", audience);
   if (globalLines) lines.push(globalLines);
   const catalogLines = renderTriggerCatalogSection(bundleDir, "rules/events");
   if (catalogLines) lines.push(catalogLines);
@@ -745,9 +745,25 @@ function wrapSystemReminderBody(body: string): string {
   ].join("\n");
 }
 
+// True if a rule declared with audience=`ruleAudience` should appear in
+// the reminder for an agent running with audience=`readerAudience`.
+//
+//   - ruleAudience "all"        → visible to everyone.
+//   - ruleAudience "user-agents" → visible only to user-agents
+//                                  (default reminder consumer).
+//   - ruleAudience "steward"    → visible only to the steward.
+//
+// A rule whose audience is unset is treated as "all" (see
+// renderAlwaysOnSection).
+function audienceMatches(ruleAudience: string, readerAudience: "user-agents" | "steward"): boolean {
+  if (ruleAudience === "all") return true;
+  return ruleAudience === readerAudience;
+}
+
 function renderAlwaysOnSection(
   bundleDir: string,
   rulesRelDir: string,
+  audience: "user-agents" | "steward" = "user-agents",
 ): string {
   const rulesDir = join(bundleDir, rulesRelDir);
   if (!existsSync(rulesDir)) return "";
@@ -756,6 +772,11 @@ function renderAlwaysOnSection(
   for (const f of files) {
     const { frontmatter, body } = parseFrontmatter(f.content);
     if (frontmatter.type !== "Rule") continue;
+    // Audience filter: a rule's audience frontmatter controls which
+    // agents see it in their always-on reminder. Defaults to "all"
+    // (audience unset == everyone).
+    const ruleAudience = frontmatter.audience ?? "all";
+    if (!audienceMatches(ruleAudience, audience)) continue;
     const relPath = relativePosix(bundleDir, f.path).replace(/\.md$/, "");
     const heading = body.match(/^#\s+(.+)/m);
     entries.push({
@@ -1952,6 +1973,15 @@ export default function activate(letta: any) {
         const state = readState();
         if (!state.stewardAgentId) return;
         const agentId = (event?.agentId as string) || (event?.conversationId as string) || null;
+        if (agentId === state.stewardAgentId) {
+          // The steward is its own agent in this process — its session
+          // has the mod attached, but it shouldn't see the user-agent-
+          // shaped reminder. The steward reads its corpus directly via
+          // MemFS; reminding it to call teamtalk_search would push it
+          // toward the wrong tool surface. Skip the reminder and let
+          // the steward's persona govern behavior.
+          return;
+        }
         if (agentId) {
           const currentTurn = incrementAgentTurn(agentId);
           evictExpired(agentId, currentTurn);

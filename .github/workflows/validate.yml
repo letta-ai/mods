@@ -26,6 +26,16 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup Bun
+        # Some packages in the monorepo use bun as their test
+        # runtime (e.g. muscle-memory's `bun test test/`). Setup Bun
+        # unconditionally — it's a no-op for packages that don't
+        # use it, and the ~5s install is cheaper than per-package
+        # detection logic.
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Validate manifests
         run: npm run validate
 

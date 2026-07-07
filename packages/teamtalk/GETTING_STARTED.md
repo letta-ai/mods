@@ -109,9 +109,9 @@ Successful output looks like:
 - Agent: my-team-steward (agent-XXXXXXXX)
 - Tagged: teamtalk-steward
 - Verified: retrieve succeeded
-- MemFS dir: ~/.letta/agents/agent-aa340af3-.../memory (present)
+- MemFS dir: ~/.letta/agents/agent-XXXXXXXX/memory (present)
 - Seeded 9 bundle files.
-- Wrote 3 rules to ~/.letta/agents/agent-aa340af3-.../memory/system/rules.md
+- Wrote 3 rules to ~/.letta/agents/agent-XXXXXXXX/memory/system/rules.md
 ```
 
 If the local clone didn't land within 5 seconds, you'll see "not yet
@@ -130,9 +130,9 @@ Expected:
 # TeamTalk status
 
 - Steward agent: my-team-steward (agent-XXXXXXXX)
-- Local MemFS dir: ~/.letta/agents/agent-aa340af3-.../memory
-- OKF bundle: ~/.letta/agents/agent-aa340af3-.../memory/team
-- Rules file: ~/.letta/agents/agent-aa340af3-.../memory/system/rules.md
+- Local MemFS dir: ~/.letta/agents/agent-XXXXXXXX/memory
+- OKF bundle: ~/.letta/agents/agent-XXXXXXXX/memory/team
+- Rules file: ~/.letta/agents/agent-XXXXXXXX/memory/system/rules.md
 - Concepts in bundle: 3
 - Last sync: 2026-07-04T12:37:00.000Z
 ```

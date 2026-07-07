@@ -4,6 +4,7 @@ title: Access the Steward Bundle via Mod Tools
 description: The steward agent's OKF bundle lives in its own MemFS. From any user-agent session in the same Letta Code process, the harness blocks Read/Write/Glob/Grep/Edit against that path. Use the TeamTalk mod's tools (teamtalk_search, teamtalk_load_rule, teamtalk_propose) or Bash instead.
 tags: [architecture, agent-coordination, file-access]
 timestamp: 2026-07-06T14:00:00.000Z
+audience: user-agents
 ---
 
 # Access the Steward Bundle via Mod Tools
@@ -40,7 +41,7 @@ All four return `Permission denied by cross-agent memory guard` because Letta Co
 - **Right**: From a user-agent, "What does our clean-up-after-pr-merge rule say?" → call `teamtalk_search clean up after pr merge` → use the returned snippet to answer.
 - **Right**: Want to inspect the steward's `team/log.md` directly → `Bash cat ~/.letta/agents/<steward-id>/memory/team/log.md`.
 - **Right**: Want to add a rule to the team bundle → call `teamtalk_propose` with the new concept's metadata; the mod validates and writes through.
-- **Wrong**: `Read ~/.letta/agents/agent-aa340af3-.../memory/team/rules/global/clean-up-after-pr-merge.md` from a user-agent — blocked by cross-agent memory guard.
+- **Wrong**: `Read ~/.letta/agents/<steward-id>/memory/team/rules/global/clean-up-after-pr-merge.md` from a user-agent — blocked by cross-agent memory guard.
 
 # Trigger conditions for loading this rule
 
