@@ -1020,11 +1020,24 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
     const seedErrors: string[] = [];
+    const skippedFiles: string[] = [];
     for (const rel of assetFiles) {
       const src = join(ASSETS_DIR, "team", rel);
       const dst = join(bundleDir, rel);
       try {
         mkdirSync(dirname(dst), { recursive: true });
+        // Skip-if-exists: the team's corpus has rules that were
+        // proposed via teamtalk_propose and live only in the
+        // steward's MemFS (not in the asset bundle). Overwriting
+        // them on a reseed would erase the team's accumulated
+        // rules. Reseed only fills in *missing* files; if the
+        // destination already exists (whether shipped or
+        // proposed), leave it alone.
+        if (existsSync(dst)) {
+          skippedFiles.push(rel);
+          dlog(`reseed: skipping existing ${rel}`);
+          continue;
+        }
         copyFileSync(src, dst);
         seededFiles += 1;
       } catch (err: any) {
@@ -1088,6 +1101,9 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       `- MemFS dir: ${memDir}`,
       `- OKF bundle: ${bundleDir}`,
       `- Seeded ${seededFiles} files.`,
+      skippedFiles.length > 0
+        ? `- Skipped ${skippedFiles.length} existing files (skip-if-exists): ${skippedFiles.join(", ")}.`
+        : "",
       rulesNote ? `- ${rulesNote}` : "",
       personaNote ? `- ${personaNote}` : "",
       toolsNote ? `- ${toolsNote}` : "",
