@@ -54,7 +54,7 @@ Examples age. A rule whose example references a skill that was renamed, a path t
 
 ## Use placeholder names in examples
 
-Examples that include real-looking data should use placeholder convention (`my-team-steward`, `<steward-id>`, `agent-XXXXXXXX`, `MY_TOKEN_VAR`). Real agent IDs, real paths under `/Users/luis/`, and real secret values should not appear in shipped docs. The reader will mistake the example for an instruction.
+Examples that include real-looking data should use placeholder convention (`my-team-steward`, `<steward-id>`, `agent-XXXXXXXX`, `MY_TOKEN_VAR`). Real agent IDs, real paths under user home directories (e.g., `~/`), and real secret values should not appear in shipped docs. The reader will mistake the example for an instruction.
 
 # How to retire a rule
 

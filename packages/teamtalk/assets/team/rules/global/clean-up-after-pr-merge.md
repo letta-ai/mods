@@ -24,8 +24,8 @@ Immediately after any pull request is merged, before starting the next piece of 
    git pull --rebase
    ```
 
-3. **Remove the local branch or worktree.**
-   - If the PR used a worktree: `git worktree remove <path>`. The Letta Code `EnterWorktree` tool creates worktrees under `.letta/worktrees/`.
+3. **Remove the worktree (if any) AND the local branch.**
+   - If the PR used a worktree: `git worktree remove <path>` (the Letta Code `EnterWorktree` tool creates worktrees under `.letta/worktrees/`), then `git branch -d <branch>` to delete the now-orphaned branch ref. Worktrees and branches are independent: removing the worktree directory does not delete the branch, and vice versa.
    - If the PR used a plain branch: `git branch -d <branch>` (lowercase `-d` so it only deletes if fully merged).
    - **Never use `-D`** unless you're certain the branch is unrecoverable — `-D` force-deletes even unmerged branches.
 

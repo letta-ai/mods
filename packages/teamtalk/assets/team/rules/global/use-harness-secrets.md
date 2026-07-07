@@ -21,7 +21,7 @@ The harness wires up two categories of variables differently. Conflating them pr
 To determine whether a harness-managed secret is configured, use these checks in order:
 
 1. The `/secret list` slash command is canonical. It returns the exact set of secrets the harness has wired up and which `$NAME` to use in commands.
-2. An `echo "$SECRET_NAME"` printing `NAME=<REDACTED>` proves configuration. The harness substituted a value and redacted it. A truly missing secret expands to an empty string.
+2. An `echo "$SECRET_NAME"` printing `<REDACTED>` proves configuration. The harness substituted a value and redacted it. A truly missing secret expands to an empty string.
 3. `env | grep` does NOT prove configuration. Harness-managed secrets are not exposed as live env vars. Concluding the secret is missing from `env | grep` is a recurring failure mode that produces wrong conclusions.
 
 ## The canonical recipe for tools that read `process.env`
