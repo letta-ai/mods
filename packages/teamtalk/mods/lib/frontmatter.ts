@@ -27,6 +27,11 @@ export type Frontmatter = {
   "trigger-description"?: string;
   ttl?: number | string;
   cacheable?: boolean | string;
+  // Audience scope for rule injection. Rules that should appear in
+  // the always-on reminder for every agent leave this unset (or set
+  // to "all"). Rules that only apply to a subset of agents set it
+  // explicitly. The renderer filters by audience.
+  audience?: "all" | "user-agents" | "steward";
 };
 
 export function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
@@ -68,6 +73,14 @@ export function parseFrontmatter(content: string): { frontmatter: Frontmatter; b
     } else if (key === "cacheable") {
       const v = String(value).toLowerCase();
       fm.cacheable = v === "true" || v === "yes" || v === "1";
+    } else if (key === "audience") {
+      // Whitelist the allowed values. Anything else falls back to
+      // "all" so a typo doesn't silently hide a rule from the
+      // rendered reminder.
+      const v = String(value).toLowerCase();
+      if (v === "user-agents" || v === "steward" || v === "all") {
+        fm.audience = v;
+      }
     }
   }
   return { frontmatter: fm, body };

@@ -4,6 +4,7 @@ title: Access the Steward Bundle via Mod Tools
 description: The steward agent's OKF bundle lives in its own MemFS. From any user-agent session in the same Letta Code process, the harness blocks Read/Write/Glob/Grep/Edit against that path. Use the TeamTalk mod's tools (teamtalk_search, teamtalk_load_rule, teamtalk_propose) or Bash instead.
 tags: [architecture, agent-coordination, file-access]
 timestamp: 2026-07-06T14:00:00.000Z
+audience: user-agents
 ---
 
 # Access the Steward Bundle via Mod Tools

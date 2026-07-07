@@ -269,3 +269,38 @@ describe("parseFrontmatter — dotted/hyphenated keys", () => {
     expect((frontmatter as Record<string, unknown>)["fictional"]).toBeUndefined();
   });
 });
+
+describe("parseFrontmatter — audience", () => {
+  it("parses audience: user-agents", () => {
+    const input = `---\naudience: user-agents\ntype: Rule\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.audience).toBe("user-agents");
+  });
+
+  it("parses audience: steward", () => {
+    const input = `---\naudience: steward\ntype: Rule\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.audience).toBe("steward");
+  });
+
+  it("parses audience: all", () => {
+    const input = `---\naudience: all\ntype: Rule\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.audience).toBe("all");
+  });
+
+  it("leaves audience undefined when omitted", () => {
+    const input = `---\ntype: Rule\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.audience).toBeUndefined();
+  });
+
+  it("rejects unrecognized audience values (no silent fallback)", () => {
+    // A typo like `audience: useragent` (no dash) should NOT be
+    // silently coerced to "user-agents" — the renderer would
+    // then either hide or show the rule based on the wrong scope.
+    const input = `---\naudience: useragent\n---\nbody\n`;
+    const { frontmatter } = parseFrontmatter(input);
+    expect(frontmatter.audience).toBeUndefined();
+  });
+});
