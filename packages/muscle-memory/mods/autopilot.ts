@@ -341,6 +341,12 @@ export function isAmbiguousExistingRoute<T extends { name: string; score: number
 // out-ranked every canary reference passage, at any rank in the window; an uncalibrated window
 // trusts only rank 0 — "nearest" is meaningless without a relevance floor, and top_k always
 // returns something. Pure; MM_NATIVE off → no-op.
+// DERIVATION (review note): these bonuses are calibrated against the lexical scorer's
+// SUSPECT_MIN threshold (score >= 8 with matched terms). rank-0 (+12) lifts a borderline
+// lexical candidate (score 4-7) decisively past threshold; rank-1 (+6) lifts only near-misses;
+// rank-2 (+3) can corroborate but never carry alone. If the lexical scoring scale changes,
+// re-derive: bonus[0] should exceed (SUSPECT_MIN - typical_borderline_score); the routing eval
+// (test/routing.eval.ts, CI-gated) is the tripwire — B-class cases fail if these miscalibrate.
 export const SEMANTIC_RANK_BONUS = [12, 6, 3] as const;
 
 export type SemanticFn = (query: string, k: number) => Promise<SemanticSkillHit[]>;

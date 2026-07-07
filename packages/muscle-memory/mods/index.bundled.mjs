@@ -2084,7 +2084,7 @@ async function syncSkillPassages(client, agentId, managed) {
   if (search && del) {
     try {
       const live = new Set([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
-      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 100 });
+      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 });
       if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
         for (const r of all.results) {
           if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string")

@@ -343,6 +343,10 @@ export type SemanticSkillHit = {
   /** Rank-to-relevance calibration: true when this hit out-ranked EVERY canary reference passage
    * in the same search window; false when at least one canary beat it; undefined when the window
    * carried no canary (uncalibrated — consumers must fall back to rank-0-only trust). */
+  /** THREE-VALUED, load-bearing (review note): true = beat the canary floor (calibrated,
+   * trustworthy) · false = below the floor (calibrated, reject) · KEY ABSENT = the window was
+   * uncalibrated (no canary present) and callers must treat trust as unknown, not false.
+   * Do NOT add a default value here — `"aboveCanary" in hit` checks depend on absence. */
   aboveCanary?: boolean;
 };
 
@@ -454,6 +458,10 @@ export async function syncSkillPassages(client: unknown, agentId: string | null 
       if (search && del) {
         const prior: unknown = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
         if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
+          // review note: this optimization DEPENDS on the search API returning passage text
+          // (passageText reads .text/.content). If the API stops returning text, passageText
+          // yields "" and skip stays false — behavior degrades CORRECTLY but quietly to the
+          // old delete+create round-trip. If sync volume ever spikes, check this first.
           skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text; // unchanged → no round-trip
           if (!skip) {
             for (const r of prior.results) { if (r && typeof r === "object" && "id" in r && typeof r.id === "string") await del(r.id, { agent_id: agentId }); }
@@ -468,7 +476,9 @@ export async function syncSkillPassages(client: unknown, agentId: string | null 
   if (search && del) {
     try {
       const live = new Set<string>([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
-      const all: unknown = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 100 });
+      const all: unknown = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 }); // review note: was 100 — a shelf past the cap would let stale
+      // passages survive reconciliation silently. 500 covers any realistic shelf (~10 passages/skill
+      // headroom); TODO(pagination): page the sweep if shelves ever approach this.
       if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
         for (const r of all.results) {
           if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string") continue;
