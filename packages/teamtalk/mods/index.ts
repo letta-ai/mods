@@ -1159,68 +1159,58 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     };
     dlog(`init start: name=${name}`);
 
-    // Use the letta CLI to create the agent. The CLI sets up MemFS,
-    // pre-populates persona.md, and applies the right tags automatically.
-    // The SDK path (letta.client.agents.create) does NOT do this — it
-    // creates a half-baked agent with no local clone.
-    const { execFile: execFileCb } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFileCb);
-    const tagsArg = `${STEWARD_TAG},git-memory-enabled`;
+    // Create the agent via the Letta SDK. The mod runtime exposes the
+    // same `letta.client` surface used elsewhere in this file, so we
+    // don't need to shell out to the `letta` CLI. The agent is created
+    // with our steward tags from the start, and we overwrite the
+    // persona block with our steward content below (the CLI's --pinned
+    // pre-populates a default Letta Code persona; the SDK path doesn't,
+    // so the explicit overwrite is required either way).
+    const tags = [STEWARD_TAG, "git-memory-enabled"];
     const modelHandle = process.env.TEAMTALK_STEWARD_MODEL || "letta/auto";
-    let cliStdout = "";
-    let cliStderr = "";
-    try {
-      const result = await execFileAsync(
-        "letta",
-        [
-          "agents", "create",
-          "--name", name,
-          "--tags", tagsArg,
-          "--model", modelHandle,
-          "--pinned",
-          "--description", "TeamTalk organizational memory steward",
-        ],
-        { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 },
-      );
-      cliStdout = result.stdout;
-      cliStderr = result.stderr;
-      dlog(`letta agents create OK, ${cliStdout.length} bytes stdout`);
-    } catch (err: any) {
-      cliStderr = err?.stderr || err?.message || String(err);
-      cliStdout = err?.stdout || "";
-      dlog(`letta agents create FAILED: ${cliStderr.slice(0, 500)}`);
-      return [
-        "# TeamTalk init FAILED",
-        "",
-        `\`letta agents create\` failed: ${cliStderr.slice(0, 500)}`,
-        "",
-        "The mod requires the letta CLI to be on PATH. Verify with `which letta`.",
-        "Debug log: ~/.letta/mods/teamtalk-debug.log",
-      ].join("\n");
-    }
-
-    // Parse the agent id from the JSON output.
     let candidateId: string | null = null;
     try {
-      const parsed = JSON.parse(cliStdout);
-      candidateId = parsed?.id || null;
-    } catch {
-      const m = cliStdout.match(/"id":\s*"(agent-[0-9a-f-]+)"/);
-      if (m) candidateId = m[1];
-    }
-    if (!candidateId || !candidateId.startsWith("agent-")) {
-      dlog(`could not parse agent id from CLI output`);
+      const created = await letta.client.agents.create({
+        name,
+        tags,
+        model: modelHandle,
+        description: "TeamTalk organizational memory steward",
+      });
+      candidateId = created?.id ?? null;
+      dlog(`letta.client.agents.create OK, id=${candidateId}`);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dlog(`letta.client.agents.create FAILED: ${msg.slice(0, 500)}`);
       return [
         "# TeamTalk init FAILED",
         "",
-        `Could not parse agent id from \`letta agents create\` output.`,
-        `stdout (first 500 chars): ${cliStdout.slice(0, 500)}`,
+        `\`letta.client.agents.create\` failed: ${msg.slice(0, 500)}`,
         "",
         "Debug log: ~/.letta/mods/teamtalk-debug.log",
       ].join("\n");
     }
-    dlog(`parsed agent id: ${candidateId}`);
+    if (!candidateId || !candidateId.startsWith("agent-")) {
+      dlog(`letta.client.agents.create returned no id`);
+      return [
+        "# TeamTalk init FAILED",
+        "",
+        `letta.client.agents.create returned no agent id.`,
+        "",
+        "Debug log: ~/.letta/mods/teamtalk-debug.log",
+      ].join("\n");
+    }
+    dlog(`got agent id: ${candidateId}`);
+    // Persist the binding immediately after agent creation so a
+    // partial-init failure (MemFS spawn, persona update, tool attach)
+    // doesn't leave the steward un-bindable. bundlePath is null until
+    // the MemFS clone materializes; the late writeState below refines
+    // it once the clone lands.
+    writeState({
+      stewardAgentId: candidateId,
+      stewardAgentName: name,
+      lastSyncAt: new Date().toISOString(),
+      bundlePath: null,
+    });
 
     // Verify via the SDK that we can actually see this agent in the
     // session's org. If retrieve fails, the agent is in a different org
@@ -1311,9 +1301,8 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     }
 
     // Push the steward persona block to the agent's memory via the
-    // SDK. `letta agents create --pinned` pre-populates persona and
-    // human blocks with the Letta Code default persona; we overwrite
-    // persona with our steward-specific content so the steward
+    // SDK. Newly-created agents come up with no persona block content,
+    // so we write our steward-specific content to ensure the steward
     // responds as an organizational memory steward rather than a
     // generic coding assistant. The schema and rules live in the
     // OKF bundle under
