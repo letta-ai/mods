@@ -1200,6 +1200,17 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       ].join("\n");
     }
     dlog(`got agent id: ${candidateId}`);
+    // Persist the binding immediately after agent creation so a
+    // partial-init failure (MemFS spawn, persona update, tool attach)
+    // doesn't leave the steward un-bindable. bundlePath is null until
+    // the MemFS clone materializes; the late writeState below refines
+    // it once the clone lands.
+    writeState({
+      stewardAgentId: candidateId,
+      stewardAgentName: name,
+      lastSyncAt: new Date().toISOString(),
+      bundlePath: null,
+    });
 
     // Verify via the SDK that we can actually see this agent in the
     // session's org. If retrieve fails, the agent is in a different org
