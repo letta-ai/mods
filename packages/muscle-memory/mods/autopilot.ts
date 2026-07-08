@@ -5,7 +5,7 @@ import { AUTOPILOT_STATE, Candidate, MM, MM_TAG, RECEIPTS_DIR, REFLECT_HANDLED, 
 import { DESTRUCTIVE, RepairChain, buildCrossConversationEvidence, detect, detectAntiPatterns, detectRepairChains, impactScore, isValidSkillName, multiInstanceSupport } from "./detect";
 import { dedupCheck, draftWithRepair, effectivenessVerdict, findCandidate, lintSkillDraft, repairForCandidate, sotaQualityGaps } from "./gate";
 import { publishPlan, publishSkillToCatalog, publishTier } from "./publish";
-import { ENGRAM, engramConsolidate } from "./engram";
+import { ENGRAM, SemanticSkillHit, engramConsolidate } from "./engram";
 import { loadUsage, retireManagedSkill, retiredSkillBlocker, skillVerbs, specDrift } from "./lifecycle";
 
 export type AutopilotMode = "off" | "staged" | "auto";
@@ -331,6 +331,67 @@ export function isAmbiguousExistingRoute<T extends { name: string; score: number
   return topStrong && secondStrong;
 }
 
+// ── E4 · HYBRID SEMANTIC ROUTING — semantic recall, lexical precision. Embedding search returns
+// rank order with no absolute score (verified against the live wire), so semantic evidence may
+// only (a) BOOST a candidate the lexical scorer already found distinctive overlap for
+// (corroboration), or (b) flag an on-shelf hit as a SEMANTIC-DUPLICATE SUSPECT when its lexical
+// support is too weak to ever route — which parks autonomous CREATE, never auto-patches (never
+// patch the wrong skill). Suspect trust depends on calibration: a canary-calibrated window
+// (aboveCanary present — see calibrateSkillHits) trusts the highest-ranked ON-SHELF hit that
+// out-ranked every canary reference passage, at any rank in the window; an uncalibrated window
+// trusts only rank 0 — "nearest" is meaningless without a relevance floor, and top_k always
+// returns something. Pure; MM_NATIVE off → no-op.
+// DERIVATION (review note): these bonuses are calibrated against the lexical scorer's
+// SUSPECT_MIN threshold (score >= 8 with matched terms). rank-0 (+12) lifts a borderline
+// lexical candidate (score 4-7) decisively past threshold; rank-1 (+6) lifts only near-misses;
+// rank-2 (+3) can corroborate but never carry alone. If the lexical scoring scale changes,
+// re-derive: bonus[0] should exceed (SUSPECT_MIN - typical_borderline_score); the routing eval
+// (test/routing.eval.ts, CI-gated) is the tripwire — B-class cases fail if these miscalibrate.
+export const SEMANTIC_RANK_BONUS = [12, 6, 3] as const;
+
+export type SemanticFn = (query: string, k: number) => Promise<SemanticSkillHit[]>;
+
+export function applySemanticEvidence<T extends { name: string; score: number; matched: number }>(
+  matches: T[], hits: SemanticSkillHit[], onShelf: (name: string) => boolean, threshold = 18,
+): { matches: T[]; suspect: string | null } {
+  if (!hits.length) return { matches, suspect: null };
+  const boosted = matches
+    .map((m) => {
+      const hit = hits.find((h) => h.name === m.name);
+      // Corroboration only: the boost never manufactures `matched` — pickUpdateTarget's
+      // distinctive-overlap floor still applies, so a boost alone cannot route an update.
+      return hit && m.matched > 0 ? { ...m, score: m.score + (SEMANTIC_RANK_BONUS[hit.rank] ?? 0) } : m;
+    })
+    .sort((a, b) => b.score - a.score || b.matched - a.matched);
+  // Calibrated window: the canary line is the relevance floor — the first on-shelf hit above it
+  // is a genuine topical neighbor regardless of rank (stale off-shelf hits are transparent).
+  // Uncalibrated window: only the single nearest hit is even a candidate (legacy conservative rule).
+  const top = hits.some((h) => h.aboveCanary !== undefined)
+    ? hits.find((h) => h.aboveCanary === true && onShelf(h.name))
+    : hits[0];
+  const lex = top ? boosted.find((m) => m.name === top.name) : undefined;
+  // "Lexical missed it": below the distinctive floor OR under threshold even after the boost —
+  // routing could never UPDATE it, so an autonomous CREATE would spawn a paraphrase sibling.
+  // (Real paraphrase dupes share a stray token; requiring matched === 0 catches almost nothing.)
+  const suspect = top && onShelf(top.name) && (!lex || lex.matched < SEARCH_DISTINCT_MIN || lex.score < threshold) ? top.name : null;
+  return { matches: boosted, suspect };
+}
+
+// The COMPLETE routing decision head, pure — reviewAndAuthor consumes it and the routing eval
+// measures it, so the benchmark can never drift from the shipped decision path.
+export type SkillRoute = "update" | "create" | "park-ambiguous" | "park-semantic";
+
+export function routeSkill<T extends { name: string; score: number; matched: number }>(
+  lexical: T[], hits: SemanticSkillHit[], onShelf: (name: string) => boolean, threshold = 18,
+): { route: SkillRoute; target: (T & { confidence: "high" }) | null; matches: T[]; suspect: string | null } {
+  const { matches, suspect } = applySemanticEvidence(lexical, hits, onShelf, threshold);
+  const target = pickUpdateTarget(matches, threshold);
+  if (target) return { route: "update", target, matches, suspect };
+  if (isAmbiguousExistingRoute(matches, threshold)) return { route: "park-ambiguous", target: null, matches, suspect };
+  if (suspect) return { route: "park-semantic", target: null, matches, suspect };
+  return { route: "create", target: null, matches, suspect };
+}
+
 export function frontmatterOf(content: string): string {
   return (String(content || "").match(/^---\n([\s\S]*?)\n---\s*/)?.[1] || "").trimEnd();
 }
@@ -382,15 +443,25 @@ export function compareSkillSections(oldContent?: string, newContent?: string) {
 export type ReviewResult = { action: "create" | "update" | "none" | "reject"; name?: string; description?: string; body?: string; content?: string; reason?: string; updateTarget?: string; matches?: Array<{ name: string; score: number; matched: number }>; degraded?: string; wrote?: string };
 
 /** Author + gate a skill from evidence, with MemFS update-first routing. authorFn(system,user)->text injectable. */
-export async function reviewAndAuthor(evidence: string, dirs: string[], authorFn: (sys: string, user: string) => Promise<string>, opts: { updateThreshold?: number } = {}): Promise<ReviewResult> {
+export async function reviewAndAuthor(evidence: string, dirs: string[], authorFn: (sys: string, user: string) => Promise<string>, opts: { updateThreshold?: number; semanticFn?: SemanticFn } = {}): Promise<ReviewResult> {
   // MemFS update-first: does a skill SAFELY cover this domain? (distinctive overlap + clearLead, not generic words)
-  const matches = searchSkills(dirs, evidence, 3);
   const threshold = opts.updateThreshold ?? 18;
-  const updTarget = pickUpdateTarget(matches, threshold);
+  // E4 hybrid lane: semantic recall widens/boosts, lexical gates keep precision. Best-effort —
+  // a dead client or disabled MM_NATIVE degrades to pure lexical routing (today's behavior).
+  const hits = opts.semanticFn ? await opts.semanticFn(evidence, 3).catch(() => []) : [];
+  const d = routeSkill(searchSkills(dirs, evidence, 3), hits, (n) => dirs.some((x) => existsSync(join(x, n, "SKILL.md"))), threshold);
+  const { matches } = d;
+  const updTarget = d.target;
   const slimEarly = matches.map((m) => ({ name: m.name, score: m.score, matched: m.matched }));
   // Ambiguous overlap (two proven skills both half-cover this) → refuse autonomous create (anti-bloat).
-  if (!updTarget && isAmbiguousExistingRoute(matches, threshold)) {
+  if (d.route === "park-ambiguous") {
     return { action: "none", reason: `ambiguous existing skills: ${matches.slice(0, 3).map((m) => `${m.name}(s${m.score}/m${m.matched})`).join(", ")}; refusing autonomous create`, matches: slimEarly };
+  }
+  // E4 semantic-duplicate guard: the embedding rank-1 hit exists on the shelf but its lexical
+  // support is too weak to ever route — exactly the paraphrase-duplicate class lexical misses.
+  // Too uncertain to auto-patch (no absolute similarity score), too suspicious to auto-create.
+  if (d.route === "park-semantic") {
+    return { action: "none", reason: `possible semantic duplicate of '${d.suspect}' (embedding match without distinctive lexical overlap); refusing autonomous create — review or absorb manually`, matches: slimEarly };
   }
   // On UPDATE, show the model the existing proven skill so it PATCHES rather than rewrites from scratch.
   const existingForUpdate = updTarget ? (() => { try { const d = dirs.find((x) => existsSync(join(x, updTarget.name, "SKILL.md"))); return d ? readSkill(d, updTarget.name) : ""; } catch { return ""; } })() : "";
@@ -613,7 +684,7 @@ export function reviewForkAuthor(ctx: any): (sys: string, user: string) => Promi
 
 /** v3.1 AUTONOMOUS REFLECTIVE REVIEW: cross-conversation evidence → forked reviewer → update-first
  * routing + gates → write (staged by default; live in auto mode). Reversible + receipted. The surpass, autonomous. */
-export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; minInstances?: number; authorFn?: (s: string, u: string) => Promise<string>; experience?: Row[]; dirs?: string[]; stagedDir?: string } = {}): Promise<ReviewResult & { wrote?: string }> {
+export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | "auto"; minItems?: number; minInstances?: number; authorFn?: (s: string, u: string) => Promise<string>; experience?: Row[]; dirs?: string[]; stagedDir?: string; semanticFn?: SemanticFn } = {}): Promise<ReviewResult & { wrote?: string }> {
   // dirs/stagedDir injectable (same pattern as `experience`) so callers/tests are hermetic —
   // scanDirs(ctx) reads the HOST's real shelves (agent MemFS + ~/.letta/skills), which made the
   // n=1 wiring test pass only on machines with an empty global shelf (fake-green class).
@@ -649,7 +720,7 @@ export async function runReflectiveReview(ctx: any, config: { mode?: "staged" | 
   const author = config.authorFn || reviewForkAuthor(ctx);
   let res: ReviewResult;
   try {
-    res = await reviewAndAuthor(digest, reviewDirs, author);
+    res = await reviewAndAuthor(digest, reviewDirs, author, { semanticFn: config.semanticFn });
   } catch (e: any) {
     // author/review threw — never leave the panel stuck on "writing…"; write a terminal state.
     appendUiEvent({ phase: "reflect_error", summary: `author failed: ${String(e?.message ?? e).slice(0, 80)}` });

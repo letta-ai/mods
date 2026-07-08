@@ -138,7 +138,7 @@ It also audits cross-shelf drift, so the same skill cannot quietly diverge betwe
 
 `muscle-memory` writes ordinary files atomically and does not run `git commit`, `git push`, or its own sync loop. Letta/user memory sync stays the owner of the git-backed repo.
 
-Honest caveat: routing is lexical and conservative — ~71% accurate on a held-out set, with 0% false-merge in that eval but 0% semantic-only-duplicate catch. Semantic routing is future work.
+Honest caveat: routing is lexical-precision-first, with an opt-in semantic recall lane (`MM_NATIVE=passages`) whose duplicate-suspect trust is canary-calibrated (see CHANGELOG). Live decision quality on the 16-case labeled set: lexical-only 7/16 → hybrid 15/16 across three consecutive Letta Cloud runs; the one standing miss is an embedding-model limit, receipt in the bench. Semantic evidence never auto-patches — it only corroborates or parks.
 
 ```txt
 improve the library, don't grow a landfill
@@ -355,7 +355,8 @@ mods/index.ts       Letta mod entrypoint: tools, commands, events, activation
 Known boundaries — these are Bounded, not Verified:
 
 - **Distillation quality is shared ground.** We do not claim a stronger skill primitive than Letta. The wedge is autonomy + maintenance, not skill-writing quality.
-- **Routing/dedup is lexical.** It catches exact/strong-lexical duplicates, but semantic-only duplicate catch is not solved.
+- **Routing/dedup is lexical-precision-first.** The opt-in semantic lane catches paraphrase duplicates via canary-calibrated embedding recall (live 15/16 decision quality vs 7/16 lexical-only on the labeled set), but it only parks or corroborates — it never auto-merges — and one known paraphrase class (zero-overlap tool-name evidence, e.g. alembic ↔ "schema changes") still ranks below the calibration floor on the current Letta Cloud embedder.
+- **Canary calibration depends on the current passage embedder.** If Letta changes the passage embedding model or ranking behavior, rerun `scripts/bench-semantic-live.ts`; the canary relevance floor may move even when deterministic fixture tests still pass.
 - **Secret scanning is regex-based on known formats.** It does not catch split/concatenated tokens or base64-ish / unlabeled high-entropy secrets. For standalone write-time secret scanning, dedicated mods (for example, `secrets-scanning`) go deeper; `muscle-memory`'s secret-block is a publish/write-path gate **within the lifecycle**, not a full DLP scanner.
 - **Maintenance-at-scale is unproven.** The maintenance loop has regression coverage and internal dogfood receipts, but is not validated at scale on a real recurring workload.
 - **Extraction-at-scale is untested.** Whether repair-chain extraction helps more than raw-log authoring on large noisy substrate is open.

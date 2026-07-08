@@ -28,11 +28,12 @@
     "mods"
   ],
   "scripts": {
-    "test": "bun test test/",
+    "test": "MM_STATE_DIR=$(mktemp -d) MM_GLOBAL_SKILLS_DIR=$(mktemp -d) bun test test/",
     "build": "bun build mods/index.ts --target node --outfile mods/index.bundled.mjs",
     "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
     "prepublishOnly": "npm run build",
-    "verify": "npm run build && npm run test"
+    "eval:routing": "bun test/routing.eval.ts",
+    "verify": "npm run build && npm run test && npm run eval:routing"
   },
   "engines": {
     "node": ">=20"

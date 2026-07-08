@@ -1984,6 +1984,122 @@ async function syncNeocortexBlock(client, agentId, content) {
     return false;
   }
 }
+var SKILL_PASSAGE_TAG = "mm:skill";
+function skillPassageTag(name) {
+  return `${SKILL_PASSAGE_TAG}:${name}`;
+}
+var SKILL_CANARY_NAMES = ["mm-canary-general-software-work", "mm-canary-generic-repair-shape"];
+function isCanaryName(name) {
+  return SKILL_CANARY_NAMES.includes(name);
+}
+function canaryPassages() {
+  return [
+    { name: SKILL_CANARY_NAMES[0], text: `skill: ${SKILL_CANARY_NAMES[0]}
+general software work
+Writing code, editing files, running commands in the terminal, reading documentation, checking output, and re-running until it works.` },
+    { name: SKILL_CANARY_NAMES[1], text: `skill: ${SKILL_CANARY_NAMES[1]}
+generic repair shape
+Something failed during a run: investigate the cause of the failure, apply a change, run it again, and verify the fix worked.` }
+  ];
+}
+function skillPassageText(name, description) {
+  return `skill: ${name}
+${name.replace(/-/g, " ")}
+${String(description || "").replace(/\s+/g, " ").slice(0, 500)}`;
+}
+function parseSkillHits(resp) {
+  if (!resp || typeof resp !== "object" || !("results" in resp) || !Array.isArray(resp.results))
+    return [];
+  const out = [];
+  for (const r of resp.results) {
+    if (!r || typeof r !== "object")
+      continue;
+    const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+    const named = tags.find((t) => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+    let name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+    if (!name && "content" in r && typeof r.content === "string")
+      name = r.content.match(/^skill:\s*([a-z0-9-]+)/i)?.[1] ?? "";
+    if (name && isValidSkillName(name) && !out.some((h) => h.name === name))
+      out.push({ name, rank: out.length });
+  }
+  return out;
+}
+function calibrateSkillHits(raw, k) {
+  const canaryRank = raw.reduce((best, h) => isCanaryName(h.name) && h.rank < best ? h.rank : best, Infinity);
+  return raw.filter((h) => !isCanaryName(h.name)).slice(0, k).map((h, i) => canaryRank === Infinity ? { name: h.name, rank: i } : { name: h.name, rank: i, aboveCanary: h.rank < canaryRank });
+}
+async function semanticSkillCandidates(client, agentId, query, k = 3) {
+  if (!agentId || !nativeEnabled("passages") || !query.trim())
+    return [];
+  const search = reachFn(client, ["agents", "passages", "search"]);
+  if (!search)
+    return [];
+  try {
+    const resp = await search(agentId, { query: query.slice(0, 4000), tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: k + SKILL_CANARY_NAMES.length });
+    return calibrateSkillHits(parseSkillHits(resp), k);
+  } catch {
+    return [];
+  }
+}
+function passageText(r) {
+  if (!r || typeof r !== "object")
+    return null;
+  if ("text" in r && typeof r.text === "string")
+    return r.text;
+  if ("content" in r && typeof r.content === "string")
+    return r.content;
+  return null;
+}
+async function syncSkillPassages(client, agentId, managed) {
+  if (!agentId || !nativeEnabled("passages") || !managed.length)
+    return 0;
+  const search = reachFn(client, ["agents", "passages", "search"]);
+  const create = reachFn(client, ["agents", "passages", "create"]);
+  const del = reachFn(client, ["agents", "passages", "delete"]);
+  if (!create)
+    return 0;
+  let synced = 0;
+  const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
+  for (const m of entries) {
+    try {
+      let skip = false;
+      if (search && del) {
+        const prior = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
+        if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
+          skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text;
+          if (!skip) {
+            for (const r of prior.results) {
+              if (r && typeof r === "object" && "id" in r && typeof r.id === "string")
+                await del(r.id, { agent_id: agentId });
+            }
+          }
+        }
+      }
+      if (!skip)
+        await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
+      if (!isCanaryName(m.name))
+        synced++;
+    } catch {}
+  }
+  if (search && del) {
+    try {
+      const live = new Set([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
+      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 });
+      if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
+        for (const r of all.results) {
+          if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string")
+            continue;
+          const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+          const named = tags.find((t) => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+          const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+          if (name && !live.has(name))
+            await del(r.id, { agent_id: agentId });
+        }
+      }
+    } catch {}
+  }
+  return synced;
+}
 
 // mods/autopilot.ts
 var AUTOPILOT_DEFAULT = { mode: "staged", dailyBudget: 5, minImpact: 4 };
@@ -2325,6 +2441,30 @@ function isAmbiguousExistingRoute(matches, threshold = 18) {
   const secondStrong = second.score >= Math.max(threshold, top.score * 0.65) && second.matched > top.matched;
   return topStrong && secondStrong;
 }
+var SEMANTIC_RANK_BONUS = [12, 6, 3];
+function applySemanticEvidence(matches, hits, onShelf, threshold = 18) {
+  if (!hits.length)
+    return { matches, suspect: null };
+  const boosted = matches.map((m) => {
+    const hit = hits.find((h) => h.name === m.name);
+    return hit && m.matched > 0 ? { ...m, score: m.score + (SEMANTIC_RANK_BONUS[hit.rank] ?? 0) } : m;
+  }).sort((a, b) => b.score - a.score || b.matched - a.matched);
+  const top = hits.some((h) => h.aboveCanary !== undefined) ? hits.find((h) => h.aboveCanary === true && onShelf(h.name)) : hits[0];
+  const lex = top ? boosted.find((m) => m.name === top.name) : undefined;
+  const suspect = top && onShelf(top.name) && (!lex || lex.matched < SEARCH_DISTINCT_MIN || lex.score < threshold) ? top.name : null;
+  return { matches: boosted, suspect };
+}
+function routeSkill(lexical, hits, onShelf, threshold = 18) {
+  const { matches, suspect } = applySemanticEvidence(lexical, hits, onShelf, threshold);
+  const target = pickUpdateTarget(matches, threshold);
+  if (target)
+    return { route: "update", target, matches, suspect };
+  if (isAmbiguousExistingRoute(matches, threshold))
+    return { route: "park-ambiguous", target: null, matches, suspect };
+  if (suspect)
+    return { route: "park-semantic", target: null, matches, suspect };
+  return { route: "create", target: null, matches, suspect };
+}
 function frontmatterOf(content) {
   return (String(content || "").match(/^---\n([\s\S]*?)\n---\s*/)?.[1] || "").trimEnd();
 }
@@ -2376,17 +2516,22 @@ function compareSkillSections(oldContent, newContent) {
   return { oldSections, newSections, preservedSections, droppedSections, addedSections };
 }
 async function reviewAndAuthor(evidence, dirs, authorFn, opts = {}) {
-  const matches = searchSkills(dirs, evidence, 3);
   const threshold = opts.updateThreshold ?? 18;
-  const updTarget = pickUpdateTarget(matches, threshold);
+  const hits = opts.semanticFn ? await opts.semanticFn(evidence, 3).catch(() => []) : [];
+  const d = routeSkill(searchSkills(dirs, evidence, 3), hits, (n) => dirs.some((x) => existsSync4(join5(x, n, "SKILL.md"))), threshold);
+  const { matches } = d;
+  const updTarget = d.target;
   const slimEarly = matches.map((m) => ({ name: m.name, score: m.score, matched: m.matched }));
-  if (!updTarget && isAmbiguousExistingRoute(matches, threshold)) {
+  if (d.route === "park-ambiguous") {
     return { action: "none", reason: `ambiguous existing skills: ${matches.slice(0, 3).map((m) => `${m.name}(s${m.score}/m${m.matched})`).join(", ")}; refusing autonomous create`, matches: slimEarly };
+  }
+  if (d.route === "park-semantic") {
+    return { action: "none", reason: `possible semantic duplicate of '${d.suspect}' (embedding match without distinctive lexical overlap); refusing autonomous create — review or absorb manually`, matches: slimEarly };
   }
   const existingForUpdate = updTarget ? (() => {
     try {
-      const d = dirs.find((x) => existsSync4(join5(x, updTarget.name, "SKILL.md")));
-      return d ? readSkill(d, updTarget.name) : "";
+      const d2 = dirs.find((x) => existsSync4(join5(x, updTarget.name, "SKILL.md")));
+      return d2 ? readSkill(d2, updTarget.name) : "";
     } catch {
       return "";
     }
@@ -2536,7 +2681,7 @@ ${raw2}
   const secEarly = scanSkillContent(body);
   if (!secEarly.ok)
     return { action: "reject", reason: `security: ${secEarly.issues.join("; ")}`, degraded };
-  const descOk = (d) => !!d && d.length >= 20 && /\b(use when|trigger|when )/i.test(d);
+  const descOk = (d2) => !!d2 && d2.length >= 20 && /\b(use when|trigger|when )/i.test(d2);
   if (!descOk(description)) {
     if (description && description.length >= 12 && !/\b(use when|trigger|when )/i.test(description))
       description = `Use when ${description}`.slice(0, 700);
@@ -2737,7 +2882,7 @@ ${prefs.map((p) => `- ${p}`).join(`
   const author = config.authorFn || reviewForkAuthor(ctx);
   let res;
   try {
-    res = await reviewAndAuthor(digest, reviewDirs, author);
+    res = await reviewAndAuthor(digest, reviewDirs, author, { semanticFn: config.semanticFn });
   } catch (e) {
     appendUiEvent({ phase: "reflect_error", summary: `author failed: ${String(e?.message ?? e).slice(0, 80)}` });
     writeUiState({ phase: "idle", last: "review interrupted — will retry next session", route: "ERROR · safe" });
@@ -2966,7 +3111,10 @@ var __mm = {
   guardDecision,
   buildNeocortexBlock,
   nativeEnabled,
-  NEOCORTEX_BLOCK
+  NEOCORTEX_BLOCK,
+  applySemanticEvidence,
+  semanticSkillCandidates,
+  syncSkillPassages
 };
 function activate(letta) {
   const disposers = [];
@@ -2981,6 +3129,7 @@ function activate(letta) {
     }
   };
   refreshDefenses();
+  const semanticFnFor = (agentId) => (q, k) => semanticSkillCandidates(letta.client, agentId, q, k);
   if (typeof letta.permissions?.register === "function") {
     disposers.push(letta.permissions.register({
       id: "muscle-memory-guard",
@@ -3081,10 +3230,13 @@ function activate(letta) {
     disposers.push(letta.events.on("conversation_close", (event, ctx) => {
       appendJsonl(SESSIONS_PATH, { ts: Date.now(), conv: event?.conversationId ?? null, agent: event?.agentId ?? null, reason: event?.reason ?? null, toolCalls: event?.toolCallCount ?? null, messages: event?.messageCount ?? null, durationMs: event?.durationMs ?? null });
       refreshDefenses();
-      if (nativeEnabled("blocks")) {
+      if (nativeEnabled("blocks") || nativeEnabled("passages")) {
         try {
           const managed = managedView(scanDirs(ctx ?? {})).map((m) => ({ name: m.name, description: m.description }));
-          syncNeocortexBlock(letta.client, event?.agentId ?? null, buildNeocortexBlock(managed));
+          if (nativeEnabled("blocks"))
+            syncNeocortexBlock(letta.client, event?.agentId ?? null, buildNeocortexBlock(managed));
+          if (nativeEnabled("passages"))
+            syncSkillPassages(letta.client, event?.agentId ?? null, managed);
         } catch {}
       }
       const apMode = process.env.MM_AUTOPILOT;
@@ -3093,7 +3245,7 @@ function activate(letta) {
       }
       const rfMode = process.env.MM_REFLECT;
       if (rfMode === "staged" || rfMode === "auto") {
-        runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode }).then(() => {
+        runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode, semanticFn: semanticFnFor(event?.agentId ?? ctx?.agent?.id) }).then(() => {
           runAutonomousPrune(ctx ?? { agentId: event?.agentId }, { maxRetire: 1 });
           try {
             panel?.update();
@@ -3116,7 +3268,7 @@ function activate(letta) {
         return;
       }
       autoReflectInFlight = true;
-      runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode }).then(() => {
+      runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode, semanticFn: semanticFnFor(event?.agentId ?? ctx?.agent?.id) }).then(() => {
         runAutonomousPrune(ctx ?? { agentId: event?.agentId }, { maxRetire: 1 });
         try {
           panel?.update();
@@ -3537,7 +3689,7 @@ ${d.body}` };
           return `autopilot ${cfg.mode}: graduated ${res.graduated.length} ${JSON.stringify(res.graduated)}, staged ${res.staged.length}, refined ${res.refined.length} ${JSON.stringify(res.refined)}, retired ${res.retired.length} ${JSON.stringify(res.retired)}. budget ${r.budget.used + res.graduated.length + res.staged.length}/${r.budget.limit}.`;
         }
         if (a.action === "reflect") {
-          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged" });
+          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged", semanticFn: semanticFnFor(ctx?.agent?.id) });
           if (r.action === "none" || r.action === "reject")
             return `reflect: ${r.action} — ${r.reason || ""}`;
           const graduated = !!r.wrote && !String(r.wrote).startsWith(STAGED_DIR);
@@ -3702,7 +3854,7 @@ Load with muscle_memory_skill_read action:load, then invoke the normal Skill too
       const a = ctx?.args || {};
       try {
         if (a.action === "reflect") {
-          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged" });
+          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged", semanticFn: semanticFnFor(ctx?.agent?.id) });
           if (r.action === "none" || r.action === "reject")
             return `reflect: ${r.action} — ${r.reason || ""}`;
           const graduated = !!r.wrote && !String(r.wrote).startsWith(STAGED_DIR);
