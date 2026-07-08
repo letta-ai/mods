@@ -972,6 +972,127 @@ function listAssetFiles(subdir: string): string[] {
   return out;
 }
 
+// ============================================================================
+// MemFS materialization (replaces `letta --agent <id>` and `letta memory pull`)
+// ============================================================================
+//
+// The steward agent's memory is a git-backed MemFS hosted by Letta Cloud.
+// The cloud exposes a cloneable smart-HTTP endpoint at
+// `${LETTA_BASE_URL}/v1/git/<agent-id>/state.git`. We materialize the
+// local clone by `git clone` (first time) or `git pull --ff-only`
+// (subsequent times), with the bearer token injected via git's
+// http.extraHeader config. The token is a harness-managed secret
+// (LETTA_API_KEY), substituted at exec time, and only ever passed to
+// `git` as a -c config value — never written to disk, never logged.
+//
+// This replaces two prior shell-outs:
+//   - `spawn("letta", ["--agent", <id>], ...)` in handleInit, which
+//     relied on the CLI opening a user-agent session as a side
+//     effect of materialization.
+//   - `execFile("letta", ["memory", "pull", "--agent", <id>])` in the
+//     reseed path, which used the CLI's pull command.
+//
+// Both were the last remaining `letta` shell-outs after PR A replaced
+// `letta agents create` with `letta.client.agents.create`.
+
+type MemFsMaterializeResult =
+  | { ok: true; source: "clone" | "pull"; memDir: string }
+  | { ok: true; source: "noop"; memDir: string }
+  | { ok: false; source: "failed"; memDir: string; error: string };
+
+async function materializeMemFs(agentId: string): Promise<MemFsMaterializeResult> {
+  const home = process.env.HOME || homedir();
+  const memDir = join(home, ".letta", "agents", agentId, "memory");
+  const baseUrl = process.env.LETTA_BASE_URL;
+  // LETTA_API_KEY is a harness-managed secret. The substitution happens
+  // at exec time in the harness; we never see the raw value in source
+  // or logs. If it's not configured, we surface a clear error.
+  const apiKey = process.env.LETTA_API_KEY;
+
+  if (!baseUrl) {
+    return {
+      ok: false,
+      source: "failed",
+      memDir,
+      error: "LETTA_BASE_URL not set in env",
+    };
+  }
+  if (!apiKey) {
+    return {
+      ok: false,
+      source: "failed",
+      memDir,
+      error: "LETTA_API_KEY not available (harness secret missing)",
+    };
+  }
+
+  const gitUrl = `${baseUrl.replace(/\/$/, "")}/v1/git/${agentId}/state.git`;
+  const authHeader = `Authorization: Bearer ${apiKey}`;
+
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileP = promisify(execFile);
+
+  const gitDir = join(memDir, ".git");
+  const memDirExists = existsSync(memDir);
+  const gitDirExists = existsSync(gitDir);
+
+  if (!memDirExists) {
+    // Fresh clone. Ensure the parent directory exists, then clone
+    // directly into memDir. If the parent itself is missing, mkdir
+    // it recursively so the clone has a place to land.
+    try {
+      mkdirSync(dirname(memDir), { recursive: true });
+    } catch (err: any) {
+      return {
+        ok: false,
+        source: "failed",
+        memDir,
+        error: `mkdir parent failed: ${err?.message || err}`,
+      };
+    }
+    try {
+      await execFileP(
+        "git",
+        ["-c", `http.extraHeader=${authHeader}`, "clone", gitUrl, memDir],
+        { timeout: 30_000 },
+      );
+      return { ok: true, source: "clone", memDir };
+    } catch (err: any) {
+      const msg = (err?.stderr || err?.message || String(err)).toString();
+      return { ok: false, source: "failed", memDir, error: `git clone failed: ${msg.slice(0, 500)}` };
+    }
+  }
+
+  if (!gitDirExists) {
+    // memDir exists but is not a git clone — refuse rather than wipe
+    // the user's data. This state shouldn't happen via normal flow;
+    // it indicates a manual edit or a half-completed prior run.
+    return {
+      ok: false,
+      source: "failed",
+      memDir,
+      error: `${memDir} exists but is not a git clone (.git/ missing). Investigate or remove it manually.`,
+    };
+  }
+
+  // Existing clone — pull with fast-forward only. If the local clone
+  // has diverged (shouldn't happen — teamtalk_propose is the only
+  // writer and it commits), the pull fails fast without clobbering
+  // local state.
+  try {
+    await execFileP(
+      "git",
+      ["-C", memDir, "-c", `http.extraHeader=${authHeader}`, "pull", "--ff-only"],
+      { timeout: 30_000 },
+    );
+    return { ok: true, source: "pull", memDir };
+  } catch (err: any) {
+    const msg = (err?.stderr || err?.message || String(err)).toString();
+    return { ok: false, source: "failed", memDir, error: `git pull failed: ${msg.slice(0, 500)}` };
+  }
+}
+
 async function handleInit(letta: any, rest: string): Promise<string> {
   const state = readState();
   // Parse flags once at the top. The previous version used
@@ -999,23 +1120,16 @@ async function handleInit(letta: any, rest: string): Promise<string> {
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", state.stewardAgentId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
-    if (!existsSync(memDir)) {
-      // Try to pull the local clone via the CLI before giving up.
-      try {
-        const { execFile } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const execFileAsync = promisify(execFile);
-        await execFileAsync(
-          "letta",
-          ["memory", "pull", "--agent", state.stewardAgentId],
-          { timeout: 25_000 },
-        );
-      } catch (err: any) {
-        return `Steward MemFS dir not found on disk: ${memDir}\nletta memory pull failed: ${err?.message || err}\nRun \`letta memory pull --agent ${state.stewardAgentId}\` manually, then re-run.`;
-      }
-      if (!existsSync(memDir)) {
-        return `letta memory pull succeeded but MemFS dir still missing: ${memDir}\nInvestigate manually.`;
-      }
+    // Make sure the local MemFS clone exists. materializeMemFs does
+    // a fresh `git clone` if the directory is missing, or `git pull
+    // --ff-only` if it's already a clone. This replaces the prior
+    // `letta memory pull` shell-out.
+    const matResult = await materializeMemFs(state.stewardAgentId);
+    if (!matResult.ok) {
+      return `Steward MemFS materialization failed: ${matResult.error}\nVerify auth (LETTA_API_KEY) and network. Target: ${matResult.memDir}`;
+    }
+    if (!existsSync(matResult.memDir)) {
+      return `materializeMemFs returned ok but MemFS dir is still missing: ${matResult.memDir}\nInvestigate manually.`;
     }
     let seededFiles = 0;
     const assetFiles = listAssetFiles("team");
@@ -1239,36 +1353,23 @@ async function handleInit(letta: any, rest: string): Promise<string> {
 
     const displayName = name;
 
-    // The CLI's `agents create` does NOT materialize the local MemFS
-    // clone. That only happens when a user-agent session opens with the
-    // agent. Run `letta --agent <id>` in the background using spawn;
-    // it reads no stdin (stdio: "ignore"), and the harness exits
-    // promptly on a no-TTY invocation. Wait for the clone to appear,
-    // then seed the OKF bundle.
+    // Materialize the local MemFS clone via `git clone` against the
+    // cloud endpoint. The prior implementation spawned `letta --agent
+    // <id>` and polled for up to 5 seconds for the clone to appear —
+    // that relied on the CLI opening a user-agent session as a side
+    // effect, which is exactly the shell-out v1.6 is dropping. A
+    // direct git clone is synchronous from the mod's perspective and
+    // doesn't require a user-agent session at all.
     const home = process.env.HOME || homedir();
     const memDir = join(home, ".letta", "agents", candidateId, "memory");
     const bundleDir = join(memDir, TEAM_BUNDLE_DIRNAME);
-    try {
-      const { spawn: spawnCb } = await import("node:child_process");
-      const child = spawnCb(
-        "letta",
-        ["--agent", candidateId],
-        { stdio: "ignore", detached: true },
-      );
-      child.unref();
-      dlog(`spawned letta --agent ${candidateId} pid=${child.pid ?? "?"}`);
-    } catch (err: any) {
-      dlog(`background letta --agent failed to spawn: ${err?.message || err}`);
+    const matResult = await materializeMemFs(candidateId);
+    const memDirFound = matResult.ok;
+    if (matResult.ok) {
+      dlog(`memfs materialized via ${matResult.source}: ${matResult.memDir}`);
+    } else {
+      dlog(`memfs materialization failed: ${matResult.error}`);
     }
-    let memDirFound = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      if (existsSync(memDir)) {
-        memDirFound = true;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    dlog(`memDir present after init: ${memDirFound}`);
     let seededFiles = 0;
     if (memDirFound) {
       const assetFiles = listAssetFiles("team");
@@ -1352,7 +1453,7 @@ async function handleInit(letta: any, rest: string): Promise<string> {
       ? seededFiles > 0
         ? `Seeded ${seededFiles} bundle files.`
         : "Bundle directory present but no files seeded; run `/teamtalk init --reseed` to retry."
-      : `MemFS clone not yet local. Run \`/teamtalk init --reseed\` once \`${memDir}\` exists.`;
+      : `MemFS materialization failed. Run \`/teamtalk init --reseed\` after verifying auth (LETTA_API_KEY) and network. Target: ${memDir}.`;
 
     // Persist binding state before returning. Even if memDirFound is
     // false (clone not yet materialized), we still want the binding
