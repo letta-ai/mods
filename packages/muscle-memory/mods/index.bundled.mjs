@@ -2060,20 +2060,35 @@ async function syncSkillPassages(client, agentId, managed) {
     return 0;
   let synced = 0;
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
+  const index = new Map;
+  let indexed = false;
+  if (search) {
+    try {
+      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 });
+      if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
+        indexed = true;
+        for (const r of all.results) {
+          if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string")
+            continue;
+          const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
+          const named = tags.find((t) => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
+          const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
+          if (!name)
+            continue;
+          const arr = index.get(name) ?? [];
+          arr.push({ id: r.id, text: passageText(r) });
+          index.set(name, arr);
+        }
+      }
+    } catch {}
+  }
   for (const m of entries) {
     try {
-      let skip = false;
-      if (search && del) {
-        const prior = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
-        if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
-          skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text;
-          if (!skip) {
-            for (const r of prior.results) {
-              if (r && typeof r === "object" && "id" in r && typeof r.id === "string")
-                await del(r.id, { agent_id: agentId });
-            }
-          }
-        }
+      const prior = indexed ? index.get(m.name) ?? [] : [];
+      const skip = indexed && !!del && prior.length === 1 && prior[0].text === m.text;
+      if (!skip && del) {
+        for (const p of prior)
+          await del(p.id, { agent_id: agentId });
       }
       if (!skip)
         await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
@@ -2081,20 +2096,14 @@ async function syncSkillPassages(client, agentId, managed) {
         synced++;
     } catch {}
   }
-  if (search && del) {
+  if (del && indexed) {
     try {
       const live = new Set([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
-      const all = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 });
-      if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
-        for (const r of all.results) {
-          if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string")
-            continue;
-          const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
-          const named = tags.find((t) => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
-          const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
-          if (name && !live.has(name))
-            await del(r.id, { agent_id: agentId });
-        }
+      for (const [name, ps] of index) {
+        if (live.has(name))
+          continue;
+        for (const p of ps)
+          await del(p.id, { agent_id: agentId });
       }
     } catch {}
   }

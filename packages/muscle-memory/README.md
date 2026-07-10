@@ -354,6 +354,8 @@ mods/index.ts       Letta mod entrypoint: tools, commands, events, activation
 
 Known boundaries — these are Bounded, not Verified:
 
+- **Canary calibration is validated against the current Letta Cloud embedding model.** The CI-gated eval exercises the decision mechanics on fixtures; the *live* relevance floor depends on the embedder. Any embedding-model change on the Letta side requires re-running the live benchmark (`bench-semantic-live`, needs `LETTA_API_KEY`) to re-verify the canary floor — run it on a cadence and after any Letta embeddings announcement.
+
 - **Distillation quality is shared ground.** We do not claim a stronger skill primitive than Letta. The wedge is autonomy + maintenance, not skill-writing quality.
 - **Routing/dedup is lexical-precision-first.** The opt-in semantic lane catches paraphrase duplicates via canary-calibrated embedding recall (live 15/16 decision quality vs 7/16 lexical-only on the labeled set), but it only parks or corroborates — it never auto-merges — and one known paraphrase class (zero-overlap tool-name evidence, e.g. alembic ↔ "schema changes") still ranks below the calibration floor on the current Letta Cloud embedder.
 - **Canary calibration depends on the current passage embedder.** If Letta changes the passage embedding model or ranking behavior, rerun `scripts/bench-semantic-live.ts`; the canary relevance floor may move even when deterministic fixture tests still pass.

@@ -452,41 +452,51 @@ export async function syncSkillPassages(client: unknown, agentId: string | null 
   if (!create) return 0;
   let synced = 0;
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
-  for (const m of entries) {
+
+  // BATCHED SYNC (review follow-up): ONE global tag search replaces N per-skill searches.
+  // The reconciliation sweep already fetched every skill passage — so fetch it FIRST, index by
+  // name, and answer every "unchanged?" question locally. A 50-skill shelf goes from ~100+
+  // API calls per close to 1 search + only the writes that are actually needed.
+  // (Depends on search returning passage text — see passageText note; if text is absent the
+  // index yields "" and every entry degrades CORRECTLY to delete+create.)
+  const index = new Map<string, Array<{ id: string; text: string }>>();
+  let indexed = false;
+  if (search) {
     try {
-      let skip = false;
-      if (search && del) {
-        const prior: unknown = await search(agentId, { query: m.name, tags: [skillPassageTag(m.name)], tag_match_mode: "all", top_k: 5 });
-        if (prior && typeof prior === "object" && "results" in prior && Array.isArray(prior.results)) {
-          // review note: this optimization DEPENDS on the search API returning passage text
-          // (passageText reads .text/.content). If the API stops returning text, passageText
-          // yields "" and skip stays false — behavior degrades CORRECTLY but quietly to the
-          // old delete+create round-trip. If sync volume ever spikes, check this first.
-          skip = prior.results.length === 1 && passageText(prior.results[0]) === m.text; // unchanged → no round-trip
-          if (!skip) {
-            for (const r of prior.results) { if (r && typeof r === "object" && "id" in r && typeof r.id === "string") await del(r.id, { agent_id: agentId }); }
-          }
-        }
-      }
-      if (!skip) await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
-      if (!isCanaryName(m.name)) synced++; // canaries are calibration plumbing, not shelf state
-    } catch { /* best-effort per skill — a failed sync never blocks the lifecycle */ }
-  }
-  // Reconcile removals: the shelf is the source of truth; the index must not outlive it.
-  if (search && del) {
-    try {
-      const live = new Set<string>([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
-      const all: unknown = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 }); // review note: was 100 — a shelf past the cap would let stale
-      // passages survive reconciliation silently. 500 covers any realistic shelf (~10 passages/skill
-      // headroom); TODO(pagination): page the sweep if shelves ever approach this.
+      const all: unknown = await search(agentId, { query: SKILL_PASSAGE_TAG, tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: 500 }); // 500 = headroom; TODO(pagination) if shelves approach this
       if (all && typeof all === "object" && "results" in all && Array.isArray(all.results)) {
+        indexed = true;
         for (const r of all.results) {
           if (!r || typeof r !== "object" || !("id" in r) || typeof r.id !== "string") continue;
           const tags = "tags" in r && Array.isArray(r.tags) ? r.tags : [];
           const named = tags.find((t): t is string => typeof t === "string" && t.startsWith(`${SKILL_PASSAGE_TAG}:`));
           const name = named ? named.slice(SKILL_PASSAGE_TAG.length + 1) : "";
-          if (name && !live.has(name)) await del(r.id, { agent_id: agentId });
+          if (!name) continue;
+          const arr = index.get(name) ?? [];
+          arr.push({ id: r.id, text: passageText(r) });
+          index.set(name, arr);
         }
+      }
+    } catch { /* index unavailable → fall through; entries degrade to create-only below */ }
+  }
+
+  for (const m of entries) {
+    try {
+      const prior = indexed ? (index.get(m.name) ?? []) : [];
+      const skip = indexed && !!del && prior.length === 1 && prior[0].text === m.text; // unchanged → zero round-trips
+      if (!skip && del) { for (const p of prior) await del(p.id, { agent_id: agentId }); }
+      if (!skip) await create(agentId, { text: m.text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(m.name)] });
+      if (!isCanaryName(m.name)) synced++; // canaries are calibration plumbing, not shelf state
+    } catch { /* best-effort per skill — a failed sync never blocks the lifecycle */ }
+  }
+
+  // Reconcile removals from the SAME index (no second sweep): the shelf is the source of truth.
+  if (del && indexed) {
+    try {
+      const live = new Set<string>([...managed.map((m) => m.name), ...SKILL_CANARY_NAMES]);
+      for (const [name, ps] of index) {
+        if (live.has(name)) continue;
+        for (const p of ps) await del(p.id, { agent_id: agentId });
       }
     } catch { /* best-effort — reconciliation failure never blocks the lifecycle */ }
   }

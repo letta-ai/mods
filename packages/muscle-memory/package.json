@@ -33,7 +33,8 @@
     "transpile": "bun build mods/index.ts --target node --outfile /tmp/muscle-memory.build.js",
     "prepublishOnly": "npm run build",
     "eval:routing": "bun test/routing.eval.ts",
-    "verify": "npm run build && npm run test && npm run eval:routing"
+    "verify": "npm run build && npm run verify:bundle && npm run test && npm run eval:routing",
+    "verify:bundle": "bun build mods/index.ts --target node --outfile /tmp/mm-bundle-drift-check.mjs && cmp -s /tmp/mm-bundle-drift-check.mjs mods/index.bundled.mjs && echo 'bundle matches source' || (echo 'BUNDLE DRIFT: mods/index.bundled.mjs does not match source — run npm run build and commit the bundle' && exit 1)"
   },
   "engines": {
     "node": ">=20"
