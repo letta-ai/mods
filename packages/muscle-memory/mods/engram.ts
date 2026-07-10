@@ -293,6 +293,21 @@ export function nativeEnabled(channel: string): boolean {
 }
 
 
+
+// Review concern #7 (2026-07-06): if MM_NATIVE=passages is enabled but the SDK client exposes no
+// passages surface (renamed/restructured API), every semantic function silently no-ops and routing
+// falls back to lexical with NO signal that hybrid is broken. The fallback itself is correct and
+// safe — the silence is the bug. Warn exactly ONCE per process so the operator learns semantic is
+// off; behavior is otherwise byte-identical to the silent path.
+let warnedMissingPassagesSurface = false;
+/** Test hook: reset the once-per-process missing-surface warning latch. */
+export function resetMissingPassagesSurfaceWarning(): void { warnedMissingPassagesSurface = false; }
+function warnMissingPassagesSurface(which: string): void {
+  if (warnedMissingPassagesSurface) return;
+  warnedMissingPassagesSurface = true;
+  try { console.warn(`muscle-memory: MM_NATIVE=passages is enabled but the client has no agents.passages.${which} surface — semantic routing/sync is disabled; falling back to lexical-only (no behavior change, but hybrid routing is NOT active).`); } catch { /* signal is best-effort */ }
+}
+
 // Walk a nested path on an unknown SDK client with typeof narrowing — no fabricated object shape,
 // no inline cast-to-read. Returns the verified callable at the end of the path, BOUND to its
 // receiver, or null. The binding is load-bearing: SDK resource methods (letta-client APIResource)
@@ -420,7 +435,7 @@ export function calibrateSkillHits(raw: SemanticSkillHit[], k: number): Semantic
 export async function semanticSkillCandidates(client: unknown, agentId: string | null | undefined, query: string, k = 3): Promise<SemanticSkillHit[]> {
   if (!agentId || !nativeEnabled("passages") || !query.trim()) return [];
   const search = reachFn(client, ["agents", "passages", "search"]); // client.agents.passages.search(agentId, params)
-  if (!search) return [];
+  if (!search) { warnMissingPassagesSurface("search"); return []; }
   try {
     const resp = await search(agentId, { query: query.slice(0, 4000), tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: k + SKILL_CANARY_NAMES.length });
     return calibrateSkillHits(parseSkillHits(resp), k);
@@ -449,7 +464,7 @@ export async function syncSkillPassages(client: unknown, agentId: string | null 
   const search = reachFn(client, ["agents", "passages", "search"]);
   const create = reachFn(client, ["agents", "passages", "create"]);
   const del = reachFn(client, ["agents", "passages", "delete"]);
-  if (!create) return 0;
+  if (!create) { warnMissingPassagesSurface("create"); return 0; }
   let synced = 0;
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
 

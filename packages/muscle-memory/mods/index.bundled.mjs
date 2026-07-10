@@ -1960,6 +1960,15 @@ function buildNeocortexBlock(managed, opts = {}) {
 function nativeEnabled(channel) {
   return (process.env.MM_NATIVE ?? "").split(/[,\s]+/).filter(Boolean).includes(channel);
 }
+var warnedMissingPassagesSurface = false;
+function warnMissingPassagesSurface(which) {
+  if (warnedMissingPassagesSurface)
+    return;
+  warnedMissingPassagesSurface = true;
+  try {
+    console.warn(`muscle-memory: MM_NATIVE=passages is enabled but the client has no agents.passages.${which} surface — semantic routing/sync is disabled; falling back to lexical-only (no behavior change, but hybrid routing is NOT active).`);
+  } catch {}
+}
 function reachFn(root, path) {
   let cur = root;
   let receiver = null;
@@ -2032,8 +2041,10 @@ async function semanticSkillCandidates(client, agentId, query, k = 3) {
   if (!agentId || !nativeEnabled("passages") || !query.trim())
     return [];
   const search = reachFn(client, ["agents", "passages", "search"]);
-  if (!search)
+  if (!search) {
+    warnMissingPassagesSurface("search");
     return [];
+  }
   try {
     const resp = await search(agentId, { query: query.slice(0, 4000), tags: [SKILL_PASSAGE_TAG], tag_match_mode: "all", top_k: k + SKILL_CANARY_NAMES.length });
     return calibrateSkillHits(parseSkillHits(resp), k);
@@ -2056,8 +2067,10 @@ async function syncSkillPassages(client, agentId, managed) {
   const search = reachFn(client, ["agents", "passages", "search"]);
   const create = reachFn(client, ["agents", "passages", "create"]);
   const del = reachFn(client, ["agents", "passages", "delete"]);
-  if (!create)
+  if (!create) {
+    warnMissingPassagesSurface("create");
     return 0;
+  }
   let synced = 0;
   const entries = [...managed.map((m) => ({ name: m.name, text: skillPassageText(m.name, m.description) })), ...canaryPassages()];
   const index = new Map;

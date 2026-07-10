@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySemanticEvidence, pickUpdateTarget, reviewAndAuthor, routeSkill, SEMANTIC_RANK_BONUS } from "../mods/autopilot";
-import { calibrateSkillHits, canaryPassages, parseSkillHits, semanticSkillCandidates, skillPassageTag, skillPassageText, syncSkillPassages, SKILL_CANARY_NAMES, SKILL_PASSAGE_TAG } from "../mods/engram";
+import { calibrateSkillHits, canaryPassages, parseSkillHits, resetMissingPassagesSurfaceWarning, semanticSkillCandidates, skillPassageTag, skillPassageText, syncSkillPassages, SKILL_CANARY_NAMES, SKILL_PASSAGE_TAG } from "../mods/engram";
 
 type Match = { name: string; description: string; dir: string; score: number; matched: number };
 const M = (name: string, score: number, matched: number): Match => ({ name, description: `desc of ${name}`, dir: "/tmp", score, matched });
@@ -291,6 +291,31 @@ test("semanticSkillCandidates: over-fetches top_k = k + canary count and returns
       { name: "merely-nearest", rank: 1, aboveCanary: false }, // dense re-rank after the canary was stripped
     ]);
   } finally {
+    if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
+  }
+});
+
+test("review concern #7: MM_NATIVE=passages with NO passages surface warns ONCE — never silently", async () => {
+  const warns: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(" ")); };
+  const prev = process.env.MM_NATIVE;
+  try {
+    // gated off → no warning (nothing is broken; the channel is simply not enabled)
+    delete process.env.MM_NATIVE;
+    resetMissingPassagesSurfaceWarning();
+    expect(await semanticSkillCandidates({}, "agent-1", "q")).toEqual([]);
+    expect(warns.length).toBe(0);
+    // enabled but the client has no passages surface → exactly ONE signal, behavior unchanged
+    process.env.MM_NATIVE = "passages";
+    expect(await semanticSkillCandidates({}, "agent-1", "query")).toEqual([]);      // still lexical-safe
+    expect(await syncSkillPassages({}, "agent-1", [{ name: "a-skill", description: "d" }])).toBe(0);
+    expect(await semanticSkillCandidates({}, "agent-1", "again")).toEqual([]);
+    expect(warns.length).toBe(1);                                                   // once, not spam
+    expect(warns[0]).toContain("MM_NATIVE=passages");
+    expect(warns[0]).toContain("lexical");
+  } finally {
+    console.warn = origWarn;
     if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
   }
 });
