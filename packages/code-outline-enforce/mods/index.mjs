@@ -1,0 +1,778 @@
+/**
+ * Code-Outline Enforcement Mod v4
+ *
+ * Two capabilities:
+ * 1. Permission overlay: blocks large reads on code files without offset/limit
+ * 2. Mod tool "code_outline": multi-language structural outline
+ *
+ * Outline backends (tried in order):
+ *   - Python ast for .py files (accurate start+end lines, requires Python)
+ *   - Universal Ctags for 50+ languages (start line only, optional)
+ *   - Regex patterns for 25+ languages (start line only, zero dependencies)
+ *   - Fallback: line count + first 15 lines
+ *
+ * For installation, configuration, and supported-language tables see README.md.
+ */
+
+import { readFileSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+// --- Configuration (validated) ---
+
+const LINE_THRESHOLD = Math.max(1, parseInt(process.env.LETTA_OUTLINE_THRESHOLD)) || 500;
+const BYTE_THRESHOLD = Math.max(1, parseInt(process.env.LETTA_OUTLINE_BYTE_THRESHOLD)) || 512 * 1024; // 512 KiB
+const MAX_OUTLINE_ENTRIES = 40;
+const MAX_OUTLINE_CHARS = 3000;
+const MIN_UNANCHORED_LIMIT = Math.max(1, parseInt(process.env.LETTA_OUTLINE_MIN_UNANCHORED_LIMIT)) || 50;
+
+// --- Read-tool family normalization ---
+
+/**
+ * Normalize a tool name by stripping non-alphanumeric characters and lowercasing.
+ * This handles Read, read_file, ReadFile, ReadFileGemini, read-file, ReadLSP,
+ * ReadFileCodex, and any other variant the runtime may produce.
+ */
+const normalizeToolName = (name) =>
+  String(name).replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+const READ_TOOL_NAMES = new Set([
+  "read",
+  "readfile",
+  "readfilegemini",
+  "readfilecodex",
+  "readlsp",
+]);
+
+// --- Supported code file extensions ---
+
+const CODE_EXTS = new Set([
+  ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+  ".go", ".rs", ".c", ".cpp", ".cc", ".h", ".hpp",
+  ".java", ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".lua",
+  ".html", ".htm", ".css", ".scss", ".sass", ".less",
+  ".sh", ".bash", ".zsh", ".ps1", ".psm1",
+  ".sql", ".dart", ".vue", ".svelte",
+  "dockerfile",
+]);
+
+// --- Caches ---
+
+let ctagsPath = null;
+let pythonExe = null;
+
+// Outline cache: map<resolvedPath_mtime_size, { outline, lineCount, bytes }>
+const outlineCache = new Map();
+const OUTLINE_CACHE_MAX = 100;
+
+// --- Regex outline patterns (zero dependencies) ---
+
+const CONTROL_FLOW = new Set([
+  "if", "for", "while", "switch", "catch", "return",
+  "else", "do", "try", "finally", "throw", "assert",
+]);
+const isControlFlow = (name) => CONTROL_FLOW.has(name);
+
+const REGEX_PATTERNS = {
+  ".py": [
+    [/^\s*(?:class)\s+(\w+)/, "class"],
+    [/^\s*(?:async\s+)?def\s+(\w+)/, "def"],
+  ],
+  ".js": [
+    [/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)/, "function"],
+    [/^\s*(?:export\s+)?(?:default\s+)?class\s+(\w+)/, "class"],
+    [/^\s*(?:export\s+)?interface\s+(\w+)/, "interface"],
+    [/^\s*(?:export\s+)?enum\s+(\w+)/, "enum"],
+    [/^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(?[^=]*=>/, "arrowFn"],
+    [/^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*function/, "function"],
+    [/^\s*(?:static\s+)?(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/, "method", true],
+  ],
+  ".jsx": null,
+  ".mjs": null,
+  ".cjs": null,
+  ".ts": [
+    [/^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?function\s+(\w+)/, "function"],
+    [/^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/, "class"],
+    [/^\s*(?:export\s+)?interface\s+(\w+)/, "interface"],
+    [/^\s*(?:export\s+)?enum\s+(\w+)/, "enum"],
+    [/^\s*(?:export\s+)?type\s+(\w+)\s*=/, "type"],
+    [/^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(?[^=]*=>/, "arrowFn"],
+    [/^\s*(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)\s*\([^)]*\)\s*[:{]/, "method", true],
+  ],
+  ".tsx": null,
+
+  ".go": [
+    [/^\s*func\s+(?:\([^)]*\)\s+)?(\w+)\s*\(/, "func"],
+    [/^\s*type\s+(\w+)\s+struct/, "struct"],
+    [/^\s*type\s+(\w+)\s+interface/, "interface"],
+    [/^\s*type\s+(\w+)\s+func/, "type"],
+    [/^\s*var\s+(\w+)\s*=\s*func/, "varFunc"],
+  ],
+
+  ".rs": [
+    [/^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/, "fn"],
+    [/^\s*(?:pub\s+)?struct\s+(\w+)/, "struct"],
+    [/^\s*(?:pub\s+)?enum\s+(\w+)/, "enum"],
+    [/^\s*(?:pub\s+)?trait\s+(\w+)/, "trait"],
+    [/^\s*impl\s+(?:<[^>]*>\s+)?(\w+)/, "impl"],
+    [/^\s*(?:pub\s+)?(?:const|static)\s+(\w+)/, "const"],
+  ],
+
+  ".c": [
+    [/^\s*(?:static\s+)?(?:inline\s+)?[\w\s\*]+?\s+(\w+)\s*\([^)]*\)\s*\{/, "function", true],
+    [/^\s*(?:typedef\s+)?struct\s+(\w+)/, "struct"],
+    [/^\s*(?:typedef\s+)?enum\s+(\w+)/, "enum"],
+    [/^\s*#define\s+(\w+)/, "macro"],
+  ],
+  ".cpp": [
+    [/^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?[\w\s\*&:]+?\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?\{/, "function", true],
+    [/^\s*(?:class|struct)\s+(\w+)/, "class"],
+    [/^\s*(?:typedef\s+)?enum\s+(?:class\s+)?(\w+)/, "enum"],
+    [/^\s*template\s*<[^>]*>\s*[\w\s\*&:]+?\s+(\w+)\s*\(/, "template"],
+    [/^\s*#define\s+(\w+)/, "macro"],
+  ],
+  ".cc": null,
+  ".h": null,
+  ".hpp": null,
+
+  ".java": [
+    [/^\s*(?:public|private|protected|static|final|abstract|\s)*\s+(?:class|interface|enum)\s+(\w+)/, "class"],
+    [/^\s*(?:public|private|protected|static|final|abstract|synchronized|native|\s)*\s+[\w<>\[\],\s]+\s+(\w+)\s*\([^)]*\)\s*\{/, "method", true],
+    [/^\s*(?:public|private|protected|static|final|\s)*\s+[\w<>\[\],\s]+\s+(\w+)\s*=\s*[^;]+;/, "field"],
+  ],
+
+  ".cs": [
+    [/^\s*(?:public|private|protected|internal|static|sealed|abstract|partial|async|\s)*\s+(?:class|interface|struct|enum)\s+(\w+)/, "class"],
+    [/^\s*(?:public|private|protected|internal|static|async|override|virtual|abstract|sealed|\s)*\s+[\w<>\[\],\s]+\s+(\w+)\s*\([^)]*\)\s*\{/, "method", true],
+    [/^\s*(?:public|private|protected|internal|static|readonly|\s)*\s+[\w<>\[\],\s]+\s+(\w+)\s*=\s*[^;]+;/, "field"],
+  ],
+
+  ".rb": [
+    [/^\s*(?:private|protected|public)?\s*def\s+(?:self\.)?(\w+)/, "def"],
+    [/^\s*class\s+(\w+)/, "class"],
+    [/^\s*module\s+(\w+)/, "module"],
+    [/^\s*attr_(?:accessor|reader|writer)\s*:(\w+)/, "attr"],
+  ],
+
+  ".php": [
+    [/^\s*(?:public|private|protected|static|final|abstract|\s)*\s*function\s+(\w+)/, "function"],
+    [/^\s*(?:final\s+|abstract\s+)?class\s+(\w+)/, "class"],
+    [/^\s*interface\s+(\w+)/, "interface"],
+    [/^\s*trait\s+(\w+)/, "trait"],
+    [/^\s*(?:public|private|protected|static|\s)*\s+(?:const|static)\s+(\w+)/, "const"],
+  ],
+
+  ".swift": [
+    [/^\s*(?:public|private|fileprivate|internal|open|static|final|override|mutating|\s)*\s*func\s+(\w+)/, "func"],
+    [/^\s*(?:public|private|fileprivate|internal|open|final|\s)*\s*(?:class|struct|enum|protocol)\s+(\w+)/, "type"],
+    [/^\s*(?:public|private|fileprivate|internal|open|static|\s)*\s*var\s+(\w+)/, "var"],
+    [/^\s*(?:public|private|fileprivate|internal|open|static|let|\s)*\s*let\s+(\w+)/, "let"],
+  ],
+
+  ".kt": [
+    [/^\s*(?:public|private|protected|internal|open|override|operator|inline|suspend|\s)*\s*fun\s+(\w+)/, "fun"],
+    [/^\s*(?:public|private|protected|internal|final|open|abstract|data|\s)*\s*(?:class|interface|object|enum\s+class)\s+(\w+)/, "class"],
+    [/^\s*(?:public|private|protected|internal|const|\s)*\s*(?:val|var)\s+(\w+)/, "property"],
+  ],
+
+  ".scala": [
+    [/^\s*(?:private|protected|override|final|implicit|\s)*\s*def\s+(\w+)/, "def"],
+    [/^\s*(?:private|protected|final|sealed|abstract|case|\s)*\s*(?:class|trait|object|case\s+class)\s+(\w+)/, "class"],
+    [/^\s*(?:private|protected|val|var|\s)*\s*(?:val|var)\s+(\w+)/, "val"],
+  ],
+
+  ".lua": [
+    [/^\s*function\s+(\w+)/, "function"],
+    [/^\s*local\s+function\s+(\w+)/, "function"],
+    [/^\s*function\s+(\w+)\.(\w+)/, "method"],
+    [/^\s*function\s+(\w+):(\w+)/, "method"],
+    [/^\s*local\s+(\w+)\s*=\s*\{/, "table"],
+  ],
+
+  ".html": [
+    [/^\s*<!--\s*(.+?)\s*-->/, "section"],
+    [/^\s*<[a-z]+\b[^>]*\bid\s*=\s*["']([^"']+)["'][^>]*>/, "id"],
+    [/^\s*<(section|nav|header|footer|main|article|aside|template|form|table)\b[^>]*>/, "tag"],
+    [/^\s*<(script|style)\b[^>]*>/, "block"],
+  ],
+  ".htm": null,
+
+  ".css": [
+    [/^\s*@(media|keyframes|font-face|import|supports)\b/, "at-rule"],
+    [/^\s*\/\*\s*(.+?)\s*\*\//, "section"],
+    [/^\s*([.#]?[a-zA-Z][a-zA-Z0-9_-]*)\s*\{/, "rule"],
+  ],
+  ".scss": [
+    [/^\s*@(media|keyframes|font-face|import|supports|mixin|include|function)\b/, "at-rule"],
+    [/^\s*\/\/\s*(.+)$/, "comment"],
+    [/^\s*\/\*\s*(.+?)\s*\*\//, "section"],
+    [/^\s*([.#]?[a-zA-Z][a-zA-Z0-9_-]*)\s*\{/, "rule"],
+  ],
+  ".sass": null,
+  ".less": null,
+
+  ".sh": [
+    [/^\s*function\s+(\w+)\s*\(/, "function"],
+    [/^\s*(\w+)\s*\(\s*\)\s*\{/, "function"],
+    [/^\s*#\s*(.+)$/, "comment"],
+  ],
+  ".bash": null,
+  ".zsh": null,
+
+  ".ps1": [
+    [/^\s*function\s+(\w+)/, "function"],
+    [/^\s*class\s+(\w+)/, "class"],
+    [/^\s*enum\s+(\w+)/, "enum"],
+    [/^\s*filter\s+(\w+)/, "filter"],
+    [/^\s*#\s*(.+)$/, "comment"],
+  ],
+  ".psm1": null,
+
+  ".sql": [
+    [/^\s*CREATE\s+(?:TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER)\s+(\w+)/i, "create"],
+    [/^\s*ALTER\s+(?:TABLE|VIEW|INDEX|PROCEDURE|FUNCTION)\s+(\w+)/i, "alter"],
+    [/^\s*DROP\s+(?:TABLE|VIEW|INDEX|PROCEDURE|FUNCTION)\s+(\w+)/i, "drop"],
+    [/^\s*INSERT\s+INTO\s+(\w+)/i, "insert"],
+    [/^\s*SELECT\b.*?\bFROM\s+(\w+)/is, "select"],
+    [/^\s*--\s*(.+)$/, "comment"],
+  ],
+
+  ".dart": [
+    [/^\s*(?:abstract\s+)?(?:class|enum|mixin|typedef)\s+(\w+)/, "type"],
+    [/^\s*(?:static\s+)?\w+\s+(\w+)\s*\(/, "function"],
+    [/^\s*(?:static\s+)?\w+\s+get\s+(\w+)/, "getter"],
+    [/^\s*set\s+(\w+)\s*\(/, "setter"],
+    [/^\s*\/\/\/?\s*(.+)$/, "comment"],
+  ],
+
+  ".vue": [
+    [/^\s*<template>/, "template"],
+    [/^\s*<script[^>]*>/, "script"],
+    [/^\s*<style[^>]*>/, "style"],
+    [/^\s*<!--\s*(.+?)\s*-->/, "comment"],
+  ],
+
+  ".svelte": [
+    [/^\s*<script[^>]*>/, "script"],
+    [/^\s*<style[^>]*>/, "style"],
+    [/^\s*<!--\s*(.+?)\s*-->/, "comment"],
+  ],
+
+  "dockerfile": [
+    [/^\s*(FROM)\s+\S+/, "from"],
+    [/^\s*(RUN)\s/, "run"],
+    [/^\s*(CMD)\s/, "cmd"],
+    [/^\s*(ENTRYPOINT)\s/, "entrypoint"],
+    [/^\s*(COPY)\s/, "copy"],
+    [/^\s*(ADD)\s/, "add"],
+    [/^\s*(ENV)\s/, "env"],
+    [/^\s*(ARG)\s/, "arg"],
+    [/^\s*(WORKDIR)\s/, "workdir"],
+    [/^\s*(EXPOSE)\s/, "expose"],
+    [/^\s*(VOLUME)\s/, "volume"],
+    [/^\s*(LABEL)\s/, "label"],
+    [/^\s*(HEALTHCHECK)\s/, "healthcheck"],
+    [/^\s*(SHELL)\s/, "shell"],
+  ],
+};
+
+// Extension alias map
+const EXT_ALIASES = {
+  ".jsx": ".js", ".mjs": ".js", ".cjs": ".js",
+  ".tsx": ".ts",
+  ".cc": ".cpp", ".h": ".c", ".hpp": ".cpp",
+  ".htm": ".html",
+  ".sass": ".scss",
+  ".bash": ".sh", ".zsh": ".sh",
+  ".psm1": ".ps1",
+  ".less": ".css",
+};
+
+// --- Helpers ---
+
+function n(path) {
+  return path.replace(/\\/g, "/");
+}
+
+function getExt(filePath) {
+  const normalized = n(filePath);
+  const basename = normalized.split("/").pop() || "";
+  // Dockerfile (case-insensitive, with optional .suffix)
+  if (/^dockerfile(?:\.|$)/i.test(basename)) return "dockerfile";
+  const dot = basename.lastIndexOf(".");
+  if (dot === -1) return "";
+  return basename.slice(dot).toLowerCase();
+}
+
+function getRegexPatterns(ext) {
+  let patterns = REGEX_PATTERNS[ext];
+  if (patterns === null) {
+    const base = EXT_ALIASES[ext];
+    patterns = base ? REGEX_PATTERNS[base] : null;
+  }
+  return patterns;
+}
+
+function isMemoryFile(filePath) {
+  const normalized = n(filePath);
+  return normalized.includes(".letta/") && normalized.includes("/memory/");
+}
+
+/**
+ * Resolve a possibly-relative file_path against the event's working directory.
+ * Returns absolute path or null if unable to resolve.
+ */
+function resolvePath(filePath, event) {
+  if (!filePath) return null;
+  const normalized = n(filePath);
+
+  // Already absolute (Windows drive letter or Unix root)
+  if (/^[A-Za-z]:[/\\]/i.test(normalized) || normalized.startsWith("/")) {
+    return normalized;
+  }
+
+  // Relative — resolve against workingDirectory or cwd
+  const cwd = event.workingDirectory || event.cwd || process.cwd();
+  return n(cwd).replace(/\/+$/, "") + "/" + normalized;
+}
+
+/**
+ * True when the agent provided a valid offset (anchored read).
+ * An anchored read means the agent already has a target location
+ * (e.g. from the outline) and knows where it's going.
+ *   - Positive number bypasses the block.
+ *   - 0 / null / undefined do NOT bypass (full-file read).
+ *   - Negative numbers do NOT bypass (invalid).
+ */
+function hasAnchoredOffset(args) {
+  const offset = args?.offset;
+  return typeof offset === "number" && offset > 0;
+}
+
+/**
+ * Count lines in a UTF-8 buffer by counting LF (0x0A) bytes.
+ */
+function countLinesFromBuffer(buf) {
+  let count = 1;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 10) count++;
+  }
+  return count;
+}
+
+/**
+ * Shared regex outline backend.
+ * Returns an array of "L{line}: {kind} {name}" strings, or null.
+ */
+function regexOutlineLines(filePath, ext) {
+  const patterns = getRegexPatterns(ext);
+  if (!patterns) return null;
+
+  let content;
+  try {
+    content = readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const lines = content.split("\n");
+  const tags = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    for (const [regex, kind, excludeControlFlow] of patterns) {
+      const match = lines[i].match(regex);
+      if (match) {
+        if (excludeControlFlow && isControlFlow(match[1])) continue;
+        tags.push(`  L${i + 1}: ${kind} ${match[1]}`);
+        break;
+      }
+    }
+  }
+
+  return tags.length > 0 ? tags : null;
+}
+
+/**
+ * Build outline string from raw lines, capped by entry count and total characters.
+ * Reserves room for the truncation hint so the final result stays within MAX_OUTLINE_CHARS.
+ * Also accepts a pre-built string (for fallback paths) and caps that too.
+ */
+function buildCappedOutline(outlineLines, lineCount) {
+  let result;
+  let trimmed = false;
+
+  if (Array.isArray(outlineLines)) {
+    // Cap by entry count
+    if (outlineLines.length > MAX_OUTLINE_ENTRIES) {
+      outlineLines = outlineLines.slice(0, MAX_OUTLINE_ENTRIES);
+      trimmed = true;
+    }
+    result = outlineLines.join("\n");
+  } else {
+    // Already a string (fallback output)
+    result = String(outlineLines);
+  }
+
+  // Build hint now so we know its length when capping
+  const TRUNCATION_HINT = `\n  ... (${lineCount} total lines, outline truncated — use the shown symbols to choose a targeted Read range)`;
+
+  // Character cap — reserve room for the hint if we might append it
+  if (result.length > MAX_OUTLINE_CHARS - TRUNCATION_HINT.length) {
+    const effectiveLimit = MAX_OUTLINE_CHARS - TRUNCATION_HINT.length;
+    const truncated = result.slice(0, effectiveLimit);
+    const lastNewline = truncated.lastIndexOf("\n");
+    result = lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated;
+    trimmed = true;
+  }
+
+  if (trimmed) {
+    result += TRUNCATION_HINT;
+  }
+
+  return result;
+}
+
+/**
+ * Get or generate a cached outline for a file path.
+ * Reads the file once per cache miss: stats for mtime+size, reads buffer,
+ * counts lines from buffer, decodes for regex.
+ * Cache key = resolvedPath_mtime_size.
+ * Returns { outline, lineCount, bytes }.
+ */
+function getOutline(filePath, ext) {
+  // Stat once for mtime + size
+  let stat;
+  try {
+    stat = statSync(filePath);
+  } catch {
+    return { outline: null, lineCount: 0, bytes: 0 };
+  }
+
+  const cacheKey = `${filePath}_${stat.mtimeMs}_${stat.size}`;
+
+  // Cache key includes mtime and size so file changes produce a new entry
+  const cached = outlineCache.get(cacheKey);
+  if (cached) return cached;
+
+  // Read file buffer once
+  let buf;
+  try {
+    buf = readFileSync(filePath);
+  } catch {
+    return { outline: null, lineCount: 0, bytes: 0 };
+  }
+
+  const lineCount = countLinesFromBuffer(buf);
+  const bytes = stat.size;
+
+  let outline = null;
+
+  // Try regex patterns first (synchronous, zero dependencies)
+  const regexPatterns = getRegexPatterns(ext);
+  if (regexPatterns) {
+    try {
+      const content = buf.toString("utf-8");
+      const lines = content.split("\n");
+      const rawLines = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        for (const [regex, kind, excludeControlFlow] of regexPatterns) {
+          const match = lines[i].match(regex);
+          if (match) {
+            if (excludeControlFlow && isControlFlow(match[1])) continue;
+            rawLines.push(`  L${i + 1}: ${kind} ${match[1]}`);
+            break;
+          }
+        }
+      }
+
+      if (rawLines.length > 0) {
+        outline = buildCappedOutline(rawLines, lineCount);
+      }
+    } catch {
+      // regex parse error — fall through to fallback
+    }
+  }
+
+  if (!outline) {
+    // Fallback — capped
+    try {
+      const content = buf.toString("utf-8");
+      const lines = content.split("\n");
+      const head = lines.slice(0, 15).map((l, i) => {
+        const line = l.length > 200 ? l.slice(0, 200) + "..." : l;
+        return `  L${i + 1}: ${line}`;
+      }).join("\n");
+      const fallbackText = `File has ${lineCount} lines (no outline backend available).\nFirst 15 lines:\n${head}`;
+      outline = buildCappedOutline(fallbackText, lineCount);
+    } catch {
+      outline = buildCappedOutline(`File has ${lineCount} lines. No outline backend available.`, lineCount);
+    }
+  }
+
+  const result = { outline, lineCount, bytes };
+
+  // Cache (evict oldest if over max)
+  if (outlineCache.size >= OUTLINE_CACHE_MAX) {
+    const firstKey = outlineCache.keys().next().value;
+    outlineCache.delete(firstKey);
+  }
+  outlineCache.set(cacheKey, result);
+
+  return result;
+}
+
+// --- Ctags / Python detection ---
+
+async function checkCtags() {
+  try {
+    await execFileAsync("ctags", ["--version"], { timeout: 2000 });
+    ctagsPath = "ctags";
+    return true;
+  } catch {
+    // check fallback paths
+  }
+
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  const fallbackPaths = [
+    `${home}\\AppData\\Local\\Microsoft\\WinGet\\Packages\\UniversalCtags.Ctags_Microsoft.Winget.Source_8wekyb3d8bbwe\\ctags.exe`,
+    `${home}\\scoop\\apps\\universal-ctags\\current\\ctags.exe`,
+    "/opt/homebrew/bin/ctags",
+    "/usr/local/bin/ctags",
+    "/usr/bin/ctags",
+  ];
+
+  for (const p of fallbackPaths) {
+    try {
+      await execFileAsync(p, ["--version"], { timeout: 2000 });
+      ctagsPath = p;
+      return true;
+    } catch {
+      // try next
+    }
+  }
+
+  ctagsPath = false;
+  return false;
+}
+
+async function findPython() {
+  if (pythonExe !== null) return pythonExe;
+  for (const cmd of ["python", "python3"]) {
+    try {
+      await execFileAsync(cmd, ["--version"], { timeout: 2000 });
+      pythonExe = cmd;
+      return cmd;
+    } catch {
+      // try next
+    }
+  }
+  pythonExe = false;
+  return false;
+}
+
+async function outlineWithPython(filePath) {
+  const py = await findPython();
+  if (!py) throw new Error("python not found");
+
+  const script =
+    "import ast,sys;f=open(sys.argv[1],encoding='utf-8');src=f.read();f.close();tree=ast.parse(src);out=[];[out.append('  L{}-{}: {} {}'.format(n.lineno,getattr(n,'end_lineno',n.lineno),'class' if isinstance(n,ast.ClassDef) else 'def',n.name)) for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))];print(chr(10).join(out))";
+
+  const { stdout } = await execFileAsync(py, ["-c", script, filePath], {
+    timeout: 5000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  return stdout.trim();
+}
+
+async function outlineWithCtags(filePath) {
+  const exe = ctagsPath || "ctags";
+  const { stdout } = await execFileAsync(
+    exe,
+    ["--output-format=json", "--fields=+lnK", filePath],
+    { timeout: 5000, maxBuffer: 2 * 1024 * 1024 },
+  );
+
+  const USEFUL_KINDS = new Set([
+    "class", "method", "function", "interface", "struct", "enum",
+    "typedef", "namespace", "module", "constructor", "property",
+  ]);
+
+  const tags = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((t) => t.line && t.name && USEFUL_KINDS.has(t.kind))
+    .sort((a, b) => a.line - b.line);
+
+  return tags.map((t) => `  L${t.line}: ${t.kind} ${t.name}`).join("\n");
+}
+
+// --- Mod activation ---
+
+export default function activate(letta) {
+  const disposers = [];
+
+  // 1) Permission overlay: block full-file reads on large code files
+  if (letta.capabilities.permissions) {
+    disposers.push(
+      letta.permissions.register({
+        id: "code-outline-enforce",
+        description:
+          `Block Read-family tools on code files over ${LINE_THRESHOLD} lines ` +
+          `or ${(BYTE_THRESHOLD / 1024).toFixed(0)} KB. Tiny unanchored reads (< ${MIN_UNANCHORED_LIMIT} lines, no offset) are also blocked.`,
+        check(event) {
+          // Normalize read-tool family (case-insensitive, strip non-alnum)
+          if (!READ_TOOL_NAMES.has(normalizeToolName(event.toolName))) return;
+
+          // Resolve file path (handle relative paths)
+          const filePath = resolvePath(event.args?.file_path, event);
+          if (!filePath) return;
+
+          const ext = getExt(filePath);
+          if (!CODE_EXTS.has(ext)) return;
+
+          // Don't block memory files (markdown, not source code)
+          if (isMemoryFile(filePath)) return;
+
+          // Allow anchored reads — agent has a target offset (from outline)
+          if (hasAnchoredOffset(event.args)) return;
+
+          // Allow unanchored reads with sufficient limit (not tiny crawl)
+          const limit = event.args?.limit;
+          if (typeof limit === "number" && limit > 0 && limit >= MIN_UNANCHORED_LIMIT) return;
+
+          // Generate (cached, capped) outline — also gets line count and bytes
+          const cached = getOutline(filePath, ext);
+          if (!cached.outline) return; // unreadable file — let it through
+
+          const { outline, lineCount, bytes } = cached;
+
+          // Check thresholds
+          if (lineCount <= LINE_THRESHOLD && bytes <= BYTE_THRESHOLD) return;
+
+          return {
+            decision: "deny",
+            reason:
+              `File has ${lineCount} lines (${(bytes / 1024).toFixed(0)} KB). ` +
+              `Outline:\n${outline}\n\n` +
+              `Use Read with offset/limit for targeted reads. ` +
+              `Unanchored reads need limit >= ${MIN_UNANCHORED_LIMIT}.`,
+          };
+        },
+      }),
+    );
+  }
+
+  // 2) Mod tool: code_outline — multi-language structural outline
+  if (letta.capabilities.tools) {
+    disposers.push(
+      letta.tools.register({
+        name: "code_outline",
+        description:
+          "Get a structural outline (functions, classes, methods with line numbers) " +
+          "of a source code file. Use BEFORE reading large code files to find the " +
+          "right line ranges. Supported languages (zero dependencies): Python, " +
+          "JavaScript, TypeScript, Go, Rust, C, C++, Java, C#, Ruby, PHP, Swift, " +
+          "Kotlin, Scala, Lua, HTML, CSS/SCSS, Shell, PowerShell, SQL, Dart, Vue, " +
+          "Svelte, Dockerfile. No dependencies required.",
+        parameters: {
+          type: "object",
+          properties: {
+            file_path: {
+              type: "string",
+              description: "Absolute path to the source file to outline.",
+            },
+          },
+          required: ["file_path"],
+          additionalProperties: false,
+        },
+        requiresApproval: false,
+        parallelSafe: true,
+        async run(ctx) {
+          const filePath = ctx.args.file_path;
+          if (!filePath) {
+            return { status: "error", content: "file_path is required" };
+          }
+
+          const ext = getExt(filePath);
+
+          // Read file buffer for line counting
+          let buf;
+          try {
+            buf = readFileSync(filePath);
+          } catch {
+            return { status: "error", content: `Could not read file: ${filePath}` };
+          }
+          const lineCount = countLinesFromBuffer(buf);
+
+          let outline = "";
+
+          // Python ast for .py files (accurate start+end lines)
+          if (ext === ".py") {
+            try {
+              outline = await outlineWithPython(filePath);
+              if (outline) {
+                outline = buildCappedOutline(outline.split("\n"), lineCount);
+                return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
+              }
+            } catch {
+              // fall through
+            }
+          }
+
+          // Ctags for any language (if installed)
+          if (ctagsPath === null) {
+            await checkCtags();
+          }
+
+          if (ctagsPath) {
+            try {
+              outline = await outlineWithCtags(filePath);
+              if (outline) {
+                outline = buildCappedOutline(outline.split("\n"), lineCount);
+                return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
+              }
+            } catch {
+              // fall through
+            }
+          }
+
+          // Regex patterns (zero dependencies) — shared helper
+          const regexLines = regexOutlineLines(filePath, ext);
+          if (regexLines) {
+            outline = buildCappedOutline(regexLines, lineCount);
+            return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
+          }
+
+          // Fallback — capped
+          try {
+            const content = readFileSync(filePath, "utf-8");
+            const lines = content.split("\n");
+            const head = lines.slice(0, 15).map((l, i) => {
+              const line = l.length > 200 ? l.slice(0, 200) + "..." : l;
+              return `  L${i + 1}: ${line}`;
+            }).join("\n");
+            outline = buildCappedOutline(
+              `File has ${lineCount} lines (no outline backend available).\nFirst 15 lines:\n${head}`,
+              lineCount,
+            );
+          } catch {
+            outline = buildCappedOutline(
+              `File has ${lineCount} lines. No outline backend available.`,
+              lineCount,
+            );
+          }
+          return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
+        },
+      }),
+    );
+  }
+
+  return () => {
+    for (const dispose of disposers.reverse()) dispose();
+  };
+}
