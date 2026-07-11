@@ -1,0 +1,45 @@
+{
+  "name": "@letta-ai/skill-cabinet",
+  "version": "0.1.0",
+  "description": "Live skill discovery, search, auditing, and usage provenance for Letta Code agents.",
+  "author": "HAL and Lillith",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "skills",
+    "discovery",
+    "catalog",
+    "agent-memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/skill-cabinet"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods",
+    "smoke-test.mjs"
+  ],
+  "scripts": {
+    "test": "node smoke-test.mjs"
+  },
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "commands",
+      "tools",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.20"
+    }
+  }
+}

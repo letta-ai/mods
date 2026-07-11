@@ -83,6 +83,7 @@ packages/
 ├── pets/                 # Terminal pets that animate based on turn and tool activity
 ├── plan-mode/            # Plan-mode style workflow
 ├── soft-landing/         # Recovery slash command for drift, compaction, or context overload
+├── skill-cabinet/        # Live skill discovery, search, auditing, and usage provenance
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
 ├── sprite/               # Persistent pet that grows stats from real agent work
 ├── threadkeeper/         # Live operational anchors for commitments and open loops
@@ -116,6 +117,7 @@ scripts/
 - **pets** - Terminal pets that animate based on turn and tool activity
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **soft-landing** - Recovery slash command for drift, compaction, or context overload
+- **skill-cabinet** - Live skill discovery, search, auditing, and usage provenance for agents with broad capability surfaces
 - **spotify-statusline** - macOS Spotify now-playing statusline
 - **sprite** - Persistent pet that grows stats from real agent work
 - **threadkeeper** - Live operational anchors for commitments, open loops, temporary boundaries, modes, drift guards, and due state

@@ -1,0 +1,204 @@
+# Skill Cabinet
+
+Skill Cabinet is a Letta Code mod for agents with more capabilities than working memory can comfortably keep salient. It scans the skill roots Letta Code uses, gives the agent a searchable `skill_catalog` tool, adds a `/skills` command for humans, and records when it observes completed `Skill` tool calls.
+
+The problem is simple: an agent may have exactly the right skill installed and still fail to reach for it. Skill Cabinet makes the available surface inspectable without requiring the agent to remember the name of the thing that helps it remember names.
+
+## Features
+
+- Live discovery across bundled, global, agent-owned, and project skill roots
+- Resolver-like source precedence for duplicate skill IDs
+- Agent-callable `skill_catalog` search and inventory tool
+- `/skills` summary, search, category, source, dust-check, path, and audit views
+- Frontmatter-first categories, with conservative keyword inference as a fallback
+- Per-agent local usage provenance from completed `Skill` tool calls
+- Explicit provenance caveat: “never observed” is not “never used historically”
+- On-demand local Markdown and JSON snapshots
+- Metadata anomaly, duplicate-ID, uncategorized-skill, and scan-error counts
+- No network calls, telemetry, or mutation of skill files
+
+## Install
+
+Install the published package with Letta Code:
+
+```bash
+letta install npm:@letta-ai/skill-cabinet
+```
+
+Then reload mods:
+
+```text
+/reload
+```
+
+If a mod ever breaks startup, recover with:
+
+```bash
+letta --no-mods
+# or
+LETTA_DISABLE_MODS=1 letta
+```
+
+## What it scans
+
+Skill Cabinet checks these roots, in increasing precedence order:
+
+1. Letta Code's bundled skills
+2. `~/.letta/skills`
+3. the current agent's `memory/skills` directory
+4. `<cwd>/.skills`
+5. `<cwd>/.agents/skills`
+
+When several roots define the same skill ID, the higher-precedence copy is selected and the shadowed copy is reported by the audit. Project roots are based on the current command/tool context, so changing working directories can change the live cabinet.
+
+Bundled skill discovery is automatic for common Linux, macOS Desktop, npm-prefix, and Windows npm layouts. Set `LETTA_BUNDLED_SKILLS_DIR` if Letta Code is installed somewhere unusual.
+
+## Agent tool
+
+Tool name: `skill_catalog`
+
+Supported read-only actions:
+
+- `summary` — counts by source and category, plus audit signals
+- `search` — search IDs, names, descriptions, tags, and categories
+- `category` — list one category
+- `source` — list `agent`, `project`, `global`, or `bundled` skills
+- `forgotten` — show least-recently or never-observed skills
+
+Example:
+
+```json
+{
+  "action": "search",
+  "query": "bird observations",
+  "limit": 5,
+  "include_hidden": false
+}
+```
+
+The tool is read-only and does not require approval. The `/skills audit` command is the explicit operation that writes local snapshots.
+
+## Slash command
+
+Show a summary:
+
+```text
+/skills
+```
+
+Search:
+
+```text
+/skills bird
+/skills voice memo
+```
+
+Browse:
+
+```text
+/skills categories
+/skills category voice
+/skills source agent
+/skills source project
+```
+
+Find capabilities that may have gathered dust:
+
+```text
+/skills forgotten
+/skills forgotten 30
+```
+
+Audit and write point-in-time snapshots:
+
+```text
+/skills audit
+```
+
+Inspect roots and state paths:
+
+```text
+/skills paths
+```
+
+If `/skills` conflicts with another command, set a different command ID before loading the mod:
+
+```bash
+SKILL_CABINET_COMMAND=cabinet
+```
+
+Then use `/cabinet` instead.
+
+## Categories
+
+Skill Cabinet prefers the skill's own `category:` frontmatter. Category names are normalized to lowercase slugs and custom categories are preserved.
+
+When no category is declared, the cabinet conservatively infers one of:
+
+- Care & presence
+- Voice & audio
+- Social & reaching
+- Memory & self-governance
+- Media & creation
+- Live world & reference
+- Engineering & orchestration
+- Games & playtesting
+- Uncategorized
+
+Inference is an organizational convenience, not a claim about what a skill fundamentally is. `/skills audit` exposes uncategorized and anomalous entries so maintainers can improve frontmatter instead of growing a private hardcoded taxonomy.
+
+## Usage provenance
+
+While the mod is loaded, it listens for completed `Skill` tool calls and stores:
+
+- first observed use
+- last observed use
+- completed use count
+- successful and failed use counts
+- last observed status
+
+This observation window begins when the per-agent state file is first created. A skill shown as “never observed” may have been used before the mod was installed, while the observer was unloaded, or in a runtime that did not emit the event. Skill Cabinet says exactly what it knows and no more.
+
+## Local state
+
+State is scoped by agent and stored under:
+
+```text
+~/.letta/mods/data/skill-cabinet/<agent_id>/
+├── state.json
+├── catalog.json
+└── catalog.md
+```
+
+Only `state.json` is written automatically, and only after an observed `Skill` call. `catalog.json` and `catalog.md` are regenerated by `/skills audit`.
+
+Override the data root for testing or custom layouts:
+
+```bash
+SKILL_CABINET_DATA_DIR=/some/local/path
+```
+
+The mod requires a scoped agent ID before reading or writing usage state. It does not fall back to shared `unknown-agent` state.
+
+## Safety and privacy
+
+- No network calls
+- No telemetry
+- No modification of skills or agent memory
+- No automatic Markdown generation inside a git-backed memory repository
+- Per-agent state instead of shared global usage history
+- Search results omit local paths; paths are shown only by explicit `/skills paths` or local audit artifacts
+- Atomic local writes for state and snapshots
+- Symlink-cycle protection and a 1 MB limit per `SKILL.md`
+
+Mods are trusted local code. Review the source before installing third-party packages.
+
+## Development
+
+From this repository:
+
+```bash
+npm run validate
+node packages/skill-cabinet/smoke-test.mjs
+node --check packages/skill-cabinet/mods/index.mjs
+```
