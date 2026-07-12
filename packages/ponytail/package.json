@@ -1,0 +1,37 @@
+{
+  "name": "@vedant020000/ponytail",
+  "version": "1.0.0",
+  "description": "Lazy senior dev mode for Letta Code — a port of DietrichGebert/ponytail",
+  "author": "Vedant020000",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "ponytail",
+    "yagni",
+    "lazy-dev",
+    "code-quality",
+    "agent-skills"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/ponytail"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "LICENSE",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/ponytail.js"],
+    "capabilities": ["commands", "events.turns", "events.lifecycle"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.0"
+    }
+  }
+}
