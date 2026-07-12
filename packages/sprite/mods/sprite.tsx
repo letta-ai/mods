@@ -920,7 +920,10 @@ function statForTool(name: string): (typeof STAT_KEYS)[number] {
 // ---------------------------------------------------------------------------
 
 export default function activate(letta: any) {
-  if (!letta.capabilities.ui.panels) return;
+  // Sprites are Tamagotchi-like companions for agents, not for a specific UI.
+  // Keep tools/events available in headless channel listeners even when there is
+  // no statusline panel to render.
+  const hasPanels = Boolean(letta.capabilities.ui.panels);
 
   const disposers: Array<() => void> = [];
   const state = loadState();
@@ -1151,32 +1154,34 @@ export default function activate(letta: any) {
 
   // -- panel ----------------------------------------------------------------
 
-  const panel = letta.ui.openPanel({
-    id: "sprite",
-    order: -1,
-    render: ({ width, agent, row, chalk }: any) => {
-      activeAgentId = (agent && agent.id) || activeAgentId;
-      activeAgentName = (agent && agent.name) || activeAgentName;
-      const sprite = getSprite(activeAgentId);
-      if (!sprite) return "";
-      if (setting(sprite, "visible") !== "on") return "";
+  const panel = hasPanels
+    ? letta.ui.openPanel({
+        id: "sprite",
+        order: -1,
+        render: ({ width, agent, row, chalk }: any) => {
+          activeAgentId = (agent && agent.id) || activeAgentId;
+          activeAgentName = (agent && agent.name) || activeAgentName;
+          const sprite = getSprite(activeAgentId);
+          if (!sprite) return "";
+          if (setting(sprite, "visible") !== "on") return "";
 
-      if (sprite.phase === "egg") {
-        const frame = EGG_FRAMES[tickCount % EGG_FRAMES.length];
-        return row(`${" ".repeat(x)}${frame}`, chalk.dim("something is coming"), width);
-      }
+          if (sprite.phase === "egg") {
+            const frame = EGG_FRAMES[tickCount % EGG_FRAMES.length];
+            return row(`${" ".repeat(x)}${frame}`, chalk.dim("something is coming"), width);
+          }
 
-      const sp = speciesOf(sprite);
-      let face: string = sp.poses[pose] ?? sp.poses.idle;
-      if (sleeping || dozing) face = sp.poses.sleep;
+          const sp = speciesOf(sprite);
+          let face: string = sp.poses[pose] ?? sp.poses.idle;
+          if (sleeping || dozing) face = sp.poses.sleep;
 
-      const shinyMark = sprite.shiny ? chalk.yellowBright("✦") : "";
-      const label = `${chalk.cyan(sprite.name)}${shinyMark} ${chalk.dim(`·Lv.${sprite.level}`)}`;
-      const pad = " ".repeat(Math.max(0, Math.min(x, 16)));
-      const right = bubble && Date.now() < bubbleUntil ? chalk.dim(`“${bubble}”`) : "";
-      return row(`${pad}${face}  ${label}`, right, width);
-    },
-  });
+          const shinyMark = sprite.shiny ? chalk.yellowBright("✦") : "";
+          const label = `${chalk.cyan(sprite.name)}${shinyMark} ${chalk.dim(`·Lv.${sprite.level}`)}`;
+          const pad = " ".repeat(Math.max(0, Math.min(x, 16)));
+          const right = bubble && Date.now() < bubbleUntil ? chalk.dim(`“${bubble}”`) : "";
+          return row(`${pad}${face}  ${label}`, right, width);
+        },
+      })
+    : { update() {}, close() {} };
   disposers.push(() => panel.close());
 
   // -- heartbeat tick (animation + persistence) -----------------------------

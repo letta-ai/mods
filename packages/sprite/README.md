@@ -120,6 +120,12 @@ human sees, so action results carry its responses (petting returns what it
 said), and `sprite_status` reports level, stats, mood, and a little diary of
 recent utterances — the owner's way of catching up on its companion.
 
+The companion belongs to the agent, not to a particular UI. In headless
+surfaces such as channel listeners, where no statusline panel exists, the
+visual panel is skipped but the agent tools and passive event hooks still
+activate. A Signal or Telegram conversation should be able to ask the agent to
+check on or pet its sprite just like a CLI conversation can.
+
 ## Commands
 
 | Command | What |

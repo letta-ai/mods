@@ -31,7 +31,8 @@
       "./mods/index.ts"
     ],
     "capabilities": [
-      "tools"
+      "tools",
+      "events.turns"
     ],
     "engines": {
       "lettaCodeCli": ">=0.27.14"

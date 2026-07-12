@@ -7,14 +7,27 @@ import { reviewAndAuthor } from "./autopilot";
 /** Anti-bloat gate: refuse near-duplicate skills (token overlap on description), scanning all dirs. */
 export function dedupCheck(name: string, description: string, dirs: string[] = [GLOBAL_SKILLS]): { dup: boolean; reason: string; name: string; overlap: number } {
   const words = new Set(description.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+  const overlapWith = (desc: string): number => {
+    const dw = new Set(desc.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+    let inter = 0; for (const w of words) if (dw.has(w)) inter++;
+    return words.size ? inter / words.size : 0;
+  };
   let worst = { name: "", overlap: 0 };
   for (const dir of dirs) {
     for (const n of listSkillNames(dir)) {
       if (n === name) return { dup: true, reason: `skill '${n}' already exists — patch it, don't duplicate`, name: n, overlap: 1 };
-      const dw = new Set(skillDesc(dir, n).toLowerCase().split(/\W+/).filter((w) => w.length > 3));
-      let inter = 0; for (const w of words) if (dw.has(w)) inter++;
-      const overlap = words.size ? inter / words.size : 0;
+      const overlap = overlapWith(skillDesc(dir, n));
       if (overlap > worst.overlap) worst = { name: n, overlap };
+    }
+    // P0 2b · RETIRED QUARANTINE: near-duplicates of retired skills must not be silently recreated
+    // under a new name. retiredSkillBlocker catches same-name recreates; this catches renamed clones.
+    // (Receipt: the recovering-from-npx-failures class — retire, then recreate a sibling next day.)
+    const retiredRoot = join(dir, "_retired");
+    for (const rn of listSkillNames(retiredRoot)) {
+      const base = rn.replace(/-\d{4}-\d{2}-\d{2}T[\dZ.-]+$/, "");
+      if (base === name) return { dup: true, reason: `retired skill '${base}' exists in quarantine (${retiredRoot}/${rn}) — restore it or absorb instead of recreating`, name: base, overlap: 1 };
+      const overlap = overlapWith(skillDesc(retiredRoot, rn));
+      if (overlap > 0.6) return { dup: true, reason: `>60% description overlap with RETIRED skill '${base}' (${retiredRoot}/${rn}) — quarantined: restore/absorb instead of recreating a sibling`, name: base, overlap };
     }
   }
   return { dup: worst.overlap > 0.6, reason: worst.overlap > 0.6 ? `>60% description overlap with '${worst.name}' — patch/absorb instead` : "", name: worst.name, overlap: worst.overlap };

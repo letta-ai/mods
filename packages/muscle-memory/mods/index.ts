@@ -34,13 +34,13 @@ export type { Defense } from "./engram";
 export { detect, detectRepairChains, isSkillWorthy } from "./detect";
 export { draftWithRepair } from "./gate";
 export { preserveExistingFrontmatterMetadata, isAmbiguousExistingRoute, compareSkillSections } from "./autopilot";
-import { GLOBAL_SKILLS, LOG_PATH, MM, MM_TAG, NEOCORTEX_BLOCK, OUTCOME_PATH, RECEIPTS_DIR, SESSIONS_PATH, STAGED_DIR, STATE_DIR, TELEMETRY_PATH, agentSkillsDir, appendJsonl, appendMeshFeed, appendUiEvent, ensureDir, hash, isManaged, listSkillNames, loadExperience, loadMeshFeed, loadRows, loadUiEvents, readSkill, readUiState, redactFragment, removeSupportFile, renderMeshFeed, scanDirs, scanSkillContent, scanSupportFile, setLivePanel, skillDesc, slug, validateSupportPath, writeSkill, writeSupportFile, writeUiState } from "./core";
+import { GLOBAL_SKILLS, LOG_PATH, MM, MM_TAG, NEOCORTEX_BLOCK, OUTCOME_PATH, RECEIPTS_DIR, SESSIONS_PATH, STAGED_DIR, STATE_DIR, TELEMETRY_PATH, agentSkillsDir, appendJsonl, appendMeshFeed, appendUiEvent, createDedupeSurface, ensureDir, hash, isManaged, listSkillNames, loadExperience, loadMeshFeed, loadRows, loadUiEvents, readSkill, readUiState, redactFragment, removeSupportFile, renderMeshFeed, scanDirs, scanSkillContent, scanSupportFile, setLivePanel, skillDesc, slug, validateSupportPath, writeSkill, writeSupportFile, writeUiState } from "./core";
 import { buildCrossConversationEvidence, classifyError, commandTemplate, correlateOutcomes, detect, detectAntiPatterns, detectInvocationGotchas, detectRepairChains, detectSequences, detectTemplates, fingerprint, impactScore, inferOutcomes, isDurableLesson, isValidSkillName, maturityScore, mergeOutcomes, stepSig } from "./detect";
 import { auditSkills, buildDiffFragment, candidateDescription, candidateName, crossShelfDuplicates, dedupCheck, draftSkillFromCandidate, draftWithRepair, effectivenessVerdict, findCandidate, lintSkillDraft, repairForCandidate, sotaQualityGaps } from "./gate";
 import { approveStagedPublish, catalogPrivacyScan, findSimilarSkills, liveSkillVisible, publishHardBlocks, publishMetadata, publishPlan, publishSkillToCatalog, publishTier, publishVisibilityReceipt, publishabilityScore, sanitizeForPublish, stageSanitizedPublish } from "./publish";
-import { Defense, ENGRAM, GuardMode, buildDefenses, buildNeocortexBlock, captureTagged, engramConsolidate, expectationFor, guardDecision, interleave, labileSkills, nativeEnabled, preActionDefense, predictionError, renderEngramDigest, replayQueue, reverseReplay, skillRetrieved, syncNeocortexBlock, tagExperience } from "./engram";
+import { Defense, ENGRAM, GuardMode, buildDefenses, buildNeocortexBlock, captureTagged, engramConsolidate, expectationFor, guardDecision, interleave, labileSkills, nativeEnabled, preActionDefense, predictionError, renderEngramDigest, replayQueue, reverseReplay, semanticSkillCandidates, skillRetrieved, syncNeocortexBlock, syncSkillPassages, tagExperience } from "./engram";
 import { CURATOR, aggregateTelemetry, buildRegistry, bumpUsage, churnSignal, coverageMap, curateManagedSkills, curatorPass, isPinned, lifecycleTransition, managedSkillUsage, restoreManagedSkill, retireManagedSkill, retiredSkillBlocker, runAutonomousPrune, setPinned, skillVerbs, specDrift } from "./lifecycle";
-import { AUTOPILOT_DEFAULT, AutopilotMode, REVIEW_PROMPT, autopilotPlan, buildEvidenceManifest, executeAutopilotPlan, forkAuthor, graduateStagedSkill, isHighConfidenceCreate, loadHandledReflects, managedView, pickUpdateTarget, reflectSignature, retrievePreferences, reviewAndAuthor, runAutopilot, runReflectiveReview, searchSkills, streamChunkText } from "./autopilot";
+import { AUTOPILOT_DEFAULT, AutopilotMode, REVIEW_PROMPT, SemanticFn, applySemanticEvidence, autopilotPlan, buildEvidenceManifest, executeAutopilotPlan, forkAuthor, graduateStagedSkill, isHighConfidenceCreate, loadHandledReflects, managedView, pickUpdateTarget, reflectSignature, retrievePreferences, reviewAndAuthor, runAutopilot, runReflectiveReview, searchSkills, streamChunkText } from "./autopilot";
 import { renderMuscleMemoryPanel, summarizeReflectActions } from "./ui";
 
 
@@ -57,7 +57,8 @@ export const __mm = { commandTemplate, fingerprint, redactFragment, buildDiffFra
   writeSkill, isManaged, listSkillNames, readSkill, retireManagedSkill, agentSkillsDir, scanDirs, MM_TAG,
   // v5 ENGRAM — CLS loop core (pure)
   ENGRAM, expectationFor, predictionError, tagExperience, captureTagged, skillRetrieved, labileSkills, replayQueue, reverseReplay, interleave, engramConsolidate, renderEngramDigest,
-  guardDecision, buildNeocortexBlock, nativeEnabled, NEOCORTEX_BLOCK };
+  guardDecision, buildNeocortexBlock, nativeEnabled, NEOCORTEX_BLOCK,
+  applySemanticEvidence, semanticSkillCandidates, syncSkillPassages };
 
 
 export default function activate(letta: any) {
@@ -68,6 +69,10 @@ export default function activate(letta: any) {
   let defensesCache: Defense[] = [];
   const refreshDefenses = () => { try { defensesCache = buildDefenses(loadExperience()); } catch { defensesCache = []; } };
   refreshDefenses();
+
+  // E4 SEMANTIC ROUTING: embedding recall over the mm:skill passage index (opt-in MM_NATIVE=passages).
+  // semanticSkillCandidates self-gates on env + agent id + client reachability → zero-cost no-op when off.
+  const semanticFnFor = (agentId: string | null | undefined): SemanticFn => (q, k) => semanticSkillCandidates(letta.client, agentId, q, k);
 
   // E3: ENFORCED DEFENSE OVERLAY — opt-in via MM_GUARD=ask|deny (default off). A recurring,
   // unrecovered failure muscle-memory has learned becomes a real ask/deny BEFORE the tool runs
@@ -163,10 +168,12 @@ export default function activate(letta: any) {
       refreshDefenses(); // rebuild the pre-action defense set off the hot path
       // E3.5 NATIVE NEOCORTEX: project the consolidated skill index into the agent's core memory
       // block so it is in-context every turn (opt-in MM_NATIVE=blocks). Best-effort; never blocks close.
-      if (nativeEnabled("blocks")) {
+      if (nativeEnabled("blocks") || nativeEnabled("passages")) {
         try {
           const managed = managedView(scanDirs(ctx ?? {})).map((m) => ({ name: m.name, description: m.description }));
-          void syncNeocortexBlock(letta.client, event?.agentId ?? null, buildNeocortexBlock(managed));
+          if (nativeEnabled("blocks")) void syncNeocortexBlock(letta.client, event?.agentId ?? null, buildNeocortexBlock(managed));
+          // E4: keep the mm:skill passage index fresh so semantic routing searches current shelves.
+          if (nativeEnabled("passages")) void syncSkillPassages(letta.client, event?.agentId ?? null, managed);
         } catch { /* best-effort */ }
       }
       // AUTOPILOT trigger — opt-in only (MM_AUTOPILOT=staged|auto), at session end (idle, never mid-work).
@@ -176,7 +183,7 @@ export default function activate(letta: any) {
       // reviewer authors/updates a class-level skill autonomously at session end. Default OFF.
       const rfMode = process.env.MM_REFLECT;
       if (rfMode === "staged" || rfMode === "auto") {
-        runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode })
+        runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode, semanticFn: semanticFnFor(event?.agentId ?? ctx?.agent?.id) })
           .then(() => { runAutonomousPrune(ctx ?? { agentId: event?.agentId }, { maxRetire: 1 }); try { panel?.update(); } catch { /* */ } })
           .catch(() => { /* reflection/prune must never break the app */ });
       }
@@ -202,7 +209,7 @@ export default function activate(letta: any) {
         if (ev.items < 2 || loadHandledReflects()[reflectSignature(ev)]) return; // nothing new + mature → stay quiet
       } catch { return; }
       autoReflectInFlight = true;
-      runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode })
+      runReflectiveReview(ctx ?? { agentId: event?.agentId }, { mode: rfMode, semanticFn: semanticFnFor(event?.agentId ?? ctx?.agent?.id) })
         .then(() => { runAutonomousPrune(ctx ?? { agentId: event?.agentId }, { maxRetire: 1 }); try { panel?.update(); } catch { /* */ } })
         .catch(() => { /* reflection must never break the app */ })
         .finally(() => { autoReflectInFlight = false; });
@@ -492,7 +499,7 @@ export default function activate(letta: any) {
         }
         if (a.action === "reflect") {
           // v3.1 reflective review: cross-conversation evidence → forked reviewer → update-first + gates → write.
-          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged" });
+          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged", semanticFn: semanticFnFor(ctx?.agent?.id) });
           if (r.action === "none" || r.action === "reject") return `reflect: ${r.action} — ${r.reason || ""}`;
           const graduated = !!r.wrote && !String(r.wrote).startsWith(STAGED_DIR);
           return `reflect: ${r.action} skill "${r.name}"${r.updateTarget ? ` (updated existing — anti-bloat)` : ""}${graduated ? " (graduated)" : ""} → ${r.wrote || "(write failed)"}`;
@@ -526,7 +533,7 @@ export default function activate(letta: any) {
           const retiredBlock = retiredSkillBlocker(nm, ctx);
           if (retiredBlock) return { status: "error", content: `retire-sticky blocked: ${retiredBlock}`, candidate: c };
           const desc = String(a.description || d.description);
-          const dc = dedupCheck(nm, desc, dirs);
+          const dc = dedupCheck(nm, desc, createDedupeSurface(ctx)); // P0 2b: active + staged + retired-quarantine surface
           if (dc.dup) return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.`, candidate: c };
           const lint = lintSkillDraft({ name: nm, description: desc, body: d.body }, { needsPitfalls: !!c.fixes });
           if (!lint.ok) return { status: "error", content: `authoring-linter blocked: ${lint.issues.join("; ")}`, candidate: c };
@@ -541,7 +548,7 @@ export default function activate(letta: any) {
           const nm = slug(a.name);
           const retiredBlock = retiredSkillBlocker(nm, ctx);
           if (retiredBlock) return { status: "error", content: `retire-sticky blocked: ${retiredBlock}` };
-          const dc = dedupCheck(nm, a.description, dirs);
+          const dc = dedupCheck(nm, a.description, createDedupeSurface(ctx)); // P0 2b: active + staged + retired-quarantine surface
           if (dc.dup) return { status: "error", content: `anti-bloat blocked: ${dc.reason}. Use action:patch on '${dc.name}' instead.` };
           const lint = lintSkillDraft({ name: nm, description: a.description, body: a.body });
           if (!lint.ok) return { status: "error", content: `authoring-linter blocked: ${lint.issues.join("; ")}` };
@@ -607,7 +614,7 @@ export default function activate(letta: any) {
       const a = ctx?.args || {};
       try {
         if (a.action === "reflect") {
-          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged" });
+          const r = await runReflectiveReview(ctx, { mode: a.mode === "auto" ? "auto" : "staged", semanticFn: semanticFnFor(ctx?.agent?.id) });
           if (r.action === "none" || r.action === "reject") return `reflect: ${r.action} — ${r.reason || ""}`;
           const graduated = !!r.wrote && !String(r.wrote).startsWith(STAGED_DIR);
           return `reflect: ${r.action} skill "${r.name}"${r.updateTarget ? ` (updated existing — anti-bloat)` : ""}${graduated ? " (graduated)" : ""} → ${r.wrote || "(write failed)"}`;

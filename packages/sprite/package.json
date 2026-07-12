@@ -23,7 +23,8 @@
   "files": [
     "README.md",
     "MOD.md",
-    "mods"
+    "mods",
+    "smoke-test.mjs"
   ],
   "letta": {
     "manifestVersion": 1,
@@ -42,5 +43,8 @@
     "engines": {
       "lettaCodeCli": ">=0.27.18"
     }
+  },
+  "scripts": {
+    "test": "bun smoke-test.mjs"
   }
 }

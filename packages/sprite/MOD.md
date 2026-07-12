@@ -51,6 +51,11 @@ action results carry what the pet did and said (petting returns its response),
 and `sprite_status` reports species, level, stats, mood, and a small diary of
 what it said recently — how the owner hears its companion.
 
+The sprite is agent-owned rather than UI-owned. If the host has no panel UI
+(for example, a headless channel listener), sprite skips visual rendering but
+still registers its tools and event hooks so the agent can care for the same
+companion from Signal, Telegram, Discord, or CLI turns.
+
 ## Commands
 
 | Command | What |

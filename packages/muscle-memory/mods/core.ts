@@ -323,6 +323,11 @@ export function removeSupportFile(name: string, filePath: string, ctx?: any): st
 // ════════════════════════════════════════════════════════════════════════════
 export const STAGED_DIR = join(STATE_DIR, "staged");
 
+/** P0 2b · the CREATE-lane dedupe surface: agent + global + STAGED shelves. Manual create and
+ * create_from_candidate previously deduped against scanDirs only, so a near-duplicate of a
+ * staged (not-yet-graduated) skill sailed through and sprayed siblings. */
+export function createDedupeSurface(ctx?: any): string[] { return [...new Set([...scanDirs(ctx), STAGED_DIR])]; }
+
 export const STAGED_RETIRED_DIR = join(STATE_DIR, "staged-retired");
 
 export const AUTOPILOT_STATE = join(STATE_DIR, "autopilot-state.json");

@@ -4,6 +4,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, existsSync, readFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { join } from "node:path";
 import { skillShelves, autonomousShelves, agentSkillsDir, GLOBAL_SKILLS, writeSkill } from "../mods/core";
+import { reachFn } from "../mods/engram";
 
 function withMemoryDir<T>(dir: string, fn: () => T): T {
   const orig = process.env.MEMORY_DIR; process.env.MEMORY_DIR = dir;
@@ -44,4 +45,18 @@ test("native-fit MemFS-first: MEMORY_DIR ⇒ agentSkillsDir = $MEMORY_DIR/skills
     expect(readFileSync(p, "utf8")).toContain("name: a-skill");
     expect(existsSync(join(mem, "skills", "a-skill", ".SKILL.md.tmp"))).toBe(false); // atomic: no temp leftover
   });
+});
+
+test("native-fit: reachFn binds the extracted method to its receiver (SDK resources read this._client)", () => {
+  class Resource {
+    private _client = { ok: true };
+    call(): boolean { return this._client.ok; } // throws if `this` is lost
+  }
+  const client = { agents: { passages: new Resource() } };
+  const fn = reachFn(client, ["agents", "passages", "call"]);
+  expect(fn).not.toBeNull();
+  // Unbound extraction would throw "undefined is not an object (evaluating 'this._client')" —
+  // the exact failure the live benchmark caught against the real letta-client, which the
+  // best-effort catch blocks had been swallowing into a silent no-op (MM_NATIVE=blocks sync).
+  expect(fn!()).toBe(true);
 });
