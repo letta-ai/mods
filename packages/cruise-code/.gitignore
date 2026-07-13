@@ -1,0 +1,22 @@
+# Local CruiseCode state/evidence
+.letta/
+
+# Local environment and secrets
+.env
+.env.*
+*.local
+*.secret
+*secret*
+*credential*
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/
+
+# Dependencies/build/package artifacts
+node_modules/
+dist/
+build/
+coverage/
+*.tgz

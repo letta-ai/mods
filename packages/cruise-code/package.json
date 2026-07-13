@@ -1,0 +1,42 @@
+{
+  "name": "@letta-ai/cruise-code",
+  "version": "0.1.0-alpha.1",
+  "description": "Letta Code evidence-first coding workflow for implementation tasks, UX handoffs, checks, verdicts, and reports.",
+  "author": "homebodify",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "coding-agent",
+    "evidence-first",
+    "verification",
+    "ux-handoff",
+    "cruise-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/cruise-code"
+  },
+  "files": [
+    "README.md",
+    "README.ko.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "ui.panels"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.29"
+    }
+  },
+  "license": "Apache-2.0"
+}
