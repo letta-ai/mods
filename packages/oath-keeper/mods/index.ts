@@ -333,7 +333,7 @@ function getApiConfig() {
   if (!baseUrl) {
     let discoveredPort = "";
     try {
-      const output = execSync("ss -tlnp 2>/dev/null | grep letta-code | head -1 | grep -oP '127\\.0\\.0\\.1:\\K\\d+'", { encoding: "utf8", timeout: 2000 }).trim();
+      const output = execSync("ss -tlnp 2>/dev/null | grep letta-code | head -1 | grep -oP '127\\.0\\.0\\.1:\\K\\d+' 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
       if (output) discoveredPort = output;
     } catch (e) {}
     if (discoveredPort) {
@@ -674,32 +674,28 @@ export default function activate(letta: any) {
         }
         if (lastMsg.includes("[Oath Keeper]")) return;
 
-        // Use the SAME API fetch as polling — gets the full latest assistant message
-        const latest = await fetchLatestAgentMessage();
-        if (!latest) { log("turn_end: no latest message"); return; }
-        if (latest.isDeliveryResponse) return;
+        // Use event.assistantMessage directly — no API round-trip needed
+        const msgText = event.assistantMessage || "";
+        if (!msgText || !msgText.trim()) { log("turn_end: no assistant message in event"); return; }
 
-        // Check if already scanned by polling
         const scanStore = StateStore.load("turn_end-detect");
-        if (scanStore.lastScannedMessageId === latest.id) return;
 
         // No pre-filter — send directly to LLM
         log("turn_end: sending to LLM...");
-        const detection = await confirmPromise(latest.text);
+        const detection = await confirmPromise(msgText);
         log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) : "REJECTED"));
 
         if (!detection) {
-          logFalsePositive("llm", latest.text, "turn_end");
-          scanStore.setScanned(latest.id);
+          logFalsePositive("llm", msgText, "turn_end");
           scanStore.save();
           return;
         }
 
-        scanStore.setScanned(latest.id);
+        // Dedup via promise text similarity (no message ID available from event)
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
           const { convId, agentId } = getApiConfig();
-          const oath = createOath(detection.promise, latest.userContext, convId, agentId, latest.id, "turn_end");
+          const oath = createOath(detection.promise, "(turn_end)", convId, agentId, undefined, "turn_end");
           scanStore.addOath(oath);
           scanStore.save();
           log("turn_end: oath created — " + oath.id);
