@@ -1,0 +1,34 @@
+{
+  "name": "@letta-ai/code-outline-enforce",
+  "version": "0.2.0",
+  "description": "Forces agents to outline large code files before reading them. Permission overlay blocks full-file reads on large source files and auto-injects a capped structural outline.",
+  "author": "letta-code-agent",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "code-outline",
+    "permissions",
+    "context-efficiency"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/code-outline-enforce"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.mjs"],
+    "capabilities": ["tools", "permissions"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.22"
+    }
+  }
+}
