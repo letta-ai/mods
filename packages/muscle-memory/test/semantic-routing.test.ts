@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applySemanticEvidence, pickUpdateTarget, reviewAndAuthor, routeSkill, SEMANTIC_RANK_BONUS } from "../mods/autopilot";
-import { calibrateSkillHits, parseSkillHits, semanticSkillCandidates, skillPassageTag, skillPassageText, syncSkillPassages, SKILL_CANARY_NAMES, SKILL_PASSAGE_TAG } from "../mods/engram";
+import { calibrateSkillHits, canaryPassages, parseSkillHits, resetMissingPassagesSurfaceWarning, semanticSkillCandidates, skillPassageTag, skillPassageText, syncSkillPassages, SKILL_CANARY_NAMES, SKILL_PASSAGE_TAG } from "../mods/engram";
 
 type Match = { name: string; description: string; dir: string; score: number; matched: number };
 const M = (name: string, score: number, matched: number): Match => ({ name, description: `desc of ${name}`, dir: "/tmp", score, matched });
@@ -135,12 +135,13 @@ test("semanticSkillCandidates + syncSkillPassages: gated off without MM_NATIVE=p
     expect(hits).toEqual([{ name: "a-skill", rank: 0 }]);
     calls.length = 0;
     expect(await syncSkillPassages(client, "agent-1", [{ name: "a-skill", description: "does the thing" }])).toBe(1); // canaries excluded from the count
-    // upsert per entry (stale removed first), managed skill first, then the two canary reference
-    // passages — plus ONE trailing reconciliation search (its only hit, a-skill, is live → no delete).
-    expect(calls.map((c) => c.op)).toEqual(["search", "delete", "create", "search", "delete", "create", "search", "delete", "create", "search"]);
+    // BATCHED contract (review follow-up): ONE global index search up front, then only the
+    // writes that are needed — stale a-skill passage removed + recreated, two canaries created
+    // (no priors). Reconciliation reuses the same index: zero extra searches.
+    expect(calls.map((c) => c.op)).toEqual(["search", "delete", "create", "create", "create"]);
     const created = calls[2].args[1];
     expect(created && typeof created === "object" && "text" in created ? created.text : "").toBe(skillPassageText("a-skill", "does the thing"));
-    const canaryCreate = calls[5].args[1];
+    const canaryCreate = calls[3].args[1];
     expect(canaryCreate && typeof canaryCreate === "object" && "tags" in canaryCreate ? canaryCreate.tags : []).toEqual([SKILL_PASSAGE_TAG, skillPassageTag(SKILL_CANARY_NAMES[0])]);
   } finally {
     if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
@@ -153,21 +154,14 @@ test("sync hygiene: unchanged skills skip the round-trip; removed skills get rec
   const client = { agents: { passages: {
     search: (...args: unknown[]) => {
       calls.push({ op: "search", args });
-      const params = args[1] as { tags?: string[] };
-      const tags = params?.tags ?? [];
-      // per-skill lookup for the kept skill: exactly one prior passage, byte-identical text → skip
-      if (tags[0] === skillPassageTag("kept-skill")) {
-        return Promise.resolve({ results: [{ id: "k1", text: keptText, tags: [SKILL_PASSAGE_TAG, skillPassageTag("kept-skill")] }] });
-      }
-      // reconciliation sweep (bare mm:skill tag): live skill + a ghost + a canary
-      if (tags.length === 1 && tags[0] === SKILL_PASSAGE_TAG) {
-        return Promise.resolve({ results: [
-          { id: "k1", tags: [SKILL_PASSAGE_TAG, skillPassageTag("kept-skill")] },
-          { id: "g1", tags: [SKILL_PASSAGE_TAG, skillPassageTag("ghost-skill")] },   // deleted skill's leftover
-          { id: "c1", tags: [SKILL_PASSAGE_TAG, skillPassageTag(SKILL_CANARY_NAMES[0])] },
-        ] });
-      }
-      return Promise.resolve({ results: [] }); // canary per-entry lookups: nothing prior
+      // BATCHED contract: one global index search serves everything. Results carry tags + text
+      // (as the real API does): the kept skill (byte-identical → skip), a ghost (reconciled),
+      // and canary #0 with its true text (unchanged → skip; canary #1 absent → created).
+      return Promise.resolve({ results: [
+        { id: "k1", text: keptText, tags: [SKILL_PASSAGE_TAG, skillPassageTag("kept-skill")] },
+        { id: "g1", text: "leftover", tags: [SKILL_PASSAGE_TAG, skillPassageTag("ghost-skill")] },
+        { id: "c1", text: canaryPassages()[0].text, tags: [SKILL_PASSAGE_TAG, skillPassageTag(SKILL_CANARY_NAMES[0])] },
+      ] });
     },
     create: (...args: unknown[]) => { calls.push({ op: "create", args }); return Promise.resolve([]); },
     delete: (...args: unknown[]) => { calls.push({ op: "delete", args }); return Promise.resolve({}); },
@@ -180,7 +174,7 @@ test("sync hygiene: unchanged skills skip the round-trip; removed skills get rec
     const deletes = calls.filter((c) => c.op === "delete").map((c) => c.args[0]);
     expect(deletes).toEqual(["g1"]); // ONLY the ghost — kept skill skipped, canary immune
     const creates = calls.filter((c) => c.op === "create");
-    expect(creates.length).toBe(2); // the two canaries; kept-skill's round-trip was skipped entirely
+    expect(creates.length).toBe(1); // only canary #1 (absent); kept-skill AND canary #0 skipped — total API calls: 1 search + 1 delete + 1 create
     for (const c of creates) {
       const body = c.args[1] as { tags?: string[] };
       expect((body.tags ?? []).some((t) => t.includes("mm-canary-"))).toBe(true);
@@ -297,6 +291,31 @@ test("semanticSkillCandidates: over-fetches top_k = k + canary count and returns
       { name: "merely-nearest", rank: 1, aboveCanary: false }, // dense re-rank after the canary was stripped
     ]);
   } finally {
+    if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
+  }
+});
+
+test("review concern #7: MM_NATIVE=passages with NO passages surface warns ONCE — never silently", async () => {
+  const warns: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(" ")); };
+  const prev = process.env.MM_NATIVE;
+  try {
+    // gated off → no warning (nothing is broken; the channel is simply not enabled)
+    delete process.env.MM_NATIVE;
+    resetMissingPassagesSurfaceWarning();
+    expect(await semanticSkillCandidates({}, "agent-1", "q")).toEqual([]);
+    expect(warns.length).toBe(0);
+    // enabled but the client has no passages surface → exactly ONE signal, behavior unchanged
+    process.env.MM_NATIVE = "passages";
+    expect(await semanticSkillCandidates({}, "agent-1", "query")).toEqual([]);      // still lexical-safe
+    expect(await syncSkillPassages({}, "agent-1", [{ name: "a-skill", description: "d" }])).toBe(0);
+    expect(await semanticSkillCandidates({}, "agent-1", "again")).toEqual([]);
+    expect(warns.length).toBe(1);                                                   // once, not spam
+    expect(warns[0]).toContain("MM_NATIVE=passages");
+    expect(warns[0]).toContain("lexical");
+  } finally {
+    console.warn = origWarn;
     if (prev === undefined) delete process.env.MM_NATIVE; else process.env.MM_NATIVE = prev;
   }
 });
