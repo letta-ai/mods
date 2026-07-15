@@ -962,8 +962,6 @@ export default function activate(letta: any) {
   let dir = 1;
   let tickCount = 0;
   let errorStreak = 0;
-  // toolCallId → Bash command, stashed at tool_start (tool_end has no args)
-  const pendingBashCommands = new Map<string, string>();
 
   const IDLE_NAP_MS = 30 * 60_000; // doze off after 30 quiet minutes
   const MISSED_YOU_MS = 24 * 3_600_000; // a real absence
@@ -1267,6 +1265,16 @@ export default function activate(letta: any) {
     if (name) activeAgentName = name;
   }
 
+  function toolCommand(event: any): string | null {
+    if (event?.toolName === "exec_command" && typeof event.args?.cmd === "string") {
+      return event.args.cmd;
+    }
+    if (event?.toolName === "Bash" && typeof event.args?.command === "string") {
+      return event.args.command;
+    }
+    return null;
+  }
+
   if (letta.capabilities.events.lifecycle) {
     disposers.push(
       letta.events.on("conversation_open", (event: any, ctx: any) => {
@@ -1287,18 +1295,6 @@ export default function activate(letta: any) {
     disposers.push(
       letta.events.on("tool_start", (event: any, ctx: any) => {
         noteAgent(event, ctx);
-        // stash Bash commands so tool_end can recognize a git commit
-        // (tool_end carries only status, not args)
-        if (event.toolName === "Bash" && event.toolCallId) {
-          const cmd = typeof event.args?.command === "string" ? event.args.command : "";
-          if (cmd) {
-            pendingBashCommands.set(event.toolCallId, cmd);
-            if (pendingBashCommands.size > 32) {
-              const oldest = pendingBashCommands.keys().next().value;
-              if (oldest !== undefined) pendingBashCommands.delete(oldest);
-            }
-          }
-        }
         const sprite = getSprite(activeAgentId);
         if (!sprite || sprite.phase !== "alive") return;
         noteActivity(sprite);
@@ -1309,8 +1305,7 @@ export default function activate(letta: any) {
     disposers.push(
       letta.events.on("tool_end", (event: any, ctx: any) => {
         noteAgent(event, ctx);
-        const bashCmd = event.toolCallId ? pendingBashCommands.get(event.toolCallId) : undefined;
-        if (event.toolCallId) pendingBashCommands.delete(event.toolCallId);
+        const cmd = toolCommand(event);
         const sprite = getSprite(activeAgentId);
         if (!sprite || sprite.phase !== "alive") return;
         noteActivity(sprite);
@@ -1329,7 +1324,7 @@ export default function activate(letta: any) {
           sprite.stats[statForTool(event.toolName)] += 1;
           awardXp(sprite, 2);
           // commits are rare + worth celebrating: always speak
-          if (bashCmd && /\bgit\b[\s\S]*\bcommit\b/.test(bashCmd)) {
+          if (cmd && /\bgit\b[\s\S]*\bcommit\b/.test(cmd)) {
             speak(sprite, "commit", true);
           }
         }
@@ -1370,6 +1365,8 @@ export default function activate(letta: any) {
         sleeping = false;
         const sprite = getSprite(activeAgentId);
         if (sprite && sprite.phase === "alive") {
+          logEntry(sprite, "mood", "(woke up — memories folded)");
+          markDirty();
           setPose("happy", 3_000);
           speak(sprite, "compact_done");
         }
@@ -1563,8 +1560,8 @@ export default function activate(letta: any) {
     disposers.push(
       letta.commands.register({
         id: "sprite",
-        description: "Your agent's tiny companion — status, hatch, name, molt, pet, settings",
-        args: "[status|hatch|name|molt|pet|settings] [...]",
+        description: "Your agent's tiny companion — status, hatch, name, molt, pet, diary, settings",
+        args: "[status|hatch|name|molt|pet|diary|settings] [...]",
         run(ctx: any) {
           const argstr = String(ctx.args ?? "").trim();
           const [sub, ...rest] = argstr.split(/\s+/).filter(Boolean);
@@ -1705,6 +1702,19 @@ export default function activate(letta: any) {
         parallelSafe: true,
         run(ctx: any) {
           return statusView(toolAgent(ctx), ctx.agent?.name ?? activeAgentName);
+        },
+      }),
+    );
+    disposers.push(
+      letta.tools.register({
+        name: "sprite_diary",
+        description:
+          "Read your companion sprite's recent diary: what it said, mood shifts, and quiet gaps. Use when you want to catch up on what your pet experienced.",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        requiresApproval: false,
+        parallelSafe: true,
+        run(ctx: any) {
+          return doDiary(toolAgent(ctx));
         },
       }),
     );

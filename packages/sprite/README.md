@@ -103,9 +103,9 @@ a day, it notices: *"you were gone a while. i counted the cursor blinks."*
 
 ## Your agent raises it
 
-Every command has an agent-tool twin (`sprite_hatch`, `sprite_name`,
-`sprite_molt`, `sprite_pet`, `sprite_set_voice`). Skip the commands entirely
-and just ask your agent:
+Core actions have agent-tool twins (`sprite_hatch`, `sprite_name`,
+`sprite_molt`, `sprite_pet`, `sprite_status`, `sprite_diary`,
+`sprite_set_voice`). Skip the commands entirely and just ask your agent:
 
 > "hatch yourself a companion and name it whatever you like"
 
@@ -117,8 +117,9 @@ line is heard before any repeats. Personality without tokens.
 
 And the agent can *hear* its pet: the sprite speaks into a panel only the
 human sees, so action results carry its responses (petting returns what it
-said), and `sprite_status` reports level, stats, mood, and a little diary of
-recent utterances — the owner's way of catching up on its companion.
+said). `sprite_status` reports level, stats, mood, and recent utterances;
+`sprite_diary` shows the longer diary — the owner's way of catching up on its
+companion.
 
 The companion belongs to the agent, not to a particular UI. In headless
 surfaces such as channel listeners, where no statusline panel exists, the
