@@ -1,0 +1,53 @@
+{
+  "name": "@letta-ai/cruise-ux",
+  "version": "0.2.0-alpha.1",
+  "description": "Letta Code UX discovery workflow for decision framing, research, interviews, ideation, specs, review, and implementation handoff.",
+  "author": "homebodify",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "ux",
+    "ui",
+    "ux-research",
+    "ux-workflow",
+    "product-discovery",
+    "prototype",
+    "usability-testing",
+    "decision-evidence",
+    "cruise-ux",
+    "adaptive-interview",
+    "ux-cruise",
+    "decision-to-evidence",
+    "revision-loop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/cruise-ux"
+  },
+  "scripts": {
+    "check": "node scripts/check-package.mjs"
+  },
+  "files": [
+    "README.md",
+    "README.ko.md",
+    "MOD.md",
+    "mods",
+    "docs"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}

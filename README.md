@@ -70,6 +70,8 @@ packages/
 ├── autopivot/            # Model failover across a priority ladder on rate limits or errors
 ├── control-room/         # Cockpit and trust guard for goal, progress, and approval state
 ├── conversation-summary/ # Conversation summary statusline
+├── cruise-code/          # Evidence-first coding workflow for tasks and UX handoffs
+├── cruise-ux/            # UX discovery workflow from framing to implementation handoff
 ├── environment-compass/  # Read-only environment and git orientation
 ├── git-status/           # Git branch, dirty state, and ahead/behind statusline
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
@@ -103,6 +105,8 @@ scripts/
 - **autopivot** - Model failover across a priority ladder on rate limits or errors
 - **control-room** - Cockpit and trust guard for goal, progress, and approval state
 - **conversation-summary** - Current conversation summary/title statusline
+- **cruise-code** - Evidence-first coding workflow for implementation tasks, checks, verdicts, and reports
+- **cruise-ux** - UX discovery workflow for framing, research, interviews, ideation, specs, review, and implementation handoff
 - **environment-compass** - Read-only environment and git orientation for local/remote runtimes
 - **git-status** - Git branch, dirty state, and ahead/behind statusline
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
