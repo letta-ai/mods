@@ -343,13 +343,6 @@ export default function activate(letta) {
   function setMode(mode) {
     state.mode = mode;
     saveState(state);
-    if (letta.capabilities.ui && letta.capabilities.ui.statusValues) {
-      if (mode === "off") {
-        letta.ui.clearStatus("ponytail-mode");
-      } else {
-        letta.ui.setStatus("ponytail-mode", mode.toUpperCase());
-      }
-    }
   }
 
   // ── Commands ─────────────────────────────────────────────────────────────
@@ -467,13 +460,6 @@ export default function activate(letta) {
         state.mode = getDefaultMode();
         state.injected = false;
         saveState(state);
-        if (
-          letta.capabilities.ui &&
-          letta.capabilities.ui.statusValues &&
-          state.mode !== "off"
-        ) {
-          letta.ui.setStatus("ponytail-mode", state.mode.toUpperCase());
-        }
       }),
     );
   }
@@ -508,8 +494,5 @@ export default function activate(letta) {
 
   return function () {
     for (const dispose of disposers.reverse()) dispose();
-    if (letta.capabilities.ui && letta.capabilities.ui.statusValues) {
-      letta.ui.clearStatus("ponytail-mode");
-    }
   };
 };
