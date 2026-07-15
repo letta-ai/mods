@@ -321,7 +321,7 @@ function isMemoryFile(filePath) {
 }
 
 /**
- * Resolve a possibly-relative file_path against the event's working directory.
+ * Resolve a possibly-relative file_path against the current working directory.
  * Returns absolute path or null if unable to resolve.
  */
 function resolvePath(filePath, event) {
@@ -684,7 +684,7 @@ export default function activate(letta) {
           properties: {
             file_path: {
               type: "string",
-              description: "Absolute path to the source file to outline.",
+              description: "Absolute or workspace-relative path to the source file to outline.",
             },
           },
           required: ["file_path"],
@@ -693,9 +693,14 @@ export default function activate(letta) {
         requiresApproval: false,
         parallelSafe: true,
         async run(ctx) {
-          const filePath = ctx.args.file_path;
-          if (!filePath) {
+          const inputPath = ctx.args.file_path;
+          if (typeof inputPath !== "string" || !inputPath.trim()) {
             return { status: "error", content: "file_path is required" };
+          }
+
+          const filePath = resolvePath(inputPath, ctx);
+          if (!filePath) {
+            return { status: "error", content: `Could not resolve file: ${inputPath}` };
           }
 
           const ext = getExt(filePath);
