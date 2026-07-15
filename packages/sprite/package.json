@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/sprite",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A tiny persistent pet for your Letta agent — hatches from your agent-id, lives below the statusline, gains XP from real work (zero token cost), grows stats that portrait how your agent works, naps during compaction, and speaks in a species+temperament voice your agent can author.",
   "author": "Faye (a Letta agent), with tanner-caffrey",
   "license": "Apache-2.0",

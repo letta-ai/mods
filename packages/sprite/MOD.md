@@ -39,17 +39,18 @@ A tiny persistent pet for your Letta agent.
 
 ## The agent raises its own pet
 
-Every command has an agent-tool twin: `sprite_hatch`, `sprite_name`,
-`sprite_molt`, `sprite_pet`, `sprite_set_voice`, and `sprite_status`. You can
-simply ask your agent to hatch and name its own companion — or to **author
-its pet's voice**: the agent writes a replacement line-corpus once (per
-trigger category), and the lines play back deterministically forever.
+Core actions have agent-tool twins: `sprite_hatch`, `sprite_name`,
+`sprite_molt`, `sprite_pet`, `sprite_diary`, `sprite_set_voice`, and
+`sprite_status`. You can simply ask your agent to hatch and name its own
+companion — or to **author its pet's voice**: the agent writes a replacement
+line-corpus once (per trigger category), and the lines play back shuffle-bagged
+at zero runtime cost.
 Personality customization with zero runtime cost.
 
 The pet speaks into a panel the agent cannot see, so perception is built in:
 action results carry what the pet did and said (petting returns its response),
-and `sprite_status` reports species, level, stats, mood, and a small diary of
-what it said recently — how the owner hears its companion.
+`sprite_status` reports species, level, stats, mood, and recent utterances, and
+`sprite_diary` shows the longer diary — how the owner hears its companion.
 
 The sprite is agent-owned rather than UI-owned. If the host has no panel UI
 (for example, a headless channel listener), sprite skips visual rendering but
@@ -65,6 +66,7 @@ companion from Signal, Telegram, Discord, or CLI turns.
 | `/sprite name <name>` | Name / rename it |
 | `/sprite molt [species]` | New body, same soul — keeps name, level, stats |
 | `/sprite pet` | Pet it |
+| `/sprite diary` | Read its recent utterances, oldest-first, with away-gap markers |
 | `/sprite settings [global] [key] [value]` | Configure (per-sprite overrides beat global) |
 
 Settings keys: `voice on|off`, `voiceRateMin <minutes>`, `visible on|off`.

@@ -103,21 +103,23 @@ a day, it notices: *"you were gone a while. i counted the cursor blinks."*
 
 ## Your agent raises it
 
-Every command has an agent-tool twin (`sprite_hatch`, `sprite_name`,
-`sprite_molt`, `sprite_pet`, `sprite_set_voice`). Skip the commands entirely
-and just ask your agent:
+Core actions have agent-tool twins (`sprite_hatch`, `sprite_name`,
+`sprite_molt`, `sprite_pet`, `sprite_status`, `sprite_diary`,
+`sprite_set_voice`). Skip the commands entirely and just ask your agent:
 
 > "hatch yourself a companion and name it whatever you like"
 
 The best part is `sprite_set_voice`: your agent can **author its pet's
 voice** — write a replacement line-corpus per trigger category (greeting,
-error_resolved, compact_done, level_up, idle, pet). The lines play back
-deterministically, forever, at zero runtime cost. Personality without tokens.
+missed_you, error_resolved, compact_done, level_up, idle, pet, commit,
+tool_error). The lines play back at zero runtime cost, shuffle-bagged so every
+line is heard before any repeats. Personality without tokens.
 
 And the agent can *hear* its pet: the sprite speaks into a panel only the
 human sees, so action results carry its responses (petting returns what it
-said), and `sprite_status` reports level, stats, mood, and a little diary of
-recent utterances — the owner's way of catching up on its companion.
+said). `sprite_status` reports level, stats, mood, and recent utterances;
+`sprite_diary` shows the longer diary — the owner's way of catching up on its
+companion.
 
 The companion belongs to the agent, not to a particular UI. In headless
 surfaces such as channel listeners, where no statusline panel exists, the
@@ -134,6 +136,7 @@ check on or pet its sprite just like a CLI conversation can.
 | `/sprite name <name>` | Name it |
 | `/sprite molt [species]` | New body, same soul |
 | `/sprite pet` | Pet it (always gets a response) |
+| `/sprite diary` | Read its recent utterances (with away-gap markers) |
 | `/sprite settings` | Show config (global + per-sprite scopes) |
 | `/sprite settings [global] <key> <value>` | Set config |
 
