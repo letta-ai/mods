@@ -1,55 +1,65 @@
 ---
 name: "@letta-ai/open-in-editor"
-description: "Open files in your editor as the agent touches them — tmux split-pane for nvim/vim, or any editor command."
+description: "Open files in your editor as the agent touches them — fullscreen handoff (no deps) or tmux split-pane."
 ---
 
 # Open in editor mod semantics
 
 ## When to use
 
-Use this mod when the user wants files the agent edits to automatically open in
-their editor (nvim/vim/code/hx/etc.), ideally in a tmux split pane alongside
-the Letta Code chat. Also useful when the user wants a `/edit` command to
-manually open the last-touched file or a specific path.
+Use this mod when the user wants files the agent touches to be openable in
+their editor (nvim/vim/code/hx/etc.) from within Letta Code, without
+requiring tmux or any external dependency.
 
 ## Behavior
 
 - Listens to `tool_end` events for `Edit`, `Write`, and `Read` tools.
 - Tracks the last touched file path and tool name in local state.
 - Shows a status panel (order 100, above the input) with the file name and
-  editor pane status. Hidden until the first file is touched.
-- When `autoOpen` is `true` (default), files touched by `Edit` or `Write` are
-  automatically opened in the editor. `Read` is tracked but not auto-opened.
-- Auto-open calls are serialized to prevent tmux `send-keys` interleaving when
-  the agent edits multiple files in rapid succession. Only the most recent
-  pending file is queued; earlier pending opens are superseded.
+  editor state. Hidden until the first file is touched.
+- Two modes are auto-selected based on whether `$TMUX` is set:
 
-### tmux split-pane mode
+### Fullscreen mode (outside tmux)
 
-- When inside tmux, the first open creates a right-side split pane
+- `/edit` performs a fullscreen editor handoff:
+  1. Saves terminal state (raw mode flag)
+  2. Disables raw mode on stdin
+  3. Exits the alt screen buffer (`ESC[?1049l`) and clears the screen
+  4. Calls `execFileSync(editor, [file], { stdio: "inherit" })` — this
+     blocks the Node.js event loop, giving the editor exclusive terminal
+     access. No Ink renders, timers, or I/O fire while the editor runs.
+  5. When the editor exits, re-enters the alt screen (`ESC[?1049h`),
+     restores raw mode, and sends `SIGWINCH` to force Ink to re-render.
+- This is the same pattern `git commit` uses for `$EDITOR`.
+- **Auto-open is disabled** in fullscreen mode. Blocking the event loop
+  during agent tool execution would interrupt the response stream. Files
+  are tracked in the panel; the user runs `/edit` manually.
+- Works with any editor that functions as `$EDITOR`.
+
+### tmux split-pane mode (inside tmux)
+
+- The first `/edit` creates a right-side split pane
   (`tmux split-window -h -p <tmuxSize>`) running the editor with the file.
-- For nvim/vim, subsequent opens send `Escape :e <path> Enter` to the running
-  instance via `tmux send-keys`. This preserves buffers and undo history.
+- For nvim/vim, subsequent opens send `Escape :e <path> Enter` to the
+  running instance via `tmux send-keys`. This preserves buffers and undo
+  history.
 - For other editors, the editor command is re-run in the pane via send-keys.
-- The pane ID is tracked in memory. After a `/reload`, the mod searches the
-  current tmux window's panes for one running the configured editor and
-  reattaches, avoiding duplicate panes.
-- If the tracked pane was closed by the user, a new split is created on the
-  next open.
+- When `autoOpen` is `true` (default), files touched by `Edit` or `Write`
+  are automatically opened in the editor pane. `Read` is tracked but not
+  auto-opened.
+- Auto-open calls are serialized to prevent tmux `send-keys` interleaving.
+  Only the most recent pending file is queued; earlier pending opens are
+  superseded.
+- The pane ID is tracked in memory. After a `/reload`, the mod searches
+  the current tmux window's panes for one running the configured editor
+  and reattaches, avoiding duplicate panes.
 - `/editclose` kills the editor pane via `tmux kill-pane`.
-
-### Non-tmux mode
-
-- For nvim-like editors, tries `nvr` (neovim-remote) to open in an existing
-  nvim instance. If `nvr` is not available, returns a guidance message.
-- For other editors, launches the editor command directly.
-- The full split-pane two-column experience requires tmux.
 
 ### Path escaping
 
 - For vim `:e` command: spaces, `#`, `%`, and backslashes are escaped.
-- For shell commands: file paths are wrapped in single quotes with single-quote
-  escaping.
+- For shell commands: file paths are wrapped in single quotes with
+  single-quote escaping.
 
 ## Configuration
 
@@ -63,34 +73,48 @@ Config file: `~/.letta/mods/editor-config.json`
 }
 ```
 
-Missing or malformed config falls back to defaults and emits a warning diagnostic.
+- `editor` defaults to `$VISUAL`, then `$EDITOR`, then `"nvim"`.
+- Missing or malformed config falls back to defaults and emits a warning
+  diagnostic.
 
 ## Platform assumptions
 
-- Requires tmux for split-pane mode (tested on tmux 3.4, Linux).
-- Non-tmux nvim mode benefits from `nvr` (neovim-remote) if installed.
+- Fullscreen mode: requires a TTY with alt screen buffer support. Works
+  on any terminal that supports `ESC[?1049h/l` (virtually all modern
+  terminals).
+- tmux mode: requires tmux on `PATH`.
 - The editor binary must be on `PATH`.
-- Cross-platform: uses `windowsHide` to avoid console flashes on Windows.
+- Uses `windowsHide` for tmux commands to avoid console flashes on Windows.
 
 ## Safety invariants
 
 - Only runs editor commands and tmux pane management. Never modifies files.
-- All `execFile` calls have a 5-second timeout.
-- Errors from tmux or editor commands are caught and surfaced as user-facing
-  messages, never as uncaught exceptions.
-- The mod degrades gracefully when capabilities are missing: no panel without
-  `ui.panels`, no auto-open without `events.tools`, no commands without
-  `commands`.
-- Event handler, panel, and command registrations are all disposed on reload.
+- `execFileSync` is used for fullscreen mode — it blocks the event loop,
+  which is intentional: it prevents Ink from writing to the terminal
+  while the editor has control.
+- All `execFile` calls (tmux) have a 5-second timeout.
+- Errors from tmux or editor commands are caught and surfaced as
+  user-facing messages, never as uncaught exceptions.
+- The mod degrades gracefully when capabilities are missing: no panel
+  without `ui.panels`, no auto-open without `events.tools`, no commands
+  without `commands`.
+- Event handler, panel, and command registrations are all disposed on
+  reload.
 
 ## Adaptation notes for agents
 
-- To support a new editor, just set `"editor"` in the config. Vim-like editors
-  (`nvim`, `vim`, `vi`, `neovim`) use `:e` send-keys; all others re-run the
-  editor command in the pane.
-- To add line-number jumping (open at a specific line), extend `openFile` to
-  send `:+<line>` or `:<line>` after `:e` for vim-like editors.
-- To track Bash-created files, parse `event.args.command` in the `tool_end`
-  handler — this is intentionally not done by default due to fragility.
-- The panel `render` function is pure and side-effect-free. All state updates
-  go through `panel.update()`.
+- To support a new editor, just set `"editor"` in the config. Any editor
+  that works as `$EDITOR` will work in fullscreen mode. Vim-like editors
+  (`nvim`, `vim`, `vi`, `neovim`) additionally get `:e` send-keys in tmux
+  mode; all others re-run the editor command in the pane.
+- To add line-number jumping (open at a specific line), extend
+  `openEditorFullscreen` to pass `+<line>` as an argument (nvim/vim) or
+  extend `escapeVimPath` to append `:+<line>` after `:e`.
+- To track Bash-created files, parse `event.args.command` in the
+  `tool_end` handler — this is intentionally not done by default due to
+  fragility.
+- The panel `render` function is pure and side-effect-free. All state
+  updates go through `panel.update()`.
+- The `SIGWINCH` signal is used to force Ink to re-render after the
+  editor exits. If this proves unreliable on a specific terminal, an
+  alternative is to write a resize event directly to stdout.

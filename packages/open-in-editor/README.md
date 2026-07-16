@@ -2,7 +2,10 @@
 
 #open-in-editor
 
-A Letta Code mod that opens files in your editor as the agent touches them. When the agent edits or writes a file, it can auto-open in a tmux split pane (nvim/vim) or launch any editor command you configure — giving you a live two-column layout: chat on the left, editor on the right.
+A Letta Code mod that opens files in your editor as the agent touches them — no external dependencies required. Two modes are auto-selected based on your environment:
+
+- **Outside tmux (default):** Fullscreen editor handoff. `/edit` exits the TUI, launches your editor with full terminal control, and restores the TUI when you quit — same pattern `git commit` uses for `$EDITOR`. Zero dependencies.
+- **Inside tmux:** Split-pane with `:e` send-keys. Creates a right-side editor pane and keeps it in sync as files change. Supports auto-open.
 
 ## Install
 
@@ -34,8 +37,8 @@ Create `~/.letta/mods/editor-config.json`:
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `editor` | `"nvim"` | Editor binary name. Any editor on your `PATH` works (`nvim`, `vim`, `code`, `hx`, `emacsclient`, etc.) |
-| `autoOpen` | `true` | Automatically open files when the agent edits or writes them. Set to `false` for manual `/edit` only. |
+| `editor` | `$VISUAL`, `$EDITOR`, or `"nvim"` | Editor binary name. Any editor on your `PATH` works (`nvim`, `vim`, `code`, `hx`, `emacsclient`, etc.) |
+| `autoOpen` | `true` | Auto-open files when the agent edits them. **tmux only** — in fullscreen mode, files are tracked but you open them manually with `/edit`. |
 | `tmuxSize` | `38` | Width percentage for the tmux editor pane (e.g. `38` = 38% of the window) |
 
 If the config file is missing, the mod runs with defaults.
@@ -46,13 +49,24 @@ If the config file is missing, the mod runs with defaults.
 
 **File tracking.** The mod listens to `tool_end` events for `Edit`, `Write`, and `Read` tools. It tracks the last touched file and shows it in a status panel above the input bar.
 
-**Auto-open.** When `autoOpen` is `true` (default), files edited via `Edit` or `Write` are automatically opened in the editor. Files only read via `Read` are tracked but not auto-opened (to avoid noise).
+### Fullscreen mode (outside tmux)
 
-**tmux split-pane.** When running inside tmux, the mod creates a right-side split pane with your editor. For nvim/vim, subsequent files are opened via `:e <path>` sent to the running instance — no new process, buffers and undo history are preserved. For other editors, the editor command is re-run in the pane.
+When you run `/edit`, the mod:
 
-**Pane recovery.** After a `/reload`, the mod searches the current tmux window for a pane running your editor and reattaches to it. No duplicate panes.
+1. Saves the terminal state (raw mode, alt screen buffer)
+2. Exits the alt screen buffer and clears the screen
+3. Blocks the event loop and launches your editor with inherited stdio — the editor has full, exclusive terminal access
+4. When you quit the editor, re-enters the alt screen, restores raw mode, and sends `SIGWINCH` to force the TUI to re-render
 
-**Non-tmux.** Outside tmux, the mod tries `nvr` (neovim-remote) for nvim-like editors, or launches the editor command directly. For the full split-pane experience, run Letta Code inside tmux.
+This is the same mechanism `git commit` uses to open `$EDITOR`. No tmux, no extra processes, no scrolling behavior changes.
+
+**Auto-open is disabled** in fullscreen mode because blocking the event loop would interrupt the agent's response. Files are tracked in the panel — use `/edit` when you want to view or edit them.
+
+### tmux split-pane mode (inside tmux)
+
+The mod creates a right-side split pane with your editor. For nvim/vim, subsequent files are opened via `:e <path>` sent to the running instance — no new process, buffers and undo history are preserved. For other editors, the editor command is re-run in the pane.
+
+Auto-open works in tmux: files edited by the agent are automatically opened in the editor pane. After a `/reload`, the mod searches for an existing editor pane and reattaches to it.
 
 ## Commands
 
@@ -61,22 +75,22 @@ If the config file is missing, the mod runs with defaults.
 | Command | Description |
 | --- | --- |
 | `/edit [path]` | Open a file in your editor. With no argument, opens the last file the agent touched. |
-| `/editclose` | Close the editor pane (tmux only). |
+| `/editclose` | Close the editor pane (tmux only). In fullscreen mode, just `:q` your editor. |
 
 ## Panel
 
 #panel
 
-A status line above the input shows the last touched file and editor pane state:
+A status line above the input shows the last touched file and editor state:
 
+Fullscreen mode:
+```
+ edit src/main.ts (Edit)                    /edit to open
+```
+
+tmux with pane open:
 ```
  edit src/main.ts (Edit)                    open %5
-```
-
-When no editor pane is open:
-
-```
- edit src/main.ts (Edit)                    /edit
 ```
 
 The panel is hidden until the agent touches a file.
@@ -85,12 +99,14 @@ The panel is hidden until the agent touches a file.
 
 #editor-support
 
-| Editor | tmux split | Non-tmux | Notes |
+| Editor | Fullscreen (no tmux) | tmux split | Notes |
 | --- | --- | --- | --- |
-| `nvim` / `vim` | `:e` send-keys (preserves session) | `nvr` if installed | Best experience |
-| `code` | re-run `code <file>` in pane | `code <file>` | Opens in same window |
-| `hx` | re-run `hx <file>` in pane | `hx <file>` | New instance each time |
-| `emacsclient` | re-run in pane | direct | Opens in existing frame |
+| `nvim` / `vim` | Fullscreen handoff | `:e` send-keys (preserves session) | Best experience |
+| `code` | Fullscreen handoff | re-run `code <file>` in pane | Opens in same window |
+| `hx` | Fullscreen handoff | re-run `hx <file>` in pane | New instance each time |
+| `emacsclient` | Fullscreen handoff | re-run in pane | Opens in existing frame |
+
+Any editor that works with `$EDITOR` will work in fullscreen mode.
 
 ## Safety
 

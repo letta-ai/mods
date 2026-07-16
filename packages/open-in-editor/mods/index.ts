@@ -1,13 +1,16 @@
 // Open files in your editor as the agent touches them.
 //
-// When the agent edits or writes a file, the mod can auto-open it in a
-// tmux split pane (nvim/vim) or launch an external editor command.
-// Provides /edit and /editclose commands and a status panel.
+// Two modes, auto-selected based on environment:
+// - Inside tmux: split-pane with :e send-keys (preserves buffers, auto-open)
+// - Outside tmux: fullscreen editor handoff — exits the alt screen, blocks
+//   the event loop while the editor runs with inherited stdio, then
+//   re-enters and forces a re-render. No external dependencies needed.
 //
+// Commands: /edit [path], /editclose
 // Config: ~/.letta/mods/editor-config.json
 //   { "editor": "nvim", "autoOpen": true, "tmuxSize": 38 }
 
-import { execFile } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -17,16 +20,16 @@ import { homedir } from "node:os";
 const CONFIG_PATH = join(homedir(), ".letta", "mods", "editor-config.json");
 
 interface EditorConfig {
-  /** Editor binary name (default: "nvim") */
+  /** Editor binary name (default: $VISUAL, $EDITOR, or "nvim") */
   editor: string;
-  /** Auto-open files when the agent edits them (default: true) */
+  /** Auto-open files when the agent edits them — tmux only (default: true) */
   autoOpen: boolean;
   /** tmux split pane width as percentage of the window (default: 38) */
   tmuxSize: number;
 }
 
 const DEFAULTS: EditorConfig = {
-  editor: "nvim",
+  editor: process.env.VISUAL || process.env.EDITOR || "nvim",
   autoOpen: true,
   tmuxSize: 38,
 };
@@ -99,6 +102,55 @@ function extractFilePath(args: Record<string, unknown>): string | null {
   return typeof fp === "string" && fp.length > 0 ? fp : null;
 }
 
+// ─── Fullscreen editor handoff ────────────────────────────────────────
+//
+// Exits the alt screen buffer, disables raw mode, and blocks the event
+// loop while the editor runs with inherited stdio. When the editor exits,
+// re-enters the alt screen and sends SIGWINCH to force Ink to re-render.
+// Same pattern `git commit` uses to open $EDITOR — no tmux or deps needed.
+
+function openEditorFullscreen(filePath: string, editor: string): string {
+  const stdin = process.stdin as any;
+  const stdout = process.stdout;
+
+  // Save terminal state
+  const wasRaw = typeof stdin.isRaw === "boolean" ? stdin.isRaw : false;
+
+  // Release terminal for the editor
+  if (wasRaw) {
+    try { stdin.setRawMode(false); } catch {}
+  }
+  // Exit alt screen + clear
+  stdout.write("\x1b[?1049l\x1b[2J\x1b[H");
+
+  let errorMsg: string | null = null;
+  try {
+    execFileSync(editor, [filePath], {
+      stdio: "inherit",
+      timeout: 0,
+    });
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      errorMsg = `Editor '${editor}' not found on PATH.`;
+    } else if (err?.signal) {
+      // Killed by signal (e.g. Ctrl-C) — not an error
+    } else if (err?.status != null && err.status !== 0) {
+      errorMsg = `Editor exited with code ${err.status}.`;
+    }
+  }
+
+  // Reclaim terminal
+  stdout.write("\x1b[?1049h");
+  if (wasRaw) {
+    try { stdin.setRawMode(true); } catch {}
+  }
+
+  // Force Ink to re-render by simulating a terminal resize
+  try { process.kill(process.pid, "SIGWINCH"); } catch {}
+
+  return errorMsg ?? `Opened ${shortenPath(filePath)} in ${editor}`;
+}
+
 // ─── tmux pane management ────────────────────────────────────────────
 
 let tmuxPaneId: string | null = null;
@@ -118,67 +170,43 @@ async function tmuxPaneAlive(): Promise<boolean> {
 async function findEditorPane(editor: string): Promise<string | null> {
   try {
     const { stdout } = await exec("tmux", [
-      "list-panes",
-      "-F",
-      "#{pane_id}\t#{pane_current_command}",
+      "list-panes", "-F", "#{pane_id}\t#{pane_current_command}",
     ]);
     const target = editor.toLowerCase().trim();
     for (const line of stdout.trim().split("\n")) {
       const [paneId, cmd] = line.split("\t");
       if (cmd && cmd.toLowerCase().trim() === target) return paneId;
     }
-  } catch {
-    // not in tmux or no panes
-  }
+  } catch {}
   return null;
 }
 
-async function tmuxOpenFile(
-  filePath: string,
-  config: EditorConfig,
-): Promise<string> {
-  // Recover pane tracking after a reload
+async function tmuxOpenFile(filePath: string, config: EditorConfig): Promise<string> {
   if (!tmuxPaneId) {
     tmuxPaneId = await findEditorPane(config.editor);
   }
 
   if (await tmuxPaneAlive()) {
     if (isVimLike(config.editor)) {
-      // Send :e to the running nvim/vim instance
       const escaped = escapeVimPath(filePath);
       await exec("tmux", [
-        "send-keys",
-        "-t",
-        tmuxPaneId!,
-        "Escape",
-        `:e ${escaped}`,
-        "Enter",
+        "send-keys", "-t", tmuxPaneId!,
+        "Escape", `:e ${escaped}`, "Enter",
       ]);
     } else {
-      // For non-vim editors, re-run the editor command in the pane
       await exec("tmux", [
-        "send-keys",
-        "-t",
-        tmuxPaneId!,
-        `${config.editor} '${escapeShellSingle(filePath)}'`,
-        "Enter",
+        "send-keys", "-t", tmuxPaneId!,
+        `${config.editor} '${escapeShellSingle(filePath)}'`, "Enter",
       ]);
     }
     return `Opened ${shortenPath(filePath)} in editor`;
   }
 
-  // Create a new split pane with the editor
   try {
     const shellCmd = `${config.editor} '${escapeShellSingle(filePath)}'`;
     const { stdout } = await exec("tmux", [
-      "split-window",
-      "-h",
-      "-p",
-      String(config.tmuxSize),
-      "-P",
-      "-F",
-      "#{pane_id}",
-      shellCmd,
+      "split-window", "-h", "-p", String(config.tmuxSize),
+      "-P", "-F", "#{pane_id}", shellCmd,
     ]);
     tmuxPaneId = stdout.trim();
     return `Opened ${shortenPath(filePath)} in new editor pane`;
@@ -201,31 +229,12 @@ async function tmuxClosePane(): Promise<string> {
 
 // ─── Open dispatcher ─────────────────────────────────────────────────
 
-async function openFile(
-  filePath: string,
-  config: EditorConfig,
-): Promise<string> {
+async function openFile(filePath: string, config: EditorConfig): Promise<string> {
   if (inTmux()) {
     return tmuxOpenFile(filePath, config);
   }
-
-  // Non-tmux: try nvr (neovim-remote) for nvim-like editors
-  if (isVimLike(config.editor)) {
-    try {
-      await exec("nvr", [filePath]);
-      return `Opened ${shortenPath(filePath)} via nvr`;
-    } catch {
-      return "Not in tmux. Run /edit inside tmux for split-pane, or install nvr for remote nvim.";
-    }
-  }
-
-  // Generic: try to launch the editor directly
-  try {
-    await exec(config.editor, [filePath]);
-    return `Opened ${shortenPath(filePath)} in ${config.editor}`;
-  } catch {
-    return `Could not launch ${config.editor}. Run inside tmux for best results.`;
-  }
+  // Fullscreen editor handoff — no tmux needed
+  return openEditorFullscreen(filePath, config.editor);
 }
 
 // Serialize auto-open calls to prevent tmux key interleaving when the
@@ -233,10 +242,7 @@ async function openFile(
 let opening = false;
 let queued: string | null = null;
 
-async function autoOpen(
-  filePath: string,
-  config: EditorConfig,
-): Promise<void> {
+async function autoOpen(filePath: string, config: EditorConfig): Promise<void> {
   if (opening) {
     queued = filePath;
     return;
@@ -244,9 +250,7 @@ async function autoOpen(
   opening = true;
   try {
     await openFile(filePath, config);
-  } catch {
-    // errors are surfaced via the returned string in manual /edit
-  } finally {
+  } catch {} finally {
     opening = false;
     if (queued) {
       const next = queued;
@@ -272,6 +276,8 @@ export default function activate(letta: any) {
   let lastFile: string | null = null;
   let lastTool: string | null = null;
 
+  const useTmux = inTmux();
+
   // ── Status panel ──
   let panel: any = null;
   if (letta.capabilities.ui?.panels) {
@@ -281,16 +287,18 @@ export default function activate(letta: any) {
       render: ({ width, row, chalk }: any) => {
         if (!lastFile) return "";
         const left = `${chalk.cyan("edit")} ${shortenPath(lastFile)} ${chalk.gray(`(${lastTool})`)}`;
-        const right = tmuxPaneId
-          ? `${chalk.green("open")} ${chalk.gray(tmuxPaneId)}`
-          : chalk.gray("/edit");
+        const right = useTmux
+          ? (tmuxPaneId
+            ? `${chalk.green("open")} ${chalk.gray(tmuxPaneId)}`
+            : chalk.gray("/edit"))
+          : chalk.gray("/edit to open");
         return row(left, right, width);
       },
     });
     disposers.push(() => panel?.close());
   }
 
-  // ── Tool end: track files and auto-open ──
+  // ── Tool end: track files and auto-open (tmux only) ──
   if (letta.capabilities.events?.tools) {
     disposers.push(
       letta.events.on("tool_end", (event: any) => {
@@ -303,7 +311,8 @@ export default function activate(letta: any) {
         lastTool = event.toolName;
         panel?.update();
 
-        if (AUTO_OPEN_TOOLS.has(event.toolName) && config.autoOpen) {
+        // Auto-open only in tmux — fullscreen would block the event loop
+        if (AUTO_OPEN_TOOLS.has(event.toolName) && config.autoOpen && useTmux) {
           void autoOpen(filePath, config).then(() => panel?.update());
         }
       }),
@@ -335,11 +344,11 @@ export default function activate(letta: any) {
     disposers.push(
       letta.commands.register({
         id: "editclose",
-        description: "Close the editor pane",
+        description: "Close the editor pane (tmux only)",
         async run() {
-          const result = inTmux()
+          const result = useTmux
             ? await tmuxClosePane()
-            : "Not in tmux \u2014 nothing to close";
+            : "Not in tmux \u2014 use :q in the editor to close";
           panel?.update();
           return { type: "output", output: result };
         },
