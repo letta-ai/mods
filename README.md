@@ -69,6 +69,7 @@ packages/
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── memfs-search/         # Agent-callable MemFS memory search
+├── open-in-editor/       # Auto-open files in your editor via tmux split-pane
 ├── plan-mode/            # Plan-mode style workflow
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
 ├── user-timestamps/      # Adds local timestamp metadata to user messages
@@ -86,6 +87,7 @@ scripts/
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
+- **open-in-editor** - Open files in your editor as the agent touches them, via tmux split-pane or external editor command
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **spotify-statusline** - macOS Spotify now-playing statusline
 - **user-timestamps** - Adds local timestamp metadata to every user message

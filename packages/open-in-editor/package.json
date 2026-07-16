@@ -1,0 +1,35 @@
+{
+  "name": "@letta-ai/open-in-editor",
+  "version": "0.1.0",
+  "description": "Open files in your editor as the agent touches them — tmux split-pane for nvim/vim, or any editor command.",
+  "author": "ninachaubal",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "editor",
+    "nvim",
+    "vim",
+    "tmux"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/open-in-editor"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["commands", "events.tools", "ui.panels"],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
