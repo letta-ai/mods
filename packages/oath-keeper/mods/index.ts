@@ -609,8 +609,12 @@ async function pollDeliveryCycle() {
     }
     queueStore.save();
 
-    // 3. Try to deliver one queued oath
-    const queuedOath = queueStore.oaths.find((o) => o.status === "queued");
+    // 3. Try to deliver one queued oath (REST API — only when turn_end is NOT active)
+    // When turn_end IS active, delivery happens via { continue } on the next turn_end event
+    if (turnEventsActive) {
+      log("Skipping REST delivery — turn_end will handle via { continue }");
+    }
+    const queuedOath = turnEventsActive ? undefined : queueStore.oaths.find((o) => o.status === "queued");
     if (queuedOath) {
       store.updateOath(queuedOath.id, { status: "delivering" });
       store.save();
@@ -752,9 +756,26 @@ export default function activate(letta: any) {
         // Extract conversation/agent IDs from event context — NOT env file
         const eventConvId = event.conversationId || ctx?.conversation?.id || "";
         const eventAgentId = event.agentId || ctx?.agent?.id || "";
-
-        // Mark delivered oaths if the response contains [Oath Delivered]
         const lastMsg = event.assistantMessage || "";
+
+        // ── STEP 1: Check for queued oaths ready for delivery (via { continue })
+        // This uses the mod event surface instead of REST API — tools work properly
+        const deliverStore = StateStore.load("turn_end-deliver");
+        const dueOath = deliverStore.oaths.find((o) =>
+          (o.status === "queued") &&
+          o.conversationId === eventConvId
+        );
+
+        if (dueOath) {
+          log("turn_end: delivering oath via { continue } — " + dueOath.id);
+          deliverStore.updateOath(dueOath.id, { status: "delivering" });
+          deliverStore.save();
+
+          const prompt = buildDeliveryPrompt(dueOath);
+          return { continue: prompt };
+        }
+
+        // ── STEP 2: Mark delivered oaths if the response contains [Oath Delivered]
         if (lastMsg.includes("[Oath Delivered]")) {
           const store = StateStore.load("turn_end-mark");
           for (const oath of store.oaths) {
@@ -765,9 +786,11 @@ export default function activate(letta: any) {
           store.save();
           return;
         }
+
+        // Skip detection for [Oath Keeper] delivery prompts
         if (lastMsg.includes("[Oath Keeper]")) return;
 
-        // Use event.assistantMessage directly — no API round-trip needed
+        // ── STEP 3: Detect promises in the assistant message
         const msgText = event.assistantMessage || "";
         if (!msgText || !msgText.trim()) { log("turn_end: no assistant message in event"); return; }
 
@@ -776,7 +799,7 @@ export default function activate(letta: any) {
         // No pre-filter — send directly to LLM
         log("turn_end: sending to LLM...");
         const detection = await confirmPromise(msgText);
-        log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) : "REJECTED"));
+        log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
 
         if (!detection) {
           logFalsePositive("llm", msgText, "turn_end");
@@ -794,11 +817,10 @@ export default function activate(letta: any) {
         // Also check string-based dedup as a fast fallback
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
-          // Use event context for scoping — oath delivers to the SAME conversation it was detected in
           const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end", detection.delayMs);
           scanStore.addOath(oath);
           scanStore.save();
-          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " agent=" + eventAgentId.slice(0,12));
+          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " delay=" + (detection.delayMs/1000) + "s");
         }
       })
     );
