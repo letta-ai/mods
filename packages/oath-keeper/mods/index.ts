@@ -33,6 +33,7 @@ function isVerbose(): boolean {
 
 interface OathConfig {
   classifierAgentId?: string; // Agent ID to use for promise classification (defaults to same agent)
+  classifierModel?: string;   // Model for classification LLM calls (default: letta/auto-fast)
   negativeFilter?: boolean;    // Enable negative filter — code-heavy/short messages (default: true)
   ngramFilter?: boolean;       // Enable n-gram pre-filter (default: true)
   ngramThreshold?: number;     // N-gram score threshold for LLM classification (default: 1.25)
@@ -54,6 +55,12 @@ function getClassifierAgentId(): string {
   const config = loadConfig();
   if (config.classifierAgentId) return config.classifierAgentId;
   return getApiConfig().agentId;
+}
+
+/** Get the model to use for classification LLM calls (default: letta/auto-fast) */
+function getClassifierModel(): string {
+  const config = loadConfig();
+  return config.classifierModel || "letta/auto-fast";
 }
 
 /** Check if negative filter is enabled (default: true) */
@@ -223,10 +230,11 @@ async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Pr
     + '- Not duplicate: {"is_duplicate": false}';
 
   try {
+    const classifierModel = getClassifierModel();
     const convResp = await fetch(baseUrl + "/v1/conversations?agent_id=" + classifierAgentId, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
-      body: "{}",
+      body: JSON.stringify({ model: classifierModel }),
     });
     if (!convResp.ok) return false;
     const convData: any = await convResp.json();
@@ -434,13 +442,14 @@ async function confirmPromise(text: string): Promise<{ promise: string; delayMs:
     + '- Not a promise: {"is_promise": false}';
 
   try {
-    // Create throwaway conversation for classification
+    // Create throwaway conversation for classification — use configured model
+    const classifierModel = getClassifierModel();
     const convResp = await fetch(
       baseUrl + "/v1/conversations?agent_id=" + classifierAgentId,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
-        body: "{}",
+        body: JSON.stringify({ model: classifierModel }),
       }
     );
     if (!convResp.ok) { log("confirmPromise: could not create conversation"); return null; }
@@ -1011,17 +1020,8 @@ export default async function activate(letta: any) {
     timestamp: Date.now(),
   };
 
-  // Fetch the classifier agent's model from the API
-  try {
-    const { baseUrl, apiKey } = getApiConfig();
-    const resp = await fetch(baseUrl + "/v1/agents/" + getClassifierAgentId(), {
-      headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
-    });
-    if (resp.ok) {
-      const data: any = await resp.json();
-      filterStatus.classifierModel = data.llm_config?.model || data.model || "unknown";
-    }
-  } catch (e) {}
+  // Use the configured classifier model (not the agent's model)
+  filterStatus.classifierModel = getClassifierModel();
 
   try { fs.writeFileSync(`${HOME}/.letta/mods/oath-keeper-filter-status.json`, JSON.stringify(filterStatus, null, 2)); } catch (e) {}
 
