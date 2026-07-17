@@ -246,8 +246,6 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             if prefiltered > 0 { hdr.push(Span::styled(format!("  PF:{}", prefiltered), Style::default().fg(Color::Magenta))); }
             if count == 0 { hdr.push(Span::styled("  empty", Style::default().fg(Color::DarkGray))); }
 
-            f.render_widget(Paragraph::new(Line::from(hdr)), chunks[0]);
-
             // ── Filter status line ──
             let fs_status = load_filter_status();
             let ngram_label = if fs_status.ngram { "NGRAM:on" } else { "NGRAM:off" };
@@ -281,7 +279,9 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                     Span::styled(model_display, Style::default().fg(Color::Cyan)),
                 ])
             };
-            f.render_widget(Paragraph::new(filter_line), chunks[0]);
+
+            // Render header (line 1) + filter status (line 2) as a single paragraph
+            f.render_widget(Paragraph::new(vec![Line::from(hdr), filter_line]), chunks[0]);
 
             // ── Main content ──
             match mode {
