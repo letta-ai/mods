@@ -194,6 +194,30 @@ fn bash(cmd: &str) -> String {
         .unwrap_or_default()
 }
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+fn name_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn cached_lookup(id: &str, prefix: &str, fetch: impl Fn(&str) -> Option<String>) -> String {
+    if id.is_empty() { return "N/A".to_string(); }
+    let cache_key = format!("{}:{}", prefix, id);
+    let cache = name_cache().lock().unwrap();
+    if let Some(name) = cache.get(&cache_key) {
+        let short_id = &id[..id.len().min(12)];
+        return format!("{} ({})", name, short_id);
+    }
+    drop(cache);
+
+    let name = fetch(id).unwrap_or_else(|| "unknown".to_string());
+    name_cache().lock().unwrap().insert(cache_key, name.clone());
+    let short_id = &id[..id.len().min(12)];
+    format!("{} ({})", name, short_id)
+}
+
 fn api_get(path: &str) -> Option<serde_json::Value> {
     let (base, key) = get_env();
     let auth = if key.is_empty() { String::new() } else { format!("-H 'Authorization: Bearer {}'", key) };
@@ -203,21 +227,17 @@ fn api_get(path: &str) -> Option<serde_json::Value> {
 }
 
 fn agent_name(agent_id: &str) -> String {
-    if agent_id.is_empty() { return "N/A".to_string(); }
-    let v = api_get(&format!("v1/agents/{}", agent_id));
-    let name = v.and_then(|d| d.get("name").and_then(|n| n.as_str()).map(String::from))
-        .unwrap_or_else(|| "unknown".to_string());
-    let short_id = &agent_id[..agent_id.len().min(12)];
-    format!("{} ({})", name, short_id)
+    cached_lookup(agent_id, "agent", |id| {
+        api_get(&format!("v1/agents/{}", id))
+            .and_then(|d| d.get("name").and_then(|n| n.as_str()).map(String::from))
+    })
 }
 
 fn conv_name(conv_id: &str) -> String {
-    if conv_id.is_empty() { return "N/A".to_string(); }
-    let v = api_get(&format!("v1/conversations/{}", conv_id));
-    let summary = v.and_then(|d| d.get("summary").and_then(|s| s.as_str()).map(String::from))
-        .unwrap_or_else(|| "unknown".to_string());
-    let short_id = &conv_id[..conv_id.len().min(12)];
-    format!("{} ({})", summary, short_id)
+    cached_lookup(conv_id, "conv", |id| {
+        api_get(&format!("v1/conversations/{}", id))
+            .and_then(|d| d.get("summary").and_then(|s| s.as_str()).map(String::from))
+    })
 }
 
 // ─── TUI ─────────────────────────────────────────────────────────
@@ -737,10 +757,40 @@ fn main() {
         return;
     }
 
+    // Loading screen
+    {
+        enable_raw_mode().unwrap();
+        execute!(stdout(), EnterAlternateScreen).unwrap();
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
+        terminal.draw(|f| {
+            let area = f.size();
+            let msg = " Loading Oath Keeper... ";
+            let x = (area.width.saturating_sub(msg.len() as u16)) / 2;
+            let y = area.height / 2;
+            f.render_widget(
+                Paragraph::new(Span::styled(msg, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                ratatui::layout::Rect { x, y, width: msg.len() as u16, height: 1 },
+            );
+        }).ok();
+    }
+
     enable_raw_mode().unwrap();
     execute!(stdout(), EnterAlternateScreen).unwrap();
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
     let result = run_tui(&mut terminal);
+
+    // Shutdown message
+    terminal.draw(|f| {
+        let area = f.size();
+        let msg = " Shutting down... ";
+        let x = (area.width.saturating_sub(msg.len() as u16)) / 2;
+        let y = area.height / 2;
+        f.render_widget(
+            Paragraph::new(Span::styled(msg, Style::default().fg(Color::Yellow))),
+            ratatui::layout::Rect { x, y, width: msg.len() as u16, height: 1 },
+        );
+    }).ok();
+
     disable_raw_mode().unwrap();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
     result.unwrap();
