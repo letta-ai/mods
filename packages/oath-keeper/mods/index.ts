@@ -64,7 +64,7 @@ interface Oath {
   deliveryMode?: "turn_end" | "polling";
   createdAt: number;
   dueAt: number;
-  status: "pending" | "queued" | "delivering" | "delivered" | "failed";
+  status: "pending" | "queued" | "delivering" | "delivered" | "failed" | "false_positive";
   result: string | null;
   deliveredAt: number | null;
 }
@@ -232,15 +232,14 @@ function detectPromiseRegex(text: string): { match: string } | null {
  * ask the LLM to determine whether it's a genuine promise to follow up later.
  * Returns the specific promise text or null if not a real promise.
  */
-/** Log a false positive as a failed oath in the state file (deduplicated) */
+/** Log a false positive in the state file with its own status (deduplicated) */
 function logFalsePositive(matchedPattern: string, text: string, source: string) {
   try {
     const store = StateStore.load("false-positive");
     // Deduplicate — skip if a false positive with the same text already exists
     const textSnippet = text.slice(0, 60);
     const exists = store.oaths.some((o) =>
-      o.status === "failed" &&
-      o.result === "LLM rejected — not a genuine promise" &&
+      o.status === "false_positive" &&
       o.promise.includes(textSnippet)
     );
     if (exists) { log("False positive already logged — skipping duplicate"); return; }
@@ -253,12 +252,12 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
       context: text.slice(0, 200),
       createdAt: now,
       dueAt: now,
-      status: "failed",
+      status: "false_positive",
       result: "LLM rejected — not a genuine promise",
       deliveredAt: now,
     });
     store.save();
-    log("False positive logged as failed oath: " + matchedPattern);
+    log("False positive logged: " + matchedPattern);
   } catch (e) {
     log("Failed to log false positive: " + e);
   }
@@ -847,13 +846,15 @@ export default function activate(letta: any) {
         const pending = store.oaths.filter((o) => o.status === "pending" || o.status === "queued");
         const delivering = store.oaths.filter((o) => o.status === "delivering");
         const recent = store.oaths.filter((o) => (o.status === "delivered" || o.status === "failed") && o.deliveredAt && Date.now() - o.deliveredAt < 3_600_000);
-        if (pending.length === 0 && delivering.length === 0 && recent.length === 0) return "No oaths. Agents have kept their word.";
-        const lines = [`Oath Keeper — ${pending.length} pending, ${delivering.length} delivering, ${recent.length} recent`];
+        const falsePositives = store.oaths.filter((o) => o.status === "false_positive" && o.deliveredAt && Date.now() - o.deliveredAt < 3_600_000);
+        if (pending.length === 0 && delivering.length === 0 && recent.length === 0 && falsePositives.length === 0) return "No oaths. Agents have kept their word.";
+        const lines = [`Oath Keeper — ${pending.length} pending, ${delivering.length} delivering, ${recent.length} recent, ${falsePositives.length} false positive`];
         for (const o of [...pending, ...delivering]) {
           const secs = Math.max(0, Math.round((o.dueAt - Date.now()) / 1000));
           lines.push(`${o.status.toUpperCase()} (${secs}s): "${o.promise.slice(0, 80)}"`);
         }
         for (const o of recent) lines.push(`${o.status === "delivered" ? "OK" : "FAIL"}: "${o.promise.slice(0, 80)}"`);
+        for (const o of falsePositives) lines.push(`FP: "${o.promise.slice(0, 80)}"`);
         return lines.join("\n");
       },
     })
