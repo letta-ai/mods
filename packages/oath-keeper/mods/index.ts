@@ -295,7 +295,7 @@ function detectPromiseRegex(text: string): { match: string; score: number } | nu
  * Returns the specific promise text or null if not a real promise.
  */
 /** Log a false positive in the state file with its own status (deduplicated) */
-function logFalsePositive(matchedPattern: string, text: string, source: string, ngramScore?: number) {
+function logFalsePositive(matchedPattern: string, text: string, source: string, ngramScore?: number, conversationId?: string, agentId?: string) {
   try {
     const store = StateStore.load("false-positive");
     // Deduplicate — skip if a false positive with the same text already exists
@@ -308,8 +308,8 @@ function logFalsePositive(matchedPattern: string, text: string, source: string, 
     const now = Date.now();
     store.addOath({
       id: "fp-" + now + "-" + Math.random().toString(36).slice(2, 6),
-      conversationId: "",
-      agentId: "",
+      conversationId: conversationId || "",
+      agentId: agentId || "",
       promise: "[FALSE POSITIVE] " + matchedPattern + ": " + text.slice(0, 60),
       context: text.slice(0, 200),
       createdAt: now,
@@ -327,7 +327,7 @@ function logFalsePositive(matchedPattern: string, text: string, source: string, 
 }
 
 /** Log a pre-filter rejection — message didn't score high enough for LLM classification */
-function logPreFilterRejection(text: string, reason: string, ngramScore?: number) {
+function logPreFilterRejection(text: string, reason: string, ngramScore?: number, conversationId?: string, agentId?: string) {
   try {
     const store = StateStore.load("prefilter-reject");
     const textSnippet = text.slice(0, 60);
@@ -340,8 +340,8 @@ function logPreFilterRejection(text: string, reason: string, ngramScore?: number
     const now = Date.now();
     store.addOath({
       id: "pf-" + now + "-" + Math.random().toString(36).slice(2, 6),
-      conversationId: "",
-      agentId: "",
+      conversationId: conversationId || "",
+      agentId: agentId || "",
       promise: text.slice(0, 120),
       context: reason,
       createdAt: now,
@@ -773,7 +773,7 @@ async function pollCycle() {
         log("Regex pre-filter matched: " + preFilter.match + " — confirming with LLM");
         const confirmed = await confirmPromise(latest.text);
         if (!confirmed) {
-          logFalsePositive(preFilter.match, latest.text, "polling", preFilter.score);
+          logFalsePositive(preFilter.match, latest.text, "polling", preFilter.score, convId, agentId);
           scanStore.setScanned(latest.id);
           scanStore.save();
         }
@@ -896,7 +896,7 @@ export default function activate(letta: any) {
         if (!preFilter) {
           // Compute score for debugging even on rejection
           const rejectScore = computeNgramScore(msgText);
-          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter", rejectScore);
+          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter", rejectScore, eventConvId, eventAgentId);
           return;
         }
         log("turn_end: pre-filter passed (score=" + preFilter.score + ") — sending to LLM...");
@@ -904,7 +904,7 @@ export default function activate(letta: any) {
         log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
 
         if (!detection) {
-          logFalsePositive("llm", msgText, "turn_end", preFilter.score);
+          logFalsePositive("llm", msgText, "turn_end", preFilter.score, eventConvId, eventAgentId);
           scanStore.save();
           return;
         }
