@@ -858,7 +858,7 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
 
 // ─── Mod Activation ──────────────────────────────────────────────
 
-export default function activate(letta: any) {
+export default async function activate(letta: any) {
   const disposers: Array<() => void> = [];
   const hasTurnEvents = letta.capabilities.events?.turns === true;
   turnEventsActive = hasTurnEvents;
@@ -994,8 +994,23 @@ export default function activate(letta: any) {
     llmConfirm: isLlmConfirmEnabled(),
     llmDedup: isLlmDedupEnabled(),
     filtersActive: filtersActive(),
+    classifierAgentId: getClassifierAgentId(),
+    classifierModel: "",
     timestamp: Date.now(),
   };
+
+  // Fetch the classifier agent's model from the API
+  try {
+    const { baseUrl, apiKey } = getApiConfig();
+    const resp = await fetch(baseUrl + "/v1/agents/" + getClassifierAgentId(), {
+      headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
+    });
+    if (resp.ok) {
+      const data: any = await resp.json();
+      filterStatus.classifierModel = data.llm_config?.model || data.model || "unknown";
+    }
+  } catch (e) {}
+
   try { fs.writeFileSync(`${HOME}/.letta/mods/oath-keeper-filter-status.json`, JSON.stringify(filterStatus, null, 2)); } catch (e) {}
 
   // ── list_oaths tool ─────────────────────────────────────────

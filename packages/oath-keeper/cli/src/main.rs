@@ -47,6 +47,8 @@ struct FilterStatus {
     #[serde(default)] llm_confirm: bool,
     #[serde(default)] llm_dedup: bool,
     #[serde(default)] filters_active: bool,
+    #[serde(default)] classifier_agent_id: String,
+    #[serde(default)] classifier_model: String,
 }
 
 fn load_filter_status() -> FilterStatus {
@@ -267,6 +269,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                     Span::styled("⚠ ALL FILTERS OFF — no oaths will be created", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
                 ])
             } else {
+                let model_display = if fs_status.classifier_model.is_empty() { "unknown".to_string() } else { fs_status.classifier_model.clone() };
                 Line::from(vec![
                     Span::raw(" Filters: "),
                     Span::styled(ngram_label, Style::default().fg(ngram_color)),
@@ -274,6 +277,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                     Span::styled(llm_label, Style::default().fg(llm_color)),
                     Span::raw("  "),
                     Span::styled(dedup_label, Style::default().fg(dedup_color)),
+                    Span::raw("  Model: "),
+                    Span::styled(model_display, Style::default().fg(Color::Cyan)),
                 ])
             };
             f.render_widget(Paragraph::new(filter_line), chunks[0]);
