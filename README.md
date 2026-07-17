@@ -86,6 +86,7 @@ packages/
 ├── plan-mode/            # Plan-mode style workflow
 ├── ponytail/             # Lazy senior dev mode — YAGNI ladder for less, simpler code
 ├── soft-landing/         # Recovery slash command for drift, compaction, or context overload
+├── shubsense/            # Low-probability "doesn't make sense" follow-up tester
 ├── spotify-statusline/   # macOS Spotify now-playing statusline
 ├── sprite/               # Persistent pet that grows stats from real agent work
 ├── threadkeeper/         # Live operational anchors for commitments and open loops
@@ -122,6 +123,7 @@ scripts/
 - **plan-mode** - Plan-mode workflow using commands, tools, turn reminders, permissions, and local state
 - **ponytail** - Lazy senior dev mode that injects a YAGNI ladder ruleset to write less, simpler code
 - **soft-landing** - Recovery slash command for drift, compaction, or context overload
+- **shubsense** - Low-probability "doesn't make sense" follow-up tester
 - **spotify-statusline** - macOS Spotify now-playing statusline
 - **sprite** - Persistent pet that grows stats from real agent work
 - **threadkeeper** - Live operational anchors for commitments, open loops, temporary boundaries, modes, drift guards, and due state
