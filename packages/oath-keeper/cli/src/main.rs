@@ -173,6 +173,32 @@ fn bash(cmd: &str) -> String {
         .unwrap_or_default()
 }
 
+fn api_get(path: &str) -> Option<serde_json::Value> {
+    let (base, key) = get_env();
+    let auth = if key.is_empty() { String::new() } else { format!("-H 'Authorization: Bearer {}'", key) };
+    let out = bash(&format!("curl -s '{}/{}' {} --max-time 3 2>/dev/null", base, path, auth));
+    if out.is_empty() { return None; }
+    serde_json::from_str(&out).ok()
+}
+
+fn agent_name(agent_id: &str) -> String {
+    if agent_id.is_empty() { return "N/A".to_string(); }
+    let v = api_get(&format!("v1/agents/{}", agent_id));
+    let name = v.and_then(|d| d.get("name").and_then(|n| n.as_str()).map(String::from))
+        .unwrap_or_else(|| "unknown".to_string());
+    let short_id = &agent_id[..agent_id.len().min(12)];
+    format!("{} ({})", name, short_id)
+}
+
+fn conv_name(conv_id: &str) -> String {
+    if conv_id.is_empty() { return "N/A".to_string(); }
+    let v = api_get(&format!("v1/conversations/{}", conv_id));
+    let summary = v.and_then(|d| d.get("summary").and_then(|s| s.as_str()).map(String::from))
+        .unwrap_or_else(|| "unknown".to_string());
+    let short_id = &conv_id[..conv_id.len().min(12)];
+    format!("{} ({})", summary, short_id)
+}
+
 // ─── TUI ─────────────────────────────────────────────────────────
 
 #[derive(PartialEq)]
@@ -366,9 +392,9 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
 
                             let line2 = Line::from(line2_spans);
 
-                            // Line 3: conv + agent
-                            let conv_display = if o.conversation_id.is_empty() { "N/A".to_string() } else { o.conversation_id[..o.conversation_id.len().min(20)].to_string() };
-                            let agent_display = if o.agent_id.is_empty() { "N/A".to_string() } else { o.agent_id[..o.agent_id.len().min(20)].to_string() };
+                            // Line 3: conv + agent (with resolved names)
+                            let conv_display = conv_name(&o.conversation_id);
+                            let agent_display = agent_name(&o.agent_id);
                             let line3 = Line::from(vec![
                                 Span::raw("  "),
                                 Span::styled("conv:", Style::default().fg(Color::Gray)),
