@@ -25,9 +25,30 @@ const FALSE_POSITIVE_FILE = `${HOME}/.letta/mods/oath-keeper-false-positives.jso
 const POLL_INTERVAL_MS = 15_000;
 const DEFAULT_DELAY_MS = 300_000; // 5 minutes fallback if LLM doesn't specify
 const VERBOSE_FILE = `${HOME}/.letta/mods/oath-keeper.verbose`;
+const CONFIG_FILE = `${HOME}/.letta/mods/oath-keeper.config.json`;
 
 function isVerbose(): boolean {
   try { return fs.existsSync(VERBOSE_FILE); } catch (e) { return false; }
+}
+
+interface OathConfig {
+  classifierAgentId?: string; // Agent ID to use for promise classification (defaults to same agent)
+}
+
+function loadConfig(): OathConfig {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+  } catch (e) {
+    return {};
+  }
+}
+
+/** Get the agent ID to use for LLM classification calls.
+ *  Falls back to the env file's agent ID if not configured. */
+function getClassifierAgentId(): string {
+  const config = loadConfig();
+  if (config.classifierAgentId) return config.classifierAgentId;
+  return getApiConfig().agentId;
 }
 
 function log(msg: string) {
@@ -146,8 +167,9 @@ class StateStore {
 /** LLM dedup — checks if a new promise is semantically the same as any existing active oath */
 async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Promise<boolean> {
   if (existingOaths.length === 0) return false;
-  const { baseUrl, apiKey, agentId } = getApiConfig();
-  if (!agentId) return false;
+  const { baseUrl, apiKey } = getApiConfig();
+  const classifierAgentId = getClassifierAgentId();
+  if (!classifierAgentId) return false;
 
   const list = existingOaths.map((o, i) => `${i + 1}. "${o.promise}"`).join("\n");
   const prompt =
@@ -160,7 +182,7 @@ async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Pr
     + '- Not duplicate: {"is_duplicate": false}';
 
   try {
-    const convResp = await fetch(baseUrl + "/v1/conversations?agent_id=" + agentId, {
+    const convResp = await fetch(baseUrl + "/v1/conversations?agent_id=" + classifierAgentId, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
       body: "{}",
@@ -269,8 +291,9 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
  * Returns the specific promise text or null if not a real promise.
  */
 async function confirmPromise(text: string): Promise<{ promise: string; delayMs: number } | null> {
-  const { baseUrl, apiKey, agentId } = getApiConfig();
-  if (!agentId) return null;
+  const { baseUrl, apiKey } = getApiConfig();
+  const classifierAgentId = getClassifierAgentId();
+  if (!classifierAgentId) return null;
 
   // Truncate to keep the classification fast
   const snippet = text.slice(0, 1000);
@@ -297,7 +320,7 @@ async function confirmPromise(text: string): Promise<{ promise: string; delayMs:
   try {
     // Create throwaway conversation for classification
     const convResp = await fetch(
-      baseUrl + "/v1/conversations?agent_id=" + agentId,
+      baseUrl + "/v1/conversations?agent_id=" + classifierAgentId,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
