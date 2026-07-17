@@ -121,6 +121,11 @@ class StateStore {
   get pollVer(): string { return this.data._pollVer; }
   hasActiveOaths(): boolean { return this.data.oaths.some((o) => o.status === "pending" || o.status === "queued" || o.status === "delivering"); }
 
+  /** Get active oaths (pending, queued, or delivering) for LLM dedup comparison */
+  activeOaths(): Oath[] {
+    return this.data.oaths.filter((o) => o.status === "pending" || o.status === "queued" || o.status === "delivering");
+  }
+
   /** Strong dedup: returns true if an oath with the same promise text exists from the last N minutes */
   hasRecentPromise(promiseText: string, withinMs: number = 300_000): boolean {
     const now = Date.now();
@@ -135,6 +140,78 @@ class StateStore {
     if (!this.dirty) { this.saved = true; return; }
     try { fs.writeFileSync(STATE_FILE, JSON.stringify(this.data, null, 2)); this.saved = true; log(`StateStore.save() — SAVED after "${this.operation}"`); }
     catch (e) { log(`StateStore.save() — FAILED: ${e}`); }
+  }
+}
+
+/** LLM dedup — checks if a new promise is semantically the same as any existing active oath */
+async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Promise<boolean> {
+  if (existingOaths.length === 0) return false;
+  const { baseUrl, apiKey, agentId } = getApiConfig();
+  if (!agentId) return false;
+
+  const list = existingOaths.map((o, i) => `${i + 1}. "${o.promise}"`).join("\n");
+  const prompt =
+    'You are a duplicate detector. A new oath promise has been detected.\n'
+    + 'Check if it is semantically the same promise as any existing active oath.\n\n'
+    + 'New promise: "' + newPromise + '"\n\n'
+    + 'Existing active oaths:\n' + list + '\n\n'
+    + 'Respond with ONLY a JSON object:\n'
+    + '- Duplicate: {"is_duplicate": true, "matching_index": <number>}\n'
+    + '- Not duplicate: {"is_duplicate": false}';
+
+  try {
+    const convResp = await fetch(baseUrl + "/v1/conversations?agent_id=" + agentId, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
+      body: "{}",
+    });
+    if (!convResp.ok) return false;
+    const convData: any = await convResp.json();
+    const classConvId = convData.id || "";
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const resp = await fetch(baseUrl + "/v1/conversations/" + classConvId + "/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: "Bearer " + apiKey } : {}) },
+      body: JSON.stringify({ input: prompt, role: "user" }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    try {
+      await fetch(baseUrl + "/v1/conversations/" + classConvId, {
+        method: "DELETE",
+        headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
+      });
+    } catch (e) {}
+
+    if (!resp.ok) return false;
+    const respText = await resp.text();
+    let answer = "";
+    for (const line of respText.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6);
+      if (data === "[DONE]") break;
+      try {
+        const d = JSON.parse(data);
+        if (d.message_type === "assistant_message" && d.content) {
+          answer = String(d.content).slice(0, 500);
+          break;
+        }
+      } catch (e) {}
+    }
+
+    const jsonMatch = answer.match(/\{[^}]*\}/);
+    if (!jsonMatch) return false;
+    const parsed = JSON.parse(jsonMatch[0]);
+    const isDup = parsed.is_duplicate === true;
+    if (isDup) log("isDuplicatePromise: DUPLICATE of oath #" + parsed.matching_index);
+    else log("isDuplicatePromise: not a duplicate");
+    return isDup;
+  } catch (e) {
+    log("isDuplicatePromise error: " + e);
+    return false;
   }
 }
 
@@ -707,7 +784,14 @@ export default function activate(letta: any) {
           return;
         }
 
-        // Dedup via promise text similarity (no message ID available from event)
+        // Dedup: LLM checks semantic similarity against active oaths
+        const existing = scanStore.activeOaths();
+        const isDup = existing.length > 0 ? await isDuplicatePromise(detection.promise, existing) : false;
+        if (isDup) {
+          log("turn_end: duplicate promise — skipping");
+          return;
+        }
+        // Also check string-based dedup as a fast fallback
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
           // Use event context for scoping — oath delivers to the SAME conversation it was detected in
