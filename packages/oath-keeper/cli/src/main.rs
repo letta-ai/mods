@@ -614,15 +614,17 @@ fn main() {
 
     if purge { save_state(&State::default()); println!("Purged."); return; }
 
-    if watch {
-        enable_raw_mode().unwrap();
-        execute!(stdout(), EnterAlternateScreen).unwrap();
-        let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
-        let result = run_tui(&mut terminal);
-        disable_raw_mode().unwrap();
-        execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
-        result.unwrap();
-    } else {
+    // TUI is default; --plain for text output
+    if !watch && env::args().any(|a| a == "--plain") {
         print_plain();
+        return;
     }
+
+    enable_raw_mode().unwrap();
+    execute!(stdout(), EnterAlternateScreen).unwrap();
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
+    let result = run_tui(&mut terminal);
+    disable_raw_mode().unwrap();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
+    result.unwrap();
 }
