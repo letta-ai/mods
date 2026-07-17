@@ -240,6 +240,40 @@ async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Pr
 
 // ─── Promise Detection ───────────────────────────────────────────
 
+const PROMISE_PATTERNS: Array<[RegExp, number]> = [
+  // Strong signals (3.0)
+  [/i'll get back to/i, 3.0],
+  [/i'll follow up/i, 3.0],
+  [/i'll circle back/i, 3.0],
+  [/get back to you/i, 3.0],
+  [/follow up (?:on|with|in)/i, 3.0],
+  [/i'll let you know/i, 3.0],
+  [/i'll update you/i, 3.0],
+  [/check back (?:in|with|later|after)/i, 2.5],
+
+  // Moderate signals (2.0-2.5)
+  [/i'll (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
+  [/let me (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
+  [/i'll (?:send|provide|share|post|publish|deliver)/i, 2.0],
+  [/i'll (?:have|get) (?:an answer|results|something|a response)/i, 2.5],
+  [/i'll tell you.*(?:later|after|when)/i, 2.5],
+
+  // Weak signals (1.0-1.5)
+  [/i'll (?:try|attempt|see|find out|work on)/i, 1.5],
+  [/i (?:will|shall) (?:check|verify|look|investigate|research|test|review|analyze)/i, 2.0],
+  [/i'm going to (?:check|verify|look|investigate|research|test|review)/i, 2.0],
+  [/(?:in|after) (?:\d+|a few|some) (?:minutes|seconds|hours|moments)/i, 1.5],
+  [/\blater (?:today|this week|tonight)\b/i, 1.0],
+];
+
+function computeNgramScore(text: string): number {
+  let score = 0;
+  for (const [pattern, weight] of PROMISE_PATTERNS) {
+    if (pattern.test(text)) score += weight;
+  }
+  return score;
+}
+
 function detectPromiseRegex(text: string): { match: string; score: number } | null {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
@@ -249,37 +283,7 @@ function detectPromiseRegex(text: string): { match: string; score: number } | nu
   const codeChars = (text.match(/[{}()[\];=]/g) || []).length;
   if (text.length > 50 && codeChars / text.length > 0.05) return null;
 
-  // Weighted n-gram scoring
-  const PROMISE_PATTERNS: Array<[RegExp, number]> = [
-    // Strong signals (3.0)
-    [/i'll get back to/i, 3.0],
-    [/i'll follow up/i, 3.0],
-    [/i'll circle back/i, 3.0],
-    [/get back to you/i, 3.0],
-    [/follow up (?:on|with|in)/i, 3.0],
-    [/i'll let you know/i, 3.0],
-    [/i'll update you/i, 3.0],
-    [/check back (?:in|with|later|after)/i, 2.5],
-
-    // Moderate signals (2.0-2.5)
-    [/i'll (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
-    [/let me (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
-    [/i'll (?:send|provide|share|post|publish|deliver)/i, 2.0],
-    [/i'll (?:have|get) (?:an answer|results|something|a response)/i, 2.5],
-    [/i'll tell you.*(?:later|after|when)/i, 2.5],
-
-    // Weak signals (1.0-1.5)
-    [/i'll (?:try|attempt|see|find out|work on)/i, 1.5],
-    [/i (?:will|shall) (?:check|verify|look|investigate|research|test|review|analyze)/i, 2.0],
-    [/i'm going to (?:check|verify|look|investigate|research|test|review)/i, 2.0],
-    [/(?:in|after) (?:\d+|a few|some) (?:minutes|seconds|hours|moments)/i, 1.5],
-    [/\blater (?:today|this week|tonight)\b/i, 1.0],
-  ];
-
-  let score = 0;
-  for (const [pattern, weight] of PROMISE_PATTERNS) {
-    if (pattern.test(text)) score += weight;
-  }
+  const score = computeNgramScore(text);
 
   if (score > 1.5) return { match: "ngram-score-" + score, score };
   return null;
@@ -291,7 +295,7 @@ function detectPromiseRegex(text: string): { match: string; score: number } | nu
  * Returns the specific promise text or null if not a real promise.
  */
 /** Log a false positive in the state file with its own status (deduplicated) */
-function logFalsePositive(matchedPattern: string, text: string, source: string) {
+function logFalsePositive(matchedPattern: string, text: string, source: string, ngramScore?: number) {
   try {
     const store = StateStore.load("false-positive");
     // Deduplicate — skip if a false positive with the same text already exists
@@ -313,6 +317,7 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
       status: "false_positive",
       result: "LLM rejected — not a genuine promise",
       deliveredAt: now,
+      ngramScore,
     });
     store.save();
     log("False positive logged: " + matchedPattern);
@@ -322,7 +327,7 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
 }
 
 /** Log a pre-filter rejection — message didn't score high enough for LLM classification */
-function logPreFilterRejection(text: string, reason: string) {
+function logPreFilterRejection(text: string, reason: string, ngramScore?: number) {
   try {
     const store = StateStore.load("prefilter-reject");
     const textSnippet = text.slice(0, 60);
@@ -344,9 +349,10 @@ function logPreFilterRejection(text: string, reason: string) {
       status: "prefilter_rejected",
       result: reason,
       deliveredAt: now,
+      ngramScore,
     });
     store.save();
-    log("Pre-filter rejected: " + reason + " — " + textSnippet);
+    log("Pre-filter rejected: " + reason + " (score=" + (ngramScore ?? 0) + ") — " + textSnippet);
   } catch (e) {
     log("Failed to log pre-filter rejection: " + e);
   }
@@ -767,7 +773,7 @@ async function pollCycle() {
         log("Regex pre-filter matched: " + preFilter.match + " — confirming with LLM");
         const confirmed = await confirmPromise(latest.text);
         if (!confirmed) {
-          logFalsePositive(preFilter.match, latest.text, "polling");
+          logFalsePositive(preFilter.match, latest.text, "polling", preFilter.score);
           scanStore.setScanned(latest.id);
           scanStore.save();
         }
@@ -888,7 +894,9 @@ export default function activate(letta: any) {
         // Pre-filter: n-gram scoring before LLM
         const preFilter = detectPromiseRegex(msgText);
         if (!preFilter) {
-          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter");
+          // Compute score for debugging even on rejection
+          const rejectScore = computeNgramScore(msgText);
+          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter", rejectScore);
           return;
         }
         log("turn_end: pre-filter passed (score=" + preFilter.score + ") — sending to LLM...");
@@ -896,7 +904,7 @@ export default function activate(letta: any) {
         log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
 
         if (!detection) {
-          logFalsePositive("llm", msgText, "turn_end");
+          logFalsePositive("llm", msgText, "turn_end", preFilter.score);
           scanStore.save();
           return;
         }
