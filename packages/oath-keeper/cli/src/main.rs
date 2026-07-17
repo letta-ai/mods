@@ -35,6 +35,7 @@ struct Oath {
     #[serde(rename = "deliveredAt")] delivered_at: Option<i64>,
     #[serde(default)] cron_id: Option<String>,
     #[serde(default, rename = "deliveryMode")] delivery_mode: Option<String>,
+    #[serde(default, rename = "ngramScore")] ngram_score: Option<f64>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Default)]
@@ -172,7 +173,7 @@ fn load_false_positives() -> Vec<FalsePositive> {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Mode { List, Detail, FalsePositives }
+enum Mode { List, Detail }
 
 fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut list_state = ListState::default();
@@ -211,6 +212,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             let delivering = sorted.iter().filter(|o| o.status == "delivering").count();
             let delivered = sorted.iter().filter(|o| o.status == "delivered").count();
             let failed = sorted.iter().filter(|o| o.status == "failed").count();
+            let false_pos = sorted.iter().filter(|o| o.status == "false_positive").count();
+            let prefiltered = sorted.iter().filter(|o| o.status == "prefilter_rejected").count();
 
             let mut hdr = vec![
                 Span::styled(" Oath Keeper ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -222,6 +225,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             if delivering > 0 { hdr.push(Span::styled(format!("  >:{}", delivering), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))); }
             if delivered > 0 { hdr.push(Span::styled(format!("  OK:{}", delivered), Style::default().fg(Color::Green))); }
             if failed > 0 { hdr.push(Span::styled(format!("  X:{}", failed), Style::default().fg(Color::Red))); }
+            if false_pos > 0 { hdr.push(Span::styled(format!("  FP:{}", false_pos), Style::default().fg(Color::DarkGray))); }
+            if prefiltered > 0 { hdr.push(Span::styled(format!("  PF:{}", prefiltered), Style::default().fg(Color::Magenta))); }
             if count == 0 { hdr.push(Span::styled("  empty", Style::default().fg(Color::DarkGray))); }
 
             f.render_widget(Paragraph::new(Line::from(hdr)), chunks[0]);
@@ -251,6 +256,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 "delivering" => ("DELIVERING".to_string(), Color::Cyan),
                                 "delivered" => ("DELIVERED".to_string(), Color::Green),
                                 "failed" => ("FAILED".to_string(), Color::Red),
+                                "false_positive" => ("FALSE POS".to_string(), Color::DarkGray),
+                                "prefilter_rejected" => ("PREFILTER".to_string(), Color::Magenta),
                                 _ => ("UNKNOWN".to_string(), Color::Gray),
                             };
 
@@ -262,6 +269,11 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 Span::styled(format!(" {} ", status_label), Style::default().fg(Color::Black).bg(status_color).add_modifier(Modifier::BOLD)),
                                 Span::raw(" "),
                                 Span::styled(&o.promise, Style::default().fg(Color::White)),
+                                if let Some(score) = o.ngram_score {
+                                    Span::styled(format!(" [{}]", score), Style::default().fg(Color::Yellow))
+                                } else {
+                                    Span::raw("")
+                                },
                             ]);
 
                             // Line 2: timer/source/age/conv metadata
@@ -330,6 +342,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 "delivering" => ("DELIVERING", Color::Cyan),
                                 "delivered" => ("DELIVERED", Color::Green),
                                 "failed" => ("FAILED", Color::Red),
+                                "false_positive" => ("FALSE POS", Color::DarkGray),
+                                "prefilter_rejected" => ("PREFILTER", Color::Magenta),
                                 _ => ("UNKNOWN", Color::Gray),
                             };
 
@@ -358,6 +372,17 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                         Span::raw("")
                                     },
                                 ]),
+                                Line::from({
+                                    let mut spans = vec![
+                                        Span::styled("Score:    ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                                    ];
+                                    if let Some(score) = o.ngram_score {
+                                        spans.push(Span::styled(format!("{:.1}", score), Style::default().fg(Color::Yellow)));
+                                    } else {
+                                        spans.push(Span::styled("N/A", Style::default().fg(Color::DarkGray)));
+                                    }
+                                    spans
+                                }),
                                 Line::from(vec![
                                     Span::styled("Source:   ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                                     Span::styled(if o.id.contains("manual") { "Manual (TUI create)".to_string() } else { "Mod poller (setInterval 15s)".to_string() }, Style::default().fg(Color::Magenta)),
@@ -416,48 +441,12 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                         }
                     }
                 }
-                Mode::FalsePositives => {
-                    let fps = load_false_positives();
-                    if fps.is_empty() {
-                        f.render_widget(
-                            Paragraph::new(vec![
-                                Line::from(""),
-                                Line::from(Span::styled("  No false positives detected.", Style::default().fg(Color::DarkGray))),
-                            ]),
-                            chunks[1],
-                        );
-                    } else {
-                        let items: Vec<ListItem> = fps.iter().rev().take(20).map(|fp| {
-                            let age = fmt_ago(fp.ts);
-                            let mut lines = vec![
-                                Line::from(vec![
-                                    Span::styled("REJECTED ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                                    Span::styled(&fp.pattern, Style::default().fg(Color::Yellow)),
-                                    Span::styled(format!("  src:{}  age:{}", fp.source, age), Style::default().fg(Color::Gray)),
-                                ]),
-                                Line::from(Span::styled(
-                                    format!("  {}", fp.text.chars().take(77).collect::<String>()),
-                                    Style::default().fg(Color::DarkGray),
-                                )),
-                                Line::from(""),
-                            ];
-                            ListItem::new(lines)
-                        }).collect();
-
-                        let list = List::new(items)
-                            .block(Block::default().borders(Borders::ALL).title(format!(" False Positives ({}) ", fps.len())))
-                            .highlight_style(Style::default());
-
-                        f.render_widget(list, chunks[1]);
-                    }
-                }
             }
 
             // ── Footer ──
             let footer_text = match mode {
-                Mode::List => " q quit  j/k move  i info  d deliver  x cancel  p purge  f false-positives",
+                Mode::List => " q quit  j/k move  i info  d deliver  x cancel  p purge  c clear filtered  C clear completed",
                 Mode::Detail => " Esc/i back to list  d deliver  x cancel",
-                Mode::FalsePositives => " Esc/f back to list",
             };
             let mut footer = vec![
                 Line::from(Span::styled(footer_text, Style::default().fg(Color::DarkGray))),
@@ -487,11 +476,28 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                             if let Some(s) = sel { if s > 0 { list_state.select(Some(s - 1)); } }
                         }
                         KeyCode::Char('i') => { if count > 0 { mode = Mode::Detail; } }
-                        KeyCode::Char('f') => { mode = Mode::FalsePositives; }
                         KeyCode::Char('p') => {
                             save_state(&State::default());
                             list_state.select(Some(0));
                             status_msg = "Purged all oaths".to_string();
+                        }
+                        KeyCode::Char('c') => {
+                            let mut st = load_state();
+                            let before = st.oaths.len();
+                            st.oaths.retain(|o| o.status != "prefilter_rejected" && o.status != "false_positive");
+                            save_state(&st);
+                            let removed = before - st.oaths.len();
+                            status_msg = format!("Cleared {} filtered entries", removed);
+                        }
+                        KeyCode::Char('C') => {
+                            let mut st = load_state();
+                            let before = st.oaths.len();
+                            st.oaths.retain(|o| {
+                                o.status == "pending" || o.status == "queued" || o.status == "delivering"
+                            });
+                            save_state(&st);
+                            let removed = before - st.oaths.len();
+                            status_msg = format!("Cleared {} completed entries", removed);
                         }
                         KeyCode::Char('x') => {
                             if let Some(s) = sel {
@@ -575,10 +581,6 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 }
                             }
                         }
-                        _ => {}
-                    }
-                    Mode::FalsePositives => match key.code {
-                        KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('q') | KeyCode::Char('i') => { mode = Mode::List; }
                         _ => {}
                     }
                 }
