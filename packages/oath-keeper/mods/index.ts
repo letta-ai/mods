@@ -24,8 +24,6 @@ const DEBUG_FILE = `${HOME}/.letta/mods/oath-keeper-debug.json`;
 const FALSE_POSITIVE_FILE = `${HOME}/.letta/mods/oath-keeper-false-positives.json`;
 const POLL_INTERVAL_MS = 15_000;
 const DEFAULT_DELAY_MS = 300_000; // 5 minutes fallback if LLM doesn't specify
-const MIN_DELAY_MS = 30_000;      // 30 seconds minimum
-const MAX_DELAY_MS = 86_400_000;  // 24 hours maximum
 const VERBOSE_FILE = `${HOME}/.letta/mods/oath-keeper.verbose`;
 
 function isVerbose(): boolean {
@@ -217,7 +215,7 @@ async function confirmPromise(text: string): Promise<{ promise: string; delayMs:
     + '  - delay_seconds: how many seconds until the agent should deliver on this promise.\n'
     + '    - If the agent specified a time ("in 5 minutes" → 300, "in an hour" → 3600, "tomorrow" → 86400), use that.\n'
     + '    - If no specific time, estimate based on the task (quick check → 60-120, investigation → 300-600, deep work → 900+).\n'
-    + '    - Minimum 30, maximum 86400.\n'
+    + '    - Any positive integer.\n'
     + '- Not a promise: {"is_promise": false}';
 
   try {
@@ -282,7 +280,7 @@ async function confirmPromise(text: string): Promise<{ promise: string; delayMs:
     if (parsed.is_promise === true && parsed.promise && typeof parsed.promise === "string") {
       // Parse delay from LLM, clamp to sane bounds, default to 5 min if missing/invalid
       let delayMs = DEFAULT_DELAY_MS;
-      if (typeof parsed.delay_seconds === "number" && parsed.delay_seconds >= 30 && parsed.delay_seconds <= 86400) {
+      if (typeof parsed.delay_seconds === "number" && parsed.delay_seconds > 0) {
         delayMs = parsed.delay_seconds * 1000;
       }
       log("confirmPromise: CONFIRMED — " + parsed.promise.slice(0, 60) + " (delay: " + (delayMs / 1000) + "s)");
@@ -464,15 +462,15 @@ async function tryDeliverOath(oath: Oath): Promise<{ status: "ok" | "busy" | "fa
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-async function pollCycle() {
-  const store = StateStore.load("pollCycle");
+/** Delivery cycle — runs on every poll regardless of mode.
+ *  Handles: delivery-check, queue transition, delivery, stuck recovery, prune.
+ *  Does NOT scan for new promises (turn_end or pollCycle handles that). */
+async function pollDeliveryCycle() {
+  const store = StateStore.load("deliveryCycle");
   const now = Date.now();
 
   try {
-    if (store.pollVer !== "v4-api") { store.setPollVer("v4-api"); store.save(); }
-
     // 1. Check if any queued/delivering oaths have already been delivered
-    // by looking for [Oath Keeper] prompts in the conversation history
     const { convId: checkConvId } = getApiConfig();
     if (checkConvId) {
       const checkStore = StateStore.load("delivery-check");
@@ -486,7 +484,6 @@ async function pollCycle() {
         if (resp.ok) {
           const data: any = await resp.json();
           const msgs = Array.isArray(data) ? data : (data.messages || []);
-          // Build set of recent message texts
           let recentText = "";
           for (const m of msgs) {
             const mt = m.message_type || "";
@@ -501,20 +498,15 @@ async function pollCycle() {
               recentText += " " + text;
             }
           }
-
-          // Check each queued/delivering oath — if its delivery prompt is in history, mark delivered
           for (const oath of checkStore.oaths) {
             if (oath.status === "queued" || oath.status === "delivering") {
-              // Look for the [Oath Keeper] prompt with this promise text
               const promptSnippet = oath.promise.slice(0, 40);
               if (recentText.includes("[Oath Keeper]") && recentText.includes(promptSnippet)) {
-                // Also check for [Oath Delivered] response
                 if (recentText.includes("[Oath Delivered]")) {
                   checkStore.updateOath(oath.id, { status: "delivered", result: "Confirmed via conversation history", deliveredAt: Date.now() });
                   checkChanged = true;
                   log("Oath " + oath.id + " confirmed delivered (found in conversation history)");
                 } else {
-                  // Prompt is there but no response yet — still processing
                   checkStore.updateOath(oath.id, { status: "delivering" });
                   checkChanged = true;
                   log("Oath " + oath.id + " delivery prompt found in history (waiting for response)");
@@ -529,8 +521,7 @@ async function pollCycle() {
       if (checkChanged) checkStore.save();
     }
 
-    // 2. Transition due oaths to queued (ALL oaths — polling delivers via API POST)
-    // Reload state — delivery-check may have already updated some oaths
+    // 2. Transition due oaths to queued
     const queueStore = StateStore.load("queue-transition");
     for (const oath of queueStore.oaths) {
       if (oath.status === "pending" && oath.dueAt <= now) {
@@ -540,7 +531,7 @@ async function pollCycle() {
     }
     queueStore.save();
 
-    // 3. Try to deliver one queued oath (only if not already delivered by history check)
+    // 3. Try to deliver one queued oath
     const queuedOath = queueStore.oaths.find((o) => o.status === "queued");
     if (queuedOath) {
       store.updateOath(queuedOath.id, { status: "delivering" });
@@ -549,9 +540,6 @@ async function pollCycle() {
 
       const result = await tryDeliverOath(queuedOath);
       const updateStore = StateStore.load("delivery-result");
-      // CRITICAL: Check if the oath was already marked delivered by the 
-      // delivery-check section (conversation history check). If so, 
-      // do NOT overwrite with queued/busy.
       const currentOath = updateStore.findOath(queuedOath.id);
       if (currentOath && currentOath.status === "delivered") {
         log("Oath " + queuedOath.id + " already delivered (history check) — skipping result update");
@@ -570,7 +558,7 @@ async function pollCycle() {
       }
     }
 
-    // 3. Reset stuck delivering oaths (>5 min)
+    // 4. Reset stuck delivering oaths (>5 min)
     const resetStore = StateStore.load("stuck-check");
     const fiveMinAgo = now - 300_000;
     for (const oath of resetStore.oaths) {
@@ -581,8 +569,20 @@ async function pollCycle() {
     }
     resetStore.prune(now);
     resetStore.save();
+  } catch (e) {
+    log("Delivery cycle error: " + e);
+  }
+}
 
-    // 4. Scan for new promises
+/** Full poll cycle — delivery + scanning. Only used when turn_end is NOT available. */
+async function pollCycle() {
+  const now = Date.now();
+
+  try {
+    // Run delivery logic first
+    await pollDeliveryCycle();
+
+    // Then scan for new promises (only in listener mode — turn_end handles this otherwise)
     const scanStore = StateStore.load("scan-phase");
     if (scanStore.hasActiveOaths()) { log("Skipping scan — active oaths"); return; }
 
@@ -596,12 +596,10 @@ async function pollCycle() {
         const confirmed = await confirmPromise(latest.text);
         if (!confirmed) {
           logFalsePositive(preFilter.match, latest.text, "polling");
-          // Mark as scanned even for false positives — don't re-scan the same message
           scanStore.setScanned(latest.id);
           scanStore.save();
         }
         if (confirmed) {
-          // Only mark as scanned AFTER successful confirmation
           scanStore.setScanned(latest.id);
           const alreadyExists = scanStore.hasRecentPromise(confirmed.promise) ||
                                 scanStore.oaths.some((o) => o.sourceMessageId === latest.id);
@@ -612,7 +610,6 @@ async function pollCycle() {
           }
         }
       } else {
-        // No pre-filter match — mark as scanned so we don't re-scan
         scanStore.setScanned(latest.id);
         scanStore.save();
       }
@@ -721,11 +718,20 @@ export default function activate(letta: any) {
     log("turn_end handler registered");
   }
 
-  // ── Polling — always enabled alongside turn_end (with strong dedup)
-  if (intervalHandle) clearInterval(intervalHandle);
-  intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
-  pollCycle();
-  log("Polling started (alongside turn_end, dedup active)");
+  // ── Polling — only when turn_end is NOT available (listener/desktop fallback)
+  if (!hasTurnEvents) {
+    if (intervalHandle) clearInterval(intervalHandle);
+    intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
+    pollCycle();
+    log("Polling started (no turn_end — listener/desktop fallback)");
+  } else {
+    // turn_end handles detection; polling only needed for delivery timing
+    // (checking queued oaths, stuck-state recovery, conversation history checks)
+    if (intervalHandle) clearInterval(intervalHandle);
+    intervalHandle = setInterval(pollDeliveryCycle, POLL_INTERVAL_MS);
+    pollDeliveryCycle();
+    log("Delivery poll started (turn_end active — scanning disabled)");
+  }
 
   // ── list_oaths tool ─────────────────────────────────────────
   disposers.push(
