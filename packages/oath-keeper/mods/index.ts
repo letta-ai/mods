@@ -374,21 +374,21 @@ async function confirmPromise(text: string): Promise<{ promise: string; delayMs:
 // ─── Helpers ─────────────────────────────────────────────────────
 
 function buildDeliveryPrompt(oath: Oath): string {
-  // Include current context so the agent doesn't need to look anything up.
-  // Server-side tools (web_search) work during delivery but return stale data.
-  // Client-side tools (Bash) require approval that times out during delivery turns.
-  // Pre-compute common answers to avoid tool calls entirely.
-  let context = '';
+  let prompt = '[Oath Keeper] You previously promised the user:\n"' + oath.promise + '"\n\n'
+    + 'Deliver on that promise now. You have full tool access — use whatever tools you need to follow through.\n'
+    + 'Start your response with "[Oath Delivered]".';
+
+  if (oath.context && oath.context !== "(turn_end)" && oath.context !== "(no context)") {
+    prompt += '\n\nFor context, the user originally said:\n"' + oath.context + '"';
+  }
+
   try {
     const now = new Date();
     const timeStr = now.toLocaleString("en-US", { timeZone: "America/Chicago" });
-    context = '\n\nCurrent time: ' + timeStr + ' CDT';
+    prompt += '\n\nCurrent time: ' + timeStr + ' CDT';
   } catch (e) {}
 
-  return '[Oath Keeper] You previously promised the user:\n"' + oath.promise +
-    '"\n\nDeliver on your promise now. Do NOT use any tools — answer directly from the context provided.' +
-    context +
-    '\n\nKeep it to 1-3 sentences. Start your response with "[Oath Delivered]".';
+  return prompt;
 }
 
 function createOath(promise: string, context: string, conversationId: string, agentId: string, sourceMessageId?: string, deliveryMode?: "turn_end" | "polling", delayMs?: number): Oath {
