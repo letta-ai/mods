@@ -43,6 +43,7 @@ struct State { oaths: Vec<Oath> }
 
 #[derive(Deserialize, Debug, Default)]
 struct FilterStatus {
+    #[serde(default, rename = "negativeFilter")] negative_filter: bool,
     #[serde(default)] ngram: bool,
     #[serde(default, rename = "llmConfirm")] llm_confirm: bool,
     #[serde(default, rename = "llmDedup")] llm_dedup: bool,
@@ -248,6 +249,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
 
             // ── Filter status line ──
             let fs_status = load_filter_status();
+            let neg_label = if fs_status.negative_filter { "NEG:on" } else { "NEG:off" };
+            let neg_color = if fs_status.negative_filter { Color::Green } else { Color::Red };
             let ngram_label = if fs_status.ngram { "NGRAM:on" } else { "NGRAM:off" };
             let ngram_color = if fs_status.ngram { Color::Green } else { Color::Red };
             let llm_label = if fs_status.llm_confirm { "LLM:on" } else { "LLM:off" };
@@ -258,6 +261,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             let filter_line = if !fs_status.filters_active {
                 Line::from(vec![
                     Span::raw(" Filters: "),
+                    Span::styled(neg_label, Style::default().fg(neg_color)),
+                    Span::raw("  "),
                     Span::styled(ngram_label, Style::default().fg(ngram_color)),
                     Span::raw("  "),
                     Span::styled(llm_label, Style::default().fg(llm_color)),
@@ -270,6 +275,8 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                 let model_display = if fs_status.classifier_model.is_empty() { "unknown".to_string() } else { fs_status.classifier_model.clone() };
                 Line::from(vec![
                     Span::raw(" Filters: "),
+                    Span::styled(neg_label, Style::default().fg(neg_color)),
+                    Span::raw("  "),
                     Span::styled(ngram_label, Style::default().fg(ngram_color)),
                     Span::raw("  "),
                     Span::styled(llm_label, Style::default().fg(llm_color)),

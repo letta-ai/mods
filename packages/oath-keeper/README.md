@@ -106,6 +106,7 @@ All configuration lives in `~/.letta/mods/oath-keeper.config.json`:
 ```json
 {
   "classifierAgentId": "agent-xxxxx",
+  "negativeFilter": true,
   "ngramFilter": true,
   "llmConfirm": true,
   "llmDedup": true
@@ -124,6 +125,7 @@ All three detection stages can be individually toggled:
 
 | Config key | Default | Description |
 |-----------|---------|-------------|
+| `negativeFilter` | `true` | Negative filter — skips short messages (<15 chars) and code-heavy messages (>5% syntax characters). |
 | `ngramFilter` | `true` | N-gram pre-filter. When disabled, all messages skip the pre-filter and go directly to LLM confirmation. |
 | `llmConfirm` | `true` | LLM promise classification. When disabled, messages that pass the n-gram filter create oaths directly without LLM confirmation. |
 | `llmDedup` | `true` | LLM semantic dedup. When disabled, only string-based dedup is used. |
@@ -192,7 +194,7 @@ Launches the TUI by default (use `--plain` for text output, `--purge` to clear s
 The TUI header shows:
 
 - Oath counts by status (P, Q, >, OK, X, FP, PF)
-- Filter status: `NGRAM:on/off`, `LLM:on/off`, `DEDUP:on/off` (green/red)
+- Filter status: `NEG:on/off`, `NGRAM:on/off`, `LLM:on/off`, `DEDUP:on/off` (green/red)
 - Classifier model: `Model: lc-zai-coding/glm-5.1`
 - Red warning if all filters are off: `⚠ ALL FILTERS OFF — no oaths will be created`
 

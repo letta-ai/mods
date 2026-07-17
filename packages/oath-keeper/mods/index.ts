@@ -33,6 +33,7 @@ function isVerbose(): boolean {
 
 interface OathConfig {
   classifierAgentId?: string; // Agent ID to use for promise classification (defaults to same agent)
+  negativeFilter?: boolean;    // Enable negative filter — code-heavy/short messages (default: true)
   ngramFilter?: boolean;       // Enable n-gram pre-filter (default: true)
   llmConfirm?: boolean;        // Enable LLM confirmation/dedup (default: true)
   llmDedup?: boolean;          // Enable LLM semantic dedup (default: true)
@@ -52,6 +53,12 @@ function getClassifierAgentId(): string {
   const config = loadConfig();
   if (config.classifierAgentId) return config.classifierAgentId;
   return getApiConfig().agentId;
+}
+
+/** Check if negative filter is enabled (default: true) */
+function isNegativeFilterEnabled(): boolean {
+  const config = loadConfig();
+  return config.negativeFilter !== false; // default true
 }
 
 /** Check if n-gram pre-filter is enabled (default: true) */
@@ -303,11 +310,13 @@ function computeNgramScore(text: string): number {
 function detectPromiseRegex(text: string): { match: string; score: number } | null {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
-  if (text.trim().length < 15) return null;
 
-  // Negative filter: code-heavy messages are rarely promises
-  const codeChars = (text.match(/[{}()[\];=]/g) || []).length;
-  if (text.length > 50 && codeChars / text.length > 0.05) return null;
+  // Negative filter (Stage 0): skip short and code-heavy messages
+  if (isNegativeFilterEnabled()) {
+    if (text.trim().length < 15) return null;
+    const codeChars = (text.match(/[{}()[\];=]/g) || []).length;
+    if (text.length > 50 && codeChars / text.length > 0.05) return null;
+  }
 
   const score = computeNgramScore(text);
 
@@ -990,6 +999,7 @@ export default async function activate(letta: any) {
 
   // Write filter status to file for TUI to read
   const filterStatus = {
+    negativeFilter: isNegativeFilterEnabled(),
     ngram: isNgramEnabled(),
     llmConfirm: isLlmConfirmEnabled(),
     llmDedup: isLlmDedupEnabled(),
