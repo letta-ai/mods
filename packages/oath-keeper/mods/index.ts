@@ -23,7 +23,9 @@ const ENV_FILE = `${HOME}/.letta/extensions/oath-env.json`;
 const DEBUG_FILE = `${HOME}/.letta/mods/oath-keeper-debug.json`;
 const FALSE_POSITIVE_FILE = `${HOME}/.letta/mods/oath-keeper-false-positives.json`;
 const POLL_INTERVAL_MS = 15_000;
-const DELAY_MS = 60_000;
+const DEFAULT_DELAY_MS = 300_000; // 5 minutes fallback if LLM doesn't specify
+const MIN_DELAY_MS = 30_000;      // 30 seconds minimum
+const MAX_DELAY_MS = 86_400_000;  // 24 hours maximum
 const VERBOSE_FILE = `${HOME}/.letta/mods/oath-keeper.verbose`;
 
 function isVerbose(): boolean {
@@ -192,7 +194,7 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
  * ask the LLM to confirm whether it's a genuine promise to follow up later.
  * Returns the specific promise text or null if not a real promise.
  */
-async function confirmPromise(text: string): Promise<{ promise: string } | null> {
+async function confirmPromise(text: string): Promise<{ promise: string; delayMs: number } | null> {
   const { baseUrl, apiKey, agentId } = getApiConfig();
   if (!agentId) return null;
 
@@ -211,7 +213,11 @@ async function confirmPromise(text: string): Promise<{ promise: string } | null>
     + '- NO = hypothetical examples\n\n'
     + 'Message:\n"""' + snippet + '"""\n\n'
     + 'Respond with ONLY a JSON object:\n'
-    + '- Genuine promise: {"is_promise": true, "promise": "<what they specifically promise to do>"}\n'
+    + '- Genuine promise: {"is_promise": true, "promise": "<what they specifically promise to do>", "delay_seconds": <integer>}\n'
+    + '  - delay_seconds: how many seconds until the agent should deliver on this promise.\n'
+    + '    - If the agent specified a time ("in 5 minutes" → 300, "in an hour" → 3600, "tomorrow" → 86400), use that.\n'
+    + '    - If no specific time, estimate based on the task (quick check → 60-120, investigation → 300-600, deep work → 900+).\n'
+    + '    - Minimum 30, maximum 86400.\n'
     + '- Not a promise: {"is_promise": false}';
 
   try {
@@ -274,8 +280,13 @@ async function confirmPromise(text: string): Promise<{ promise: string } | null>
 
     const parsed = JSON.parse(jsonMatch[0]);
     if (parsed.is_promise === true && parsed.promise && typeof parsed.promise === "string") {
-      log("confirmPromise: CONFIRMED — " + parsed.promise.slice(0, 60));
-      return { promise: parsed.promise.slice(0, 300) };
+      // Parse delay from LLM, clamp to sane bounds, default to 5 min if missing/invalid
+      let delayMs = DEFAULT_DELAY_MS;
+      if (typeof parsed.delay_seconds === "number" && parsed.delay_seconds >= 30 && parsed.delay_seconds <= 86400) {
+        delayMs = parsed.delay_seconds * 1000;
+      }
+      log("confirmPromise: CONFIRMED — " + parsed.promise.slice(0, 60) + " (delay: " + (delayMs / 1000) + "s)");
+      return { promise: parsed.promise.slice(0, 300), delayMs };
     }
     log("confirmPromise: REJECTED — not a genuine promise");
     return null;
@@ -305,9 +316,10 @@ function buildDeliveryPrompt(oath: Oath): string {
     '\n\nKeep it to 1-3 sentences. Start your response with "[Oath Delivered]".';
 }
 
-function createOath(promise: string, context: string, conversationId: string, agentId: string, sourceMessageId?: string, deliveryMode?: "turn_end" | "polling"): Oath {
+function createOath(promise: string, context: string, conversationId: string, agentId: string, sourceMessageId?: string, deliveryMode?: "turn_end" | "polling", delayMs?: number): Oath {
   const now = Date.now();
-  return { id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8), conversationId, agentId, promise, context, sourceMessageId, deliveryMode, createdAt: now, dueAt: now + DELAY_MS, status: "pending", result: null, deliveredAt: null };
+  const due = now + (delayMs || DEFAULT_DELAY_MS);
+  return { id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8), conversationId, agentId, promise, context, sourceMessageId, deliveryMode, createdAt: now, dueAt: due, status: "pending", result: null, deliveredAt: null };
 }
 
 function getApiConfig() {
@@ -594,7 +606,7 @@ async function pollCycle() {
           const alreadyExists = scanStore.hasRecentPromise(confirmed.promise) ||
                                 scanStore.oaths.some((o) => o.sourceMessageId === latest.id);
           if (!alreadyExists) {
-            const oath = createOath(confirmed.promise, latest.userContext, convId, agentId, latest.id, "polling");
+            const oath = createOath(confirmed.promise, latest.userContext, convId, agentId, latest.id, "polling", confirmed.delayMs);
             scanStore.addOath(oath);
             scanStore.save();
           }
@@ -699,7 +711,7 @@ export default function activate(letta: any) {
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
           // Use event context for scoping — oath delivers to the SAME conversation it was detected in
-          const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end");
+          const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end", detection.delayMs);
           scanStore.addOath(oath);
           scanStore.save();
           log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " agent=" + eventAgentId.slice(0,12));
