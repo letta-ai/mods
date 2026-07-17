@@ -78,7 +78,7 @@ function isNgramEnabled(): boolean {
 /** Get n-gram score threshold (default: 1.25) */
 function getNgramThreshold(): number {
   const config = loadConfig();
-  return typeof config.ngramThreshold === "number" ? config.ngramThreshold : 1.25;
+  return typeof config.ngramThreshold === "number" ? config.ngramThreshold : 1;
 }
 
 /** Check if LLM confirmation is enabled (default: true) */
