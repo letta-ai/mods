@@ -147,7 +147,7 @@ Check tracked oaths:
 list_oaths
 ```
 
-Output shows pending, queued, delivering, recently delivered, and false positive oaths.
+Output shows pending, queued, delivering, recently delivered, false positive, and prefilter-rejected oaths with n-gram scores.
 
 ## Architecture
 
@@ -156,7 +156,7 @@ Output shows pending, queued, delivering, recently delivered, and false positive
 - **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses a configurable classifier agent (defaults to same agent).
 - **Conversation scoping:** `turn_end` extracts `conversationId` and `agentId` from the event context. Oaths deliver back to the conversation that originated them.
 - **Delivery:** `turn_end { continue }` injects the delivery prompt through the runtime (tools work properly). REST API POST remains as fallback for listener mode.
-- **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save). Tracks lifecycle: `pending → queued → delivering → delivered` with stuck-state recovery and 24h pruning.
+- **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save). Tracks lifecycle: `pending → queued → delivering → delivered` with stuck-state recovery and 24h pruning. All entries store n-gram score for debugging.
 
 ## TUI Dashboard
 
@@ -168,7 +168,36 @@ cargo build --release
 ./target/release/oath-keeper
 ```
 
-Shows pending, queued, delivering, delivered, failed, and false positive oaths with live countdowns and detail views. Reads from `~/.letta/mods/oath-keeper.state.json`. Requires Rust (uses [ratatui](https://github.com/ratatui/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm)).
+Launches the TUI by default (use `--plain` for text output, `--purge` to clear state).
+
+### Status types displayed
+
+| Badge | Status | Color | Description |
+|-------|--------|-------|-------------|
+| PENDING | pending | Yellow | Promise detected, waiting for timer |
+| QUEUED | queued | Blue | Timer expired, waiting for next turn_end |
+| DELIVERING | delivering | Cyan | Delivery prompt sent via `{ continue }` |
+| DELIVERED | delivered | Green | Agent fulfilled the promise |
+| FAILED | failed | Red | Delivery error |
+| FALSE POS | false_positive | Dark gray | LLM rejected — not a genuine promise |
+| PREFILTER | prefilter_rejected | Magenta | N-gram score ≤ 1.5 — never sent to LLM |
+
+Each entry shows: status badge, promise text, done/timer timestamp, source (turn_end/polling), age, n-gram score, and conversation ID. Detail view (press `i`) shows full promise, context, result, and creation/due timestamps.
+
+### Keyboard controls
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Move selection |
+| `i` | View oath detail |
+| `d` | Manually deliver (pending oaths only) |
+| `x` | Cancel oath |
+| `p` | Purge all oaths |
+| `c` | Clear filtered entries (prefilter_rejected + false_positive) |
+| `C` | Clear completed entries (delivered, failed, false_positive, prefilter_rejected) |
+| `q` | Quit |
+
+Reads from `~/.letta/mods/oath-keeper.state.json`. Requires Rust (uses [ratatui](https://github.com/ratatui/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm)).
 
 ## Why not cron?
 
