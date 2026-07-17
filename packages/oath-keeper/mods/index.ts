@@ -542,34 +542,27 @@ function getApiConfig() {
   let agentId = "";
   let convId = "";
 
-  // ALWAYS read from env file first — process.env in the listener process
-  // belongs to a DIFFERENT agent (the Telegram channel adapter's agent).
-  // The env file is the source of truth for which conversation to watch.
+  // Priority: process.env (always current in mod runtime) → env file → ss discovery → default
+  let envPort = process.env.LETTA_BASE_URL || "";
+  if (envPort && envPort !== "unset") baseUrl = envPort;
+
+  // Read agent/conv IDs from env file (these don't change across restarts)
   try {
     const env = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
-    baseUrl = env.LETTA_BASE_URL || "";
     agentId = env.LETTA_AGENT_ID || "";
     convId = env.LETTA_CONVERSATION_ID || "";
+    // Use env file URL as fallback if process.env didn't have it
+    if (!baseUrl) baseUrl = env.LETTA_BASE_URL || "";
   } catch (e) {}
 
-  // Port discovery: use env file port first (it's manually updated).
-  // Only use ss discovery as a FALLBACK if the env file doesn't have a port.
-  // ss in the listener's context may return stale/wrong results.
+  // ss discovery as final fallback
   if (!baseUrl) {
-    let discoveredPort = "";
     try {
       const output = execSync("ss -tlnp 2>/dev/null | grep letta-code | head -1 | grep -oP '127\\.0\\.0\\.1:\\K\\d+' 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
-      if (output) discoveredPort = output;
+      if (output) baseUrl = "http://localhost:" + output;
     } catch (e) {}
-    if (discoveredPort) {
-      baseUrl = "http://localhost:" + discoveredPort;
-    }
   }
-  if (!baseUrl) {
-    let envPort = process.env.LETTA_BASE_URL || "";
-    if (envPort && envPort !== "unset") baseUrl = envPort;
-    else baseUrl = "http://localhost:8283";
-  }
+  if (!baseUrl) baseUrl = "http://localhost:8283";
 
   addDebugLog("getApiConfig: baseUrl=" + baseUrl + " agentId=" + (agentId ? agentId.slice(0,12) : "NONE") + " convId=" + (convId ? convId.slice(0,12) : "NONE"));
   return { baseUrl, apiKey, agentId, convId };
