@@ -26,6 +26,7 @@ use crossterm::{
 struct Oath {
     id: String,
     #[serde(rename = "conversationId")] conversation_id: String,
+    #[serde(default, rename = "agentId")] agent_id: String,
     promise: String,
     #[serde(default)] context: String,
     #[serde(rename = "createdAt")] created_at: i64,
@@ -330,7 +331,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 Span::styled(&o.promise, Style::default().fg(Color::White)),
                             ]);
 
-                            // Line 2: timer/source/age/score/conv metadata
+                            // Line 2: timer/done + source + age + score
                             let mut line2_spans: Vec<Span> = vec![Span::raw("  ")];
 
                             // Show cron countdown if cron is active
@@ -362,13 +363,21 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                             } else {
                                 line2_spans.push(Span::styled("N/A  ", Style::default().fg(Color::DarkGray)));
                             }
-                            line2_spans.push(Span::styled("conv:", Style::default().fg(Color::Gray)));
-                            let conv_display = if o.conversation_id.is_empty() { "N/A".to_string() } else { o.conversation_id[..o.conversation_id.len().min(20)].to_string() };
-                            line2_spans.push(Span::styled(conv_display, Style::default().fg(Color::Blue)));
 
                             let line2 = Line::from(line2_spans);
 
-                            let mut lines = vec![line1, line2];
+                            // Line 3: conv + agent
+                            let conv_display = if o.conversation_id.is_empty() { "N/A".to_string() } else { o.conversation_id[..o.conversation_id.len().min(20)].to_string() };
+                            let agent_display = if o.agent_id.is_empty() { "N/A".to_string() } else { o.agent_id[..o.agent_id.len().min(20)].to_string() };
+                            let line3 = Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled("conv:", Style::default().fg(Color::Gray)),
+                                Span::styled(format!("{}  ", conv_display), Style::default().fg(Color::Blue)),
+                                Span::styled("agent:", Style::default().fg(Color::Gray)),
+                                Span::styled(agent_display, Style::default().fg(Color::Blue)),
+                            ]);
+
+                            let mut lines = vec![line1, line2, line3];
 
                             // Show result for completed oaths
                             if let Some(r) = &o.result {
