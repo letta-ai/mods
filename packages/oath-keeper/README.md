@@ -87,6 +87,7 @@ The delivery prompt grants full tool access — the agent can investigate, run c
 pending → queued → delivering → delivered
                                     ↓
                               false_positive (LLM rejected)
+                              prefilter_rejected (n-gram score too low)
                               failed (delivery error)
 ```
 
@@ -100,18 +101,34 @@ Then run `/reload` in Letta Code.
 
 ## Configuration
 
-### Classifier agent (optional)
-
-By default, promise classification uses the same agent. To use a cheaper/faster model, create a dedicated agent and point Oath Keeper at it:
+All configuration lives in `~/.letta/mods/oath-keeper.config.json`:
 
 ```json
-// ~/.letta/mods/oath-keeper.config.json
 {
-  "classifierAgentId": "agent-xxxxx"
+  "classifierAgentId": "agent-xxxxx",
+  "ngramFilter": true,
+  "llmConfirm": true,
+  "llmDedup": true
 }
 ```
 
-The classifier agent only handles promise classification and dedup — it never receives delivery prompts. Use a fast, inexpensive model (e.g., `letta/auto-fast`, `gpt-4o-mini`) for this agent to minimize cost.
+### Classifier agent (optional)
+
+By default, promise classification uses the same agent. To use a cheaper/faster model, create a dedicated agent and point Oath Keeper at it via `classifierAgentId`. The classifier agent only handles promise classification and dedup — it never receives delivery prompts. Use a fast, inexpensive model (e.g., `letta/auto-fast`, `gpt-4o-mini`) for this agent to minimize cost.
+
+The classifier agent's model is displayed in the TUI header at activation time.
+
+### Filter toggles
+
+All three detection stages can be individually toggled:
+
+| Config key | Default | Description |
+|-----------|---------|-------------|
+| `ngramFilter` | `true` | N-gram pre-filter. When disabled, all messages skip the pre-filter and go directly to LLM confirmation. |
+| `llmConfirm` | `true` | LLM promise classification. When disabled, messages that pass the n-gram filter create oaths directly without LLM confirmation. |
+| `llmDedup` | `true` | LLM semantic dedup. When disabled, only string-based dedup is used. |
+
+**Safety:** If both `ngramFilter` and `llmConfirm` are disabled, no oaths are created — the mod skips detection entirely. The TUI displays a red warning when this occurs.
 
 ### Listener/desktop mode
 
@@ -153,7 +170,7 @@ Output shows pending, queued, delivering, recently delivered, false positive, an
 
 - **Detection:** `turn_end` event handler (primary, CLI v0.27.25+ / desktop v0.27.29+) with `setInterval` polling fallback (listener/desktop). Polling scan is automatically disabled when `turn_end` is available.
 - **Pre-filter:** Weighted n-gram scoring eliminates 70-80% of messages before LLM classification. Threshold is tunable (currently > 1.5).
-- **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses a configurable classifier agent (defaults to same agent).
+- **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses a configurable classifier agent (defaults to same agent). All three stages (n-gram, LLM confirm, LLM dedup) can be individually toggled via config.
 - **Conversation scoping:** `turn_end` extracts `conversationId` and `agentId` from the event context. Oaths deliver back to the conversation that originated them.
 - **Delivery:** `turn_end { continue }` injects the delivery prompt through the runtime (tools work properly). REST API POST remains as fallback for listener mode.
 - **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save). Tracks lifecycle: `pending → queued → delivering → delivered` with stuck-state recovery and 24h pruning. All entries store n-gram score for debugging.
@@ -169,6 +186,15 @@ cargo build --release
 ```
 
 Launches the TUI by default (use `--plain` for text output, `--purge` to clear state).
+
+### Header display
+
+The TUI header shows:
+
+- Oath counts by status (P, Q, >, OK, X, FP, PF)
+- Filter status: `NGRAM:on/off`, `LLM:on/off`, `DEDUP:on/off` (green/red)
+- Classifier model: `Model: lc-zai-coding/glm-5.1`
+- Red warning if all filters are off: `⚠ ALL FILTERS OFF — no oaths will be created`
 
 ### Status types displayed
 
