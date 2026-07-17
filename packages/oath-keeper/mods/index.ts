@@ -244,9 +244,44 @@ function detectPromiseRegex(text: string): { match: string } | null {
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
   if (text.trim().length < 15) return null;
 
-  // No regex pre-filter — send everything to the LLM.
-  // The LLM call is cheap and catches ALL phrasings.
-  return { match: "send-to-llm" };
+  // Negative filter: code-heavy messages are rarely promises
+  const codeChars = (text.match(/[{}()[\];=]/g) || []).length;
+  if (text.length > 50 && codeChars / text.length > 0.05) return null;
+
+  // Weighted n-gram scoring
+  const PROMISE_PATTERNS: Array<[RegExp, number]> = [
+    // Strong signals (3.0)
+    [/i'll get back to/i, 3.0],
+    [/i'll follow up/i, 3.0],
+    [/i'll circle back/i, 3.0],
+    [/get back to you/i, 3.0],
+    [/follow up (?:on|with|in)/i, 3.0],
+    [/i'll let you know/i, 3.0],
+    [/i'll update you/i, 3.0],
+    [/check back (?:in|with|later|after)/i, 2.5],
+
+    // Moderate signals (2.0-2.5)
+    [/i'll (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
+    [/let me (?:check|verify|look into|investigate|research|dig into|confirm)/i, 2.5],
+    [/i'll (?:send|provide|share|post|publish|deliver)/i, 2.0],
+    [/i'll (?:have|get) (?:an answer|results|something|a response)/i, 2.5],
+    [/i'll tell you.*(?:later|after|when)/i, 2.5],
+
+    // Weak signals (1.0-1.5)
+    [/i'll (?:try|attempt|see|find out|work on)/i, 1.5],
+    [/i (?:will|shall) (?:check|verify|look|investigate|research|test|review|analyze)/i, 2.0],
+    [/i'm going to (?:check|verify|look|investigate|research|test|review)/i, 2.0],
+    [/(?:in|after) (?:\d+|a few|some) (?:minutes|seconds|hours|moments)/i, 1.5],
+    [/\blater (?:today|this week|tonight)\b/i, 1.0],
+  ];
+
+  let score = 0;
+  for (const [pattern, weight] of PROMISE_PATTERNS) {
+    if (pattern.test(text)) score += weight;
+  }
+
+  if (score >= 2.0) return { match: "ngram-score-" + score };
+  return null;
 }
 
 /**
