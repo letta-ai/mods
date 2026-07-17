@@ -353,12 +353,12 @@ function getApiConfig() {
 /** Check if the conversation has an active run by looking at recent messages.
  *  If the last message is an approval_request or tool_call without a matching
  *  return/response, the conversation is busy. */
-async function isConversationBusy(baseUrl: string, apiKey: string | undefined, convId: string): Promise<boolean> {
+async function isConversationBusy(baseUrl: string, apiKey: string | undefined, convId: string, agentId?: string): Promise<boolean> {
   try {
-    const { agentId } = getApiConfig();
-    if (!agentId) return false;
+    const checkAgentId = agentId || getApiConfig().agentId;
+    if (!checkAgentId) return false;
     const resp = await fetch(
-      baseUrl + "/v1/agents/" + agentId + "/messages?conversation_id=" + convId + "&limit=3",
+      baseUrl + "/v1/agents/" + checkAgentId + "/messages?conversation_id=" + convId + "&limit=3",
       { headers: apiKey ? { Authorization: "Bearer " + apiKey } : {} }
     );
     if (!resp.ok) return false;
@@ -390,7 +390,7 @@ async function tryDeliverOath(oath: Oath): Promise<{ status: "ok" | "busy" | "fa
   if (!targetConv || targetConv === "default") return { status: "fail", answer: "No conversation ID" };
 
   // Check if conversation is busy before attempting delivery
-  if (await isConversationBusy(baseUrl, apiKey, targetConv)) {
+  if (await isConversationBusy(baseUrl, apiKey, targetConv, oath.agentId || undefined)) {
     log("Oath " + oath.id + " delivery deferred — conversation has pending approval");
     return { status: "busy", answer: "Conversation busy (pending approval)" };
   }
@@ -654,11 +654,15 @@ export default function activate(letta: any) {
 
   if (!letta.capabilities.tools) { log("No tools — inactive"); return () => {}; }
 
-  // ── turn_end — re-enabled, uses API fetch (same as polling)
+  // ── turn_end — uses event context for conversation/agent scoping (no env file)
   if (hasTurnEvents) {
     disposers.push(
       letta.events.on("turn_end", async (event: any, ctx: any) => {
         log("turn_end FIRED");
+
+        // Extract conversation/agent IDs from event context — NOT env file
+        const eventConvId = event.conversationId || ctx?.conversation?.id || "";
+        const eventAgentId = event.agentId || ctx?.agent?.id || "";
 
         // Mark delivered oaths if the response contains [Oath Delivered]
         const lastMsg = event.assistantMessage || "";
@@ -694,11 +698,11 @@ export default function activate(letta: any) {
         // Dedup via promise text similarity (no message ID available from event)
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
-          const { convId, agentId } = getApiConfig();
-          const oath = createOath(detection.promise, "(turn_end)", convId, agentId, undefined, "turn_end");
+          // Use event context for scoping — oath delivers to the SAME conversation it was detected in
+          const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end");
           scanStore.addOath(oath);
           scanStore.save();
-          log("turn_end: oath created — " + oath.id);
+          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " agent=" + eventAgentId.slice(0,12));
         }
       })
     );
