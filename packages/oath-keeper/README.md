@@ -40,17 +40,22 @@ The agent never called a scheduling tool. It never set a reminder. It just made 
 User asks question
     → Agent responds: "I'll get back to you in 5 minutes..."
         → turn_end fires
-            → Stage 1: N-gram pre-filter scores the message (score > 1.5 → proceed)
-                → Stage 2: LLM classifies — is it a genuine promise?
-                    → If yes: extract promise text + delay_seconds
-                        → Stage 3: LLM dedup — check against active oaths
-                            → Oath created with LLM-determined delay
-                                → Timer expires → queued
-                                    → Next turn_end → { continue: deliveryPrompt }
-                                        → Agent re-engaged with full tool access → delivers
+            → Stage 0: Negative filter — skip short/code-heavy messages
+                → Stage 1: N-gram pre-filter scores the message (score > threshold → proceed)
+                    → Stage 2: LLM classifies — is it a genuine promise?
+                        → If yes: extract promise text + delay_seconds
+                            → Stage 3: LLM dedup — check against active oaths
+                                → Oath created with LLM-determined delay
+                                    → Timer expires → queued
+                                        → Next turn_end → { continue: deliveryPrompt }
+                                            → Agent re-engaged with full tool access → delivers
 ```
 
-### Three-stage detection
+### Four-stage detection
+
+**Stage 0 — Negative filter (zero cost)**
+
+Skips messages that are clearly not promises: short messages (<15 chars) and code-heavy messages (>5% syntax characters). When disabled, all messages proceed to n-gram scoring.
 
 **Stage 1 — N-gram pre-filter (zero cost)**
 
@@ -60,7 +65,7 @@ Every assistant message is scored against a weighted list of promise-indicating 
 - Moderate signals (2.0–2.5): "I'll check/verify/investigate", "let me look into", "I'll update you"
 - Weak signals (1.0–1.5): "I'll try", "in N minutes", "later today"
 
-Score > 1.5 → send to LLM. Below 1.5 → skip (not a promise). Code-heavy messages are also filtered out.
+Score > threshold (default: 1) → send to LLM. Below threshold → skip (not a promise).
 
 **Stage 2 — LLM classification (per message that passes pre-filter)**
 
@@ -106,27 +111,32 @@ All configuration lives in `~/.letta/mods/oath-keeper.config.json`:
 ```json
 {
   "classifierAgentId": "agent-xxxxx",
+  "classifierModel": "letta/auto-fast",
   "negativeFilter": true,
   "ngramFilter": true,
+  "ngramThreshold": 1,
   "llmConfirm": true,
   "llmDedup": true
 }
 ```
 
-### Classifier agent (optional)
+### Classifier model (optional)
 
-By default, promise classification uses the same agent. To use a cheaper/faster model, create a dedicated agent and point Oath Keeper at it via `classifierAgentId`. The classifier agent only handles promise classification and dedup — it never receives delivery prompts. Use a fast, inexpensive model (e.g., `letta/auto-fast`, `gpt-4o-mini`) for this agent to minimize cost.
+By default, LLM classification and dedup calls use `letta/auto-fast` — a cheap, fast model. This is set per-conversation when creating throwaway classification conversations. Change it via `classifierModel` to use any available model (e.g., `openai/gpt-4o-mini`, `google_ai/gemini-3.5-flash`).
 
-The classifier agent's model is displayed in the TUI header at activation time.
+The classifier agent (`classifierAgentId`) determines which agent owns the throwaway conversations. By default this is the same agent the mod is running on. You only need to set this if you want classification to run on a different agent entirely.
+
+The configured model is displayed in the TUI header.
 
 ### Filter toggles
 
-All three detection stages can be individually toggled:
+All four detection stages can be individually toggled:
 
 | Config key | Default | Description |
 |-----------|---------|-------------|
 | `negativeFilter` | `true` | Negative filter — skips short messages (<15 chars) and code-heavy messages (>5% syntax characters). |
 | `ngramFilter` | `true` | N-gram pre-filter. When disabled, all messages skip the pre-filter and go directly to LLM confirmation. |
+| `ngramThreshold` | `1` | Minimum n-gram score required to trigger LLM classification. Lower = more sensitive (more LLM calls). Higher = stricter (fewer calls, may miss promises). |
 | `llmConfirm` | `true` | LLM promise classification. When disabled, messages that pass the n-gram filter create oaths directly without LLM confirmation. |
 | `llmDedup` | `true` | LLM semantic dedup. When disabled, only string-based dedup is used. |
 
@@ -171,8 +181,8 @@ Output shows pending, queued, delivering, recently delivered, false positive, an
 ## Architecture
 
 - **Detection:** `turn_end` event handler (primary, CLI v0.27.25+ / desktop v0.27.29+) with `setInterval` polling fallback (listener/desktop). Polling scan is automatically disabled when `turn_end` is available.
-- **Pre-filter:** Weighted n-gram scoring eliminates 70-80% of messages before LLM classification. Threshold is tunable (currently > 1.5).
-- **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses a configurable classifier agent (defaults to same agent). All three stages (n-gram, LLM confirm, LLM dedup) can be individually toggled via config.
+- **Pre-filter:** Weighted n-gram scoring eliminates 70-80% of messages before LLM classification. Threshold is configurable (default: 1).
+- **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses `letta/auto-fast` by default (configurable via `classifierModel`). All four stages can be individually toggled via config.
 - **Conversation scoping:** `turn_end` extracts `conversationId` and `agentId` from the event context. Oaths deliver back to the conversation that originated them.
 - **Delivery:** `turn_end { continue }` injects the delivery prompt through the runtime (tools work properly). REST API POST remains as fallback for listener mode.
 - **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save). Tracks lifecycle: `pending → queued → delivering → delivered` with stuck-state recovery and 24h pruning. All entries store n-gram score for debugging.
@@ -194,8 +204,8 @@ Launches the TUI by default (use `--plain` for text output, `--purge` to clear s
 The TUI header shows:
 
 - Oath counts by status (P, Q, >, OK, X, FP, PF)
-- Filter status: `NEG:on/off`, `NGRAM:on/off`, `LLM:on/off`, `DEDUP:on/off` (green/red)
-- Classifier model: `Model: lc-zai-coding/glm-5.1`
+- Filter status: `NEG:on/off`, `NGRAM:on/off(>threshold)`, `LLM:on/off`, `DEDUP:on/off` (green/red)
+- Classifier model: `Model: letta/auto-fast`
 - Red warning if all filters are off: `⚠ ALL FILTERS OFF — no oaths will be created`
 
 ### Status types displayed
@@ -208,9 +218,9 @@ The TUI header shows:
 | DELIVERED | delivered | Green | Agent fulfilled the promise |
 | FAILED | failed | Red | Delivery error |
 | FALSE POS | false_positive | Dark gray | LLM rejected — not a genuine promise |
-| PREFILTER | prefilter_rejected | Magenta | N-gram score ≤ 1.5 — never sent to LLM |
+| PREFILTER | prefilter_rejected | Magenta | N-gram score ≤ threshold — never sent to LLM |
 
-Each entry shows: status badge, promise text, done/timer timestamp, source (turn_end/polling), age, n-gram score, and conversation ID. Detail view (press `i`) shows full promise, context, result, and creation/due timestamps.
+Each entry shows 3 lines: status badge + promise text, done/timer timestamp + source + age + n-gram score, and resolved conversation + agent names (fetched from the API). Detail view (press `i`) shows full promise, context, result, and creation/due timestamps.
 
 ### Keyboard controls
 
