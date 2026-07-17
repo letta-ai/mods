@@ -44,11 +44,11 @@ struct State { oaths: Vec<Oath> }
 #[derive(Deserialize, Debug, Default)]
 struct FilterStatus {
     #[serde(default)] ngram: bool,
-    #[serde(default)] llm_confirm: bool,
-    #[serde(default)] llm_dedup: bool,
-    #[serde(default)] filters_active: bool,
-    #[serde(default)] classifier_agent_id: String,
-    #[serde(default)] classifier_model: String,
+    #[serde(default, rename = "llmConfirm")] llm_confirm: bool,
+    #[serde(default, rename = "llmDedup")] llm_dedup: bool,
+    #[serde(default, rename = "filtersActive")] filters_active: bool,
+    #[serde(default, rename = "classifierAgentId")] classifier_agent_id: String,
+    #[serde(default, rename = "classifierModel")] classifier_model: String,
 }
 
 fn load_filter_status() -> FilterStatus {
@@ -220,7 +220,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
         terminal.draw(|f| {
             let area = f.area();
             let chunks = Layout::default()
-                .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(3)])
+                .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)])
                 .split(area);
 
             // ── Header ──
