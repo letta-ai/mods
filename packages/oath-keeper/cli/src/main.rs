@@ -41,6 +41,21 @@ struct Oath {
 #[derive(Deserialize, Serialize, Debug, Default)]
 struct State { oaths: Vec<Oath> }
 
+#[derive(Deserialize, Debug, Default)]
+struct FilterStatus {
+    #[serde(default)] ngram: bool,
+    #[serde(default)] llm_confirm: bool,
+    #[serde(default)] llm_dedup: bool,
+    #[serde(default)] filters_active: bool,
+}
+
+fn load_filter_status() -> FilterStatus {
+    let path = std::path::PathBuf::from(home()).join(".letta/mods/oath-keeper-filter-status.json");
+    fs::read_to_string(path).ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 
 fn home() -> String { env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()) }
@@ -230,6 +245,38 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             if count == 0 { hdr.push(Span::styled("  empty", Style::default().fg(Color::DarkGray))); }
 
             f.render_widget(Paragraph::new(Line::from(hdr)), chunks[0]);
+
+            // ── Filter status line ──
+            let fs_status = load_filter_status();
+            let ngram_label = if fs_status.ngram { "NGRAM:on" } else { "NGRAM:off" };
+            let ngram_color = if fs_status.ngram { Color::Green } else { Color::Red };
+            let llm_label = if fs_status.llm_confirm { "LLM:on" } else { "LLM:off" };
+            let llm_color = if fs_status.llm_confirm { Color::Green } else { Color::Red };
+            let dedup_label = if fs_status.llm_dedup { "DEDUP:on" } else { "DEDUP:off" };
+            let dedup_color = if fs_status.llm_dedup { Color::Green } else { Color::DarkGray };
+
+            let filter_line = if !fs_status.filters_active {
+                Line::from(vec![
+                    Span::raw(" Filters: "),
+                    Span::styled(ngram_label, Style::default().fg(ngram_color)),
+                    Span::raw("  "),
+                    Span::styled(llm_label, Style::default().fg(llm_color)),
+                    Span::raw("  "),
+                    Span::styled(dedup_label, Style::default().fg(dedup_color)),
+                    Span::raw("  "),
+                    Span::styled("⚠ ALL FILTERS OFF — no oaths will be created", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(" Filters: "),
+                    Span::styled(ngram_label, Style::default().fg(ngram_color)),
+                    Span::raw("  "),
+                    Span::styled(llm_label, Style::default().fg(llm_color)),
+                    Span::raw("  "),
+                    Span::styled(dedup_label, Style::default().fg(dedup_color)),
+                ])
+            };
+            f.render_widget(Paragraph::new(filter_line), chunks[0]);
 
             // ── Main content ──
             match mode {

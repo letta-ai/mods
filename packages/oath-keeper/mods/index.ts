@@ -33,6 +33,9 @@ function isVerbose(): boolean {
 
 interface OathConfig {
   classifierAgentId?: string; // Agent ID to use for promise classification (defaults to same agent)
+  ngramFilter?: boolean;       // Enable n-gram pre-filter (default: true)
+  llmConfirm?: boolean;        // Enable LLM confirmation/dedup (default: true)
+  llmDedup?: boolean;          // Enable LLM semantic dedup (default: true)
 }
 
 function loadConfig(): OathConfig {
@@ -49,6 +52,29 @@ function getClassifierAgentId(): string {
   const config = loadConfig();
   if (config.classifierAgentId) return config.classifierAgentId;
   return getApiConfig().agentId;
+}
+
+/** Check if n-gram pre-filter is enabled (default: true) */
+function isNgramEnabled(): boolean {
+  const config = loadConfig();
+  return config.ngramFilter !== false; // default true
+}
+
+/** Check if LLM confirmation is enabled (default: true) */
+function isLlmConfirmEnabled(): boolean {
+  const config = loadConfig();
+  return config.llmConfirm !== false; // default true
+}
+
+/** Check if LLM semantic dedup is enabled (default: true) */
+function isLlmDedupEnabled(): boolean {
+  const config = loadConfig();
+  return config.llmDedup !== false; // default true
+}
+
+/** Check if at least one filter is active — if not, no oaths are created */
+function filtersActive(): boolean {
+  return isNgramEnabled() || isLlmConfirmEnabled();
 }
 
 function log(msg: string) {
@@ -889,41 +915,66 @@ export default function activate(letta: any) {
         const msgText = event.assistantMessage || "";
         if (!msgText || !msgText.trim()) { log("turn_end: no assistant message in event"); return; }
 
+        // Safety check: if both n-gram and LLM confirmation are disabled, don't run any filters
+        if (!filtersActive()) {
+          log("turn_end: all filters disabled — skipping detection");
+          return;
+        }
+
         const scanStore = StateStore.load("turn_end-detect");
 
-        // Pre-filter: n-gram scoring before LLM
-        const preFilter = detectPromiseRegex(msgText);
-        if (!preFilter) {
-          // Compute score for debugging even on rejection
-          const rejectScore = computeNgramScore(msgText);
-          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter", rejectScore, eventConvId, eventAgentId);
-          return;
-        }
-        log("turn_end: pre-filter passed (score=" + preFilter.score + ") — sending to LLM...");
-        const detection = await confirmPromise(msgText);
-        log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
-
-        if (!detection) {
-          logFalsePositive("llm", msgText, "turn_end", preFilter.score, eventConvId, eventAgentId);
-          scanStore.save();
-          return;
+        // Stage 1: N-gram pre-filter (if enabled)
+        let ngramScore: number | undefined;
+        if (isNgramEnabled()) {
+          const preFilter = detectPromiseRegex(msgText);
+          if (!preFilter) {
+            const rejectScore = computeNgramScore(msgText);
+            logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter", rejectScore, eventConvId, eventAgentId);
+            return;
+          }
+          ngramScore = preFilter.score;
+          log("turn_end: pre-filter passed (score=" + preFilter.score + ")");
+        } else {
+          ngramScore = computeNgramScore(msgText);
+          log("turn_end: n-gram filter disabled (score=" + ngramScore + " — not used for filtering)");
         }
 
-        // Dedup: LLM checks semantic similarity against active oaths
-        const existing = scanStore.activeOaths();
-        const isDup = existing.length > 0 ? await isDuplicatePromise(detection.promise, existing) : false;
-        if (isDup) {
-          log("turn_end: duplicate promise — skipping");
-          return;
+        // Stage 2: LLM confirmation (if enabled)
+        let detection: { promise: string; delayMs: number } | null = null;
+        if (isLlmConfirmEnabled()) {
+          log("turn_end: sending to LLM...");
+          detection = await confirmPromise(msgText);
+          log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
+
+          if (!detection) {
+            logFalsePositive("llm", msgText, "turn_end", ngramScore, eventConvId, eventAgentId);
+            scanStore.save();
+            return;
+          }
+        } else {
+          // LLM confirmation disabled — create oath directly from message text
+          detection = { promise: msgText.slice(0, 300), delayMs: DEFAULT_DELAY_MS };
+          log("turn_end: LLM confirm disabled — creating oath directly");
         }
-        // Also check string-based dedup as a fast fallback
+
+        // Stage 3: LLM semantic dedup (if enabled)
+        if (isLlmDedupEnabled()) {
+          const existing = scanStore.activeOaths();
+          const isDup = existing.length > 0 ? await isDuplicatePromise(detection.promise, existing) : false;
+          if (isDup) {
+            log("turn_end: duplicate promise — skipping");
+            return;
+          }
+        }
+
+        // String-based dedup (always runs as fast fallback)
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
           const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end", detection.delayMs);
-          oath.ngramScore = preFilter.score;
+          oath.ngramScore = ngramScore;
           scanStore.addOath(oath);
           scanStore.save();
-          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " score=" + preFilter.score + " delay=" + (detection.delayMs/1000) + "s");
+          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " score=" + (ngramScore ?? "N/A") + " delay=" + (detection.delayMs/1000) + "s");
         }
       })
     );
@@ -936,6 +987,16 @@ export default function activate(letta: any) {
   intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
   pollCycle();
   log("Polling started (turn_end active: " + hasTurnEvents + ")");
+
+  // Write filter status to file for TUI to read
+  const filterStatus = {
+    ngram: isNgramEnabled(),
+    llmConfirm: isLlmConfirmEnabled(),
+    llmDedup: isLlmDedupEnabled(),
+    filtersActive: filtersActive(),
+    timestamp: Date.now(),
+  };
+  try { fs.writeFileSync(`${HOME}/.letta/mods/oath-keeper-filter-status.json`, JSON.stringify(filterStatus, null, 2)); } catch (e) {}
 
   // ── list_oaths tool ─────────────────────────────────────────
   disposers.push(
