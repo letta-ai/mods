@@ -280,7 +280,7 @@ function detectPromiseRegex(text: string): { match: string } | null {
     if (pattern.test(text)) score += weight;
   }
 
-  if (score > 1.25) return { match: "ngram-score-" + score };
+  if (score > 1.5) return { match: "ngram-score-" + score };
   return null;
 }
 

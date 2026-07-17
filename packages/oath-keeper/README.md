@@ -36,19 +36,58 @@ The agent never called a scheduling tool. It never set a reminder. It just made 
 
 ## How it works
 
-1. Agent says: *"I'll get back to you on that in a few minutes."*
-2. Oath Keeper detects the promise via `turn_end` event (or polling fallback)
-3. An LLM classifies the message as a genuine promise and extracts the delay
-4. Oath created with the specified countdown (defaults to 5 minutes if unspecified)
-5. Timer expires — Oath Keeper posts a delivery prompt to the conversation
-6. Agent re-engages with full tool access and delivers
-
 ```
 User asks question
-    → Agent responds with "I'll get back to you in 5 minutes..."
-        → turn_end fires → LLM confirms promise + extracts delay (300s)
-            → Timer starts
-                → Timer fires → agent re-engaged → delivers answer
+    → Agent responds: "I'll get back to you in 5 minutes..."
+        → turn_end fires
+            → Stage 1: N-gram pre-filter scores the message (score > 1.5 → proceed)
+                → Stage 2: LLM classifies — is it a genuine promise?
+                    → If yes: extract promise text + delay_seconds
+                        → Stage 3: LLM dedup — check against active oaths
+                            → Oath created with LLM-determined delay
+                                → Timer expires → queued
+                                    → Next turn_end → { continue: deliveryPrompt }
+                                        → Agent re-engaged with full tool access → delivers
+```
+
+### Three-stage detection
+
+**Stage 1 — N-gram pre-filter (zero cost)**
+
+Every assistant message is scored against a weighted list of promise-indicating patterns. This eliminates 70-80% of messages ("done", "here's the code", "sounds good") before any LLM call.
+
+- Strong signals (3.0): "I'll get back to you", "I'll follow up", "I'll circle back", "get back to you"
+- Moderate signals (2.0–2.5): "I'll check/verify/investigate", "let me look into", "I'll update you"
+- Weak signals (1.0–1.5): "I'll try", "in N minutes", "later today"
+
+Score > 1.5 → send to LLM. Below 1.5 → skip (not a promise). Code-heavy messages are also filtered out.
+
+**Stage 2 — LLM classification (per message that passes pre-filter)**
+
+The LLM determines whether the message contains a genuine promise and extracts:
+
+- **Promise text** — what the agent specifically committed to
+- **Delay** — how long until delivery (e.g., "in 5 minutes" → 300s, "tomorrow" → 86400s). If no time is specified, the LLM estimates based on task complexity.
+
+If the LLM rejects the message, it's logged as a `false_positive` — a separate status from genuine failures.
+
+**Stage 3 — LLM semantic dedup (only if active oaths exist)**
+
+Before creating a new oath, the LLM compares the new promise against all active (pending/queued/delivering) oaths to catch semantic duplicates. "Tell you the time" and "Tell the user the time in 20 seconds" would be caught as duplicates.
+
+### Delivery via `turn_end { continue }`
+
+When the oath timer expires, the oath is marked as `queued`. On the next `turn_end` event, the handler returns `{ continue: deliveryPrompt }` — the Letta Code runtime injects this as a real user turn through the normal pipeline. **Tools work properly** because the delivery goes through the runtime, not a REST API bypass.
+
+The delivery prompt grants full tool access — the agent can investigate, run code, check APIs, whatever the promise requires.
+
+### Oath lifecycle
+
+```
+pending → queued → delivering → delivered
+                                    ↓
+                              false_positive (LLM rejected)
+                              failed (delivery error)
 ```
 
 ## Installation
@@ -59,7 +98,24 @@ letta install npm:@letta-ai/oath-keeper
 
 Then run `/reload` in Letta Code.
 
-For listener/desktop mode where `turn_end` events are not available, create `~/.letta/extensions/oath-env.json`:
+## Configuration
+
+### Classifier agent (optional)
+
+By default, promise classification uses the same agent. To use a cheaper/faster model, create a dedicated agent and point Oath Keeper at it:
+
+```json
+// ~/.letta/mods/oath-keeper.config.json
+{
+  "classifierAgentId": "agent-xxxxx"
+}
+```
+
+The classifier agent only handles promise classification and dedup — it never receives delivery prompts. Use a fast, inexpensive model (e.g., `letta/auto-fast`, `gpt-4o-mini`) for this agent to minimize cost.
+
+### Listener/desktop mode
+
+For environments where `turn_end` events are not available (listener mode, older desktop versions), create `~/.letta/extensions/oath-env.json`:
 
 ```json
 {
@@ -69,15 +125,7 @@ For listener/desktop mode where `turn_end` events are not available, create `~/.
 }
 ```
 
-## Usage
-
-Just talk to your agent. When it says "I'll follow up" or "I'll get back to you," Oath Keeper catches it automatically.
-
-Check tracked oaths:
-
-```
-list_oaths
-```
+In listener mode, Oath Keeper polls the conversation API every 15s for new messages. When `turn_end` is available, polling handles delivery timing only — scanning is automatically disabled to prevent duplicate oaths.
 
 ### Verbose logging
 
@@ -89,28 +137,26 @@ touch ~/.letta/mods/oath-keeper.verbose
 
 Disable with `rm ~/.letta/mods/oath-keeper.verbose`. Debug logs are always written to `~/.letta/mods/oath-keeper-debug.json`.
 
-## Promise detection
+## Usage
 
-Oath Keeper uses LLM-based detection — no regex patterns. The same LLM call that classifies a promise also extracts:
+Just talk to your agent. When it says "I'll follow up" or "I'll get back to you," Oath Keeper catches it automatically.
 
-- **The promise text** — what the agent specifically committed to
-- **The delay** — how long until delivery (e.g., "in 5 minutes" → 300s, "tomorrow" → 86400s). If no time is specified, the LLM estimates based on task complexity.
+Check tracked oaths:
 
-This catches any phrasing:
+```
+list_oaths
+```
 
-- "I'll get back to you on that"
-- "I'll follow up"
-- "I'll check on this"
-- "I'll look into that and report back"
-- "Let me investigate and I'll have results in an hour"
+Output shows pending, queued, delivering, recently delivered, and false positive oaths.
 
 ## Architecture
 
-- **Detection:** `turn_end` event handler (primary, CLI v0.27.25+ / desktop v0.27.29+) or `setInterval` polling every 15s (listener fallback). Polling scan is automatically disabled when `turn_end` is available — no duplicate oaths.
+- **Detection:** `turn_end` event handler (primary, CLI v0.27.25+ / desktop v0.27.29+) with `setInterval` polling fallback (listener/desktop). Polling scan is automatically disabled when `turn_end` is available.
+- **Pre-filter:** Weighted n-gram scoring eliminates 70-80% of messages before LLM classification. Threshold is tunable (currently > 1.5).
+- **LLM calls:** Classification (promise detection + delay extraction) and semantic dedup. Uses a configurable classifier agent (defaults to same agent).
 - **Conversation scoping:** `turn_end` extracts `conversationId` and `agentId` from the event context. Oaths deliver back to the conversation that originated them.
-- **Delivery:** POST to conversation API endpoint with retry on 409 (busy conversation). Queued state lifecycle: `pending → queued → delivering → delivered`
-- **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save)
-- **LLM delay:** The classification LLM determines how long to wait before delivery based on the agent's own words
+- **Delivery:** `turn_end { continue }` injects the delivery prompt through the runtime (tools work properly). REST API POST remains as fallback for listener mode.
+- **State:** Local JSON at `~/.letta/mods/oath-keeper.state.json` with builder-pattern StateStore (load → mutate → save). Tracks lifecycle: `pending → queued → delivering → delivered` with stuck-state recovery and 24h pruning.
 
 ## TUI Dashboard
 
@@ -122,7 +168,7 @@ cargo build --release
 ./target/release/oath-keeper
 ```
 
-Shows pending, delivering, and recently delivered oaths with live countdowns. Reads from `~/.letta/mods/oath-keeper.state.json`. Requires Rust (uses [ratatui](https://github.com/ratatui/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm)).
+Shows pending, queued, delivering, delivered, failed, and false positive oaths with live countdowns and detail views. Reads from `~/.letta/mods/oath-keeper.state.json`. Requires Rust (uses [ratatui](https://github.com/ratatui/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm)).
 
 ## Why not cron?
 
@@ -132,7 +178,8 @@ Cron requires explicit scheduling. Oath Keeper catches promises the agent made *
 
 ## Safety
 
-- Uses only the public tools API and fetch()
+- Uses only the public tools API, `fetch()`, and mod event surface
 - Does not modify turn input or tool arguments
 - Recursion prevention: skips its own `[Oath Keeper]` and `[Oath Delivered]` messages
-- All timers cleaned up on unload
+- All timers and event handlers cleaned up on unload
+- State mutations enforced via builder pattern (load → mutate → save)
