@@ -75,12 +75,32 @@ fn save_state(state: &State) {
     let _ = fs::write(state_path(), serde_json::to_string_pretty(state).unwrap());
 }
 
+fn discover_port() -> Option<String> {
+    let out = Command::new("bash")
+        .args(["-c", "ss -tlnp 2>/dev/null | grep letta-code | head -1 | grep -oP '127\\.0\\.0\\.1:\\K\\d+' 2>/dev/null"])
+        .output().ok()?;
+    let port = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if port.is_empty() { None } else { Some(port) }
+}
+
 fn get_env() -> (String, String) {
     let env: serde_json::Value = fs::read_to_string(
         PathBuf::from(home()).join(".letta/extensions/oath-env.json")
     ).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let base = env.get("LETTA_BASE_URL").and_then(|v| v.as_str()).unwrap_or("http://localhost:8283").to_string();
     let key = env.get("LETTA_API_KEY").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    // Try env file port first, fall back to ss discovery, then default
+    let base = env.get("LETTA_BASE_URL").and_then(|v| v.as_str()).map(String::from);
+    let base = match base {
+        Some(b) if !b.is_empty() => {
+            // Verify the port is actually alive, otherwise discover
+            let port_alive = bash(&format!("curl -s -o /dev/null -w '%{{http_code}}' '{}/v1/health' --max-time 1 2>/dev/null", b));
+            if port_alive.trim() == "200" { b } else {
+                discover_port().map(|p| format!("http://localhost:{}", p)).unwrap_or(b)
+            }
+        }
+        _ => discover_port().map(|p| format!("http://localhost:{}", p)).unwrap_or_else(|| "http://localhost:8283".to_string()),
+    };
     (base, key)
 }
 
