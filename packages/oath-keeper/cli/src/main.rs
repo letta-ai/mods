@@ -46,6 +46,7 @@ struct State { oaths: Vec<Oath> }
 struct FilterStatus {
     #[serde(default, rename = "negativeFilter")] negative_filter: bool,
     #[serde(default)] ngram: bool,
+    #[serde(default, rename = "ngramThreshold")] ngram_threshold: f64,
     #[serde(default, rename = "llmConfirm")] llm_confirm: bool,
     #[serde(default, rename = "llmDedup")] llm_dedup: bool,
     #[serde(default, rename = "filtersActive")] filters_active: bool,
@@ -298,7 +299,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             let fs_status = load_filter_status();
             let neg_label = if fs_status.negative_filter { "NEG:on" } else { "NEG:off" };
             let neg_color = if fs_status.negative_filter { Color::Green } else { Color::Red };
-            let ngram_label = if fs_status.ngram { "NGRAM:on" } else { "NGRAM:off" };
+            let ngram_label = format!("NGRAM:{} (>{}{})", if fs_status.ngram { "on" } else { "off" }, fs_status.ngram_threshold, "");
             let ngram_color = if fs_status.ngram { Color::Green } else { Color::Red };
             let llm_label = if fs_status.llm_confirm { "LLM:on" } else { "LLM:off" };
             let llm_color = if fs_status.llm_confirm { Color::Green } else { Color::Red };

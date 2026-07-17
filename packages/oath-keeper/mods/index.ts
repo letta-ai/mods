@@ -35,6 +35,7 @@ interface OathConfig {
   classifierAgentId?: string; // Agent ID to use for promise classification (defaults to same agent)
   negativeFilter?: boolean;    // Enable negative filter — code-heavy/short messages (default: true)
   ngramFilter?: boolean;       // Enable n-gram pre-filter (default: true)
+  ngramThreshold?: number;     // N-gram score threshold for LLM classification (default: 1.25)
   llmConfirm?: boolean;        // Enable LLM confirmation/dedup (default: true)
   llmDedup?: boolean;          // Enable LLM semantic dedup (default: true)
 }
@@ -65,6 +66,12 @@ function isNegativeFilterEnabled(): boolean {
 function isNgramEnabled(): boolean {
   const config = loadConfig();
   return config.ngramFilter !== false; // default true
+}
+
+/** Get n-gram score threshold (default: 1.25) */
+function getNgramThreshold(): number {
+  const config = loadConfig();
+  return typeof config.ngramThreshold === "number" ? config.ngramThreshold : 1.25;
 }
 
 /** Check if LLM confirmation is enabled (default: true) */
@@ -319,8 +326,9 @@ function detectPromiseRegex(text: string): { match: string; score: number } | nu
   }
 
   const score = computeNgramScore(text);
+  const threshold = getNgramThreshold();
 
-  if (score > 1.5) return { match: "ngram-score-" + score, score };
+  if (score > threshold) return { match: "ngram-score-" + score, score };
   return null;
 }
 
@@ -1001,6 +1009,7 @@ export default async function activate(letta: any) {
   const filterStatus = {
     negativeFilter: isNegativeFilterEnabled(),
     ngram: isNgramEnabled(),
+    ngramThreshold: getNgramThreshold(),
     llmConfirm: isLlmConfirmEnabled(),
     llmDedup: isLlmDedupEnabled(),
     filtersActive: filtersActive(),
