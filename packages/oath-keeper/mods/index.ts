@@ -85,9 +85,10 @@ interface Oath {
   deliveryMode?: "turn_end" | "polling";
   createdAt: number;
   dueAt: number;
-  status: "pending" | "queued" | "delivering" | "delivered" | "failed" | "false_positive";
+  status: "pending" | "queued" | "delivering" | "delivered" | "failed" | "false_positive" | "prefilter_rejected";
   result: string | null;
   deliveredAt: number | null;
+  ngramScore?: number;
 }
 
 interface StateData {
@@ -239,7 +240,7 @@ async function isDuplicatePromise(newPromise: string, existingOaths: Oath[]): Pr
 
 // ─── Promise Detection ───────────────────────────────────────────
 
-function detectPromiseRegex(text: string): { match: string } | null {
+function detectPromiseRegex(text: string): { match: string; score: number } | null {
   if (!text || typeof text !== "string") return null;
   if (text.includes("[Oath Keeper]") || text.includes("[Oath Delivered]")) return null;
   if (text.trim().length < 15) return null;
@@ -280,7 +281,7 @@ function detectPromiseRegex(text: string): { match: string } | null {
     if (pattern.test(text)) score += weight;
   }
 
-  if (score > 1.5) return { match: "ngram-score-" + score };
+  if (score > 1.5) return { match: "ngram-score-" + score, score };
   return null;
 }
 
@@ -317,6 +318,37 @@ function logFalsePositive(matchedPattern: string, text: string, source: string) 
     log("False positive logged: " + matchedPattern);
   } catch (e) {
     log("Failed to log false positive: " + e);
+  }
+}
+
+/** Log a pre-filter rejection — message didn't score high enough for LLM classification */
+function logPreFilterRejection(text: string, reason: string) {
+  try {
+    const store = StateStore.load("prefilter-reject");
+    const textSnippet = text.slice(0, 60);
+    // Deduplicate — don't log the same rejection repeatedly
+    const exists = store.oaths.some((o) =>
+      o.status === "prefilter_rejected" &&
+      o.promise.includes(textSnippet)
+    );
+    if (exists) return;
+    const now = Date.now();
+    store.addOath({
+      id: "pf-" + now + "-" + Math.random().toString(36).slice(2, 6),
+      conversationId: "",
+      agentId: "",
+      promise: text.slice(0, 120),
+      context: reason,
+      createdAt: now,
+      dueAt: now,
+      status: "prefilter_rejected",
+      result: reason,
+      deliveredAt: now,
+    });
+    store.save();
+    log("Pre-filter rejected: " + reason + " — " + textSnippet);
+  } catch (e) {
+    log("Failed to log pre-filter rejection: " + e);
   }
 }
 
@@ -853,8 +885,13 @@ export default function activate(letta: any) {
 
         const scanStore = StateStore.load("turn_end-detect");
 
-        // No pre-filter — send directly to LLM
-        log("turn_end: sending to LLM...");
+        // Pre-filter: n-gram scoring before LLM
+        const preFilter = detectPromiseRegex(msgText);
+        if (!preFilter) {
+          logPreFilterRejection(msgText, "ngram score <= 1.5 or negative filter");
+          return;
+        }
+        log("turn_end: pre-filter passed (score=" + preFilter.score + ") — sending to LLM...");
         const detection = await confirmPromise(msgText);
         log("turn_end LLM: " + (detection ? "CONFIRMED: " + detection.promise.slice(0, 60) + " delay=" + (detection.delayMs/1000) + "s" : "REJECTED"));
 
@@ -875,9 +912,10 @@ export default function activate(letta: any) {
         const alreadyExists = scanStore.hasRecentPromise(detection.promise);
         if (!alreadyExists) {
           const oath = createOath(detection.promise, "(turn_end)", eventConvId, eventAgentId, undefined, "turn_end", detection.delayMs);
+          oath.ngramScore = preFilter.score;
           scanStore.addOath(oath);
           scanStore.save();
-          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " delay=" + (detection.delayMs/1000) + "s");
+          log("turn_end: oath created — " + oath.id + " conv=" + eventConvId.slice(0,12) + " score=" + preFilter.score + " delay=" + (detection.delayMs/1000) + "s");
         }
       })
     );
@@ -905,14 +943,17 @@ export default function activate(letta: any) {
         const delivering = store.oaths.filter((o) => o.status === "delivering");
         const recent = store.oaths.filter((o) => (o.status === "delivered" || o.status === "failed") && o.deliveredAt && Date.now() - o.deliveredAt < 3_600_000);
         const falsePositives = store.oaths.filter((o) => o.status === "false_positive" && o.deliveredAt && Date.now() - o.deliveredAt < 3_600_000);
-        if (pending.length === 0 && delivering.length === 0 && recent.length === 0 && falsePositives.length === 0) return "No oaths. Agents have kept their word.";
-        const lines = [`Oath Keeper — ${pending.length} pending, ${delivering.length} delivering, ${recent.length} recent, ${falsePositives.length} false positive`];
+        const prefiltered = store.oaths.filter((o) => o.status === "prefilter_rejected" && o.deliveredAt && Date.now() - o.deliveredAt < 3_600_000);
+        if (pending.length === 0 && delivering.length === 0 && recent.length === 0 && falsePositives.length === 0 && prefiltered.length === 0) return "No oaths. Agents have kept their word.";
+        const lines = [`Oath Keeper — ${pending.length} pending, ${delivering.length} delivering, ${recent.length} recent, ${falsePositives.length} false positive, ${prefiltered.length} prefiltered`];
         for (const o of [...pending, ...delivering]) {
           const secs = Math.max(0, Math.round((o.dueAt - Date.now()) / 1000));
-          lines.push(`${o.status.toUpperCase()} (${secs}s): "${o.promise.slice(0, 80)}"`);
+          const score = o.ngramScore ? ` [${o.ngramScore}]` : "";
+          lines.push(`${o.status.toUpperCase()} (${secs}s)${score}: "${o.promise.slice(0, 80)}"`);
         }
         for (const o of recent) lines.push(`${o.status === "delivered" ? "OK" : "FAIL"}: "${o.promise.slice(0, 80)}"`);
         for (const o of falsePositives) lines.push(`FP: "${o.promise.slice(0, 80)}"`);
+        for (const o of prefiltered) lines.push(`PF: "${o.promise.slice(0, 80)}"`);
         return lines.join("\n");
       },
     })
