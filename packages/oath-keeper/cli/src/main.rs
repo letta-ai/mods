@@ -261,7 +261,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 _ => ("UNKNOWN".to_string(), Color::Gray),
                             };
 
-                            let source = if o.id.contains("manual") { "manual" } else { "polled from letta mod" };
+                            let source = if o.id.contains("manual") { "manual".to_string() } else { o.delivery_mode.clone().unwrap_or_else(|| "mod".to_string()) };
                             let age = fmt_ago(o.created_at);
 
                             // Line 1: status badge + promise
@@ -269,14 +269,9 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 Span::styled(format!(" {} ", status_label), Style::default().fg(Color::Black).bg(status_color).add_modifier(Modifier::BOLD)),
                                 Span::raw(" "),
                                 Span::styled(&o.promise, Style::default().fg(Color::White)),
-                                if let Some(score) = o.ngram_score {
-                                    Span::styled(format!(" [{}]", score), Style::default().fg(Color::Yellow))
-                                } else {
-                                    Span::raw("")
-                                },
                             ]);
 
-                            // Line 2: timer/source/age/conv metadata
+                            // Line 2: timer/source/age/score/conv metadata
                             let mut line2_spans: Vec<Span> = vec![Span::raw("  ")];
 
                             // Show cron countdown if cron is active
@@ -302,8 +297,15 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                             line2_spans.push(Span::styled(format!("{}  ", source), Style::default().fg(Color::Magenta)));
                             line2_spans.push(Span::styled("age:", Style::default().fg(Color::Gray)));
                             line2_spans.push(Span::styled(format!("{}  ", age), Style::default().fg(Color::LightBlue)));
+                            line2_spans.push(Span::styled("score:", Style::default().fg(Color::Gray)));
+                            if let Some(score) = o.ngram_score {
+                                line2_spans.push(Span::styled(format!("{}  ", score), Style::default().fg(Color::Yellow)));
+                            } else {
+                                line2_spans.push(Span::styled("N/A  ", Style::default().fg(Color::DarkGray)));
+                            }
                             line2_spans.push(Span::styled("conv:", Style::default().fg(Color::Gray)));
-                            line2_spans.push(Span::styled(&o.conversation_id[..o.conversation_id.len().min(20)], Style::default().fg(Color::Blue)));
+                            let conv_display = if o.conversation_id.is_empty() { "N/A".to_string() } else { o.conversation_id[..o.conversation_id.len().min(20)].to_string() };
+                            line2_spans.push(Span::styled(conv_display, Style::default().fg(Color::Blue)));
 
                             let line2 = Line::from(line2_spans);
 
