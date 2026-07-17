@@ -461,6 +461,7 @@ async function tryDeliverOath(oath: Oath): Promise<{ status: "ok" | "busy" | "fa
 // ─── Polling ─────────────────────────────────────────────────────
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let turnEventsActive = false;
 
 /** Delivery cycle — runs on every poll regardless of mode.
  *  Handles: delivery-check, queue transition, delivery, stuck recovery, prune.
@@ -582,7 +583,8 @@ async function pollCycle() {
     // Run delivery logic first
     await pollDeliveryCycle();
 
-    // Then scan for new promises (only in listener mode — turn_end handles this otherwise)
+    // Then scan for new promises — SKIP when turn_end handles detection
+    if (turnEventsActive) return;
     const scanStore = StateStore.load("scan-phase");
     if (scanStore.hasActiveOaths()) { log("Skipping scan — active oaths"); return; }
 
@@ -657,6 +659,7 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
 export default function activate(letta: any) {
   const disposers: Array<() => void> = [];
   const hasTurnEvents = letta.capabilities.events?.turns === true;
+  turnEventsActive = hasTurnEvents;
   log("Capabilities: " + JSON.stringify(letta.capabilities));
   log("hasTurnEvents: " + hasTurnEvents);
   try { letta.diagnostics.report({ message: "Capabilities: " + JSON.stringify(letta.capabilities) + " hasTurnEvents: " + hasTurnEvents, severity: "warning" }); } catch (e) {}
@@ -718,20 +721,12 @@ export default function activate(letta: any) {
     log("turn_end handler registered");
   }
 
-  // ── Polling — only when turn_end is NOT available (listener/desktop fallback)
-  if (!hasTurnEvents) {
-    if (intervalHandle) clearInterval(intervalHandle);
-    intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
-    pollCycle();
-    log("Polling started (no turn_end — listener/desktop fallback)");
-  } else {
-    // turn_end handles detection; polling only needed for delivery timing
-    // (checking queued oaths, stuck-state recovery, conversation history checks)
-    if (intervalHandle) clearInterval(intervalHandle);
-    intervalHandle = setInterval(pollDeliveryCycle, POLL_INTERVAL_MS);
-    pollDeliveryCycle();
-    log("Delivery poll started (turn_end active — scanning disabled)");
-  }
+  // ── Polling — always enabled for delivery timing
+  // Scanning is disabled when turn_end handles detection (avoid duplicate oaths)
+  if (intervalHandle) clearInterval(intervalHandle);
+  intervalHandle = setInterval(pollCycle, POLL_INTERVAL_MS);
+  pollCycle();
+  log("Polling started (turn_end active: " + hasTurnEvents + ")");
 
   // ── list_oaths tool ─────────────────────────────────────────
   disposers.push(
