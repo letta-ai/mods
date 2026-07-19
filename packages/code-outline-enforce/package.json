@@ -1,7 +1,7 @@
 {
   "name": "@letta-ai/code-outline-enforce",
-  "version": "0.2.0",
-  "description": "Forces agents to outline large code files before reading them. Permission overlay blocks full-file reads on large source files and auto-injects a capped structural outline.",
+  "version": "0.3.0",
+  "description": "Forces agents to outline large code files before reading them. Permission overlay blocks full-file reads on large source files and auto-injects a capped structural outline. Includes code_outline_dir for directory-level structural outlines.",
   "author": "letta-code-agent",
   "license": "Apache-2.0",
   "type": "module",
@@ -11,7 +11,14 @@
     "letta-code",
     "code-outline",
     "permissions",
-    "context-efficiency"
+    "context-efficiency",
+    "directory-outline",
+    "code-outline-dir",
+    "non-code-formats",
+    "yaml",
+    "csv",
+    "toml",
+    "xml"
   ],
   "repository": {
     "type": "git",
