@@ -7,7 +7,7 @@ Agents waste context by reading entire large source files when they only need a 
 Structural enforcement, not advisory. Three parts:
 
 **1. Permission Overlay (the gate)**
-Blocks Read-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on code files over 500 lines (configurable) or 512 KB in two cases:
+Blocks Read-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on supported code and structured text files over 500 lines (configurable) or 512 KB in two cases:
 
 - **No offset/limit at all** — agent would read the entire file blind
 - **Tiny unanchored limit (< 50 lines, no offset)** — agent would crawl from the top in small slices
@@ -45,11 +45,12 @@ Safety bounds:
 - Symbol names truncated at 80 characters
 - Excluded directories: .git, node_modules, __pycache__, .venv, venv, build, dist, coverage, .next, target, bin, obj
 - Hidden files/dirs (dot prefix) and symbolic links are skipped
-- Unknown/binary extensions are ignored
+- Unknown/binary extensions are ignored (only supported extensions are outlined)
+- Note: `.env`, `.gitignore`, and `.editorconfig` are supported by `code_outline` (single-file mode) but not by `code_outline_dir` (directory mode skips dot-prefixed files)
 - Deterministic sort order (case-insensitive, case-stable tiebreaker)
 - Stop reason and counters reported in truncation suffix
 
-The permission overlay uses **regex/fallback only** (start lines, no end ranges) for its auto-injected denial outlines — it must work synchronously with zero external dependencies. The explicit `code_outline` tool uses all four backends including AST and ctags.
+The permission overlay enforces on all supported extensions (code and structured text files). The overlay uses **regex/fallback only** (start lines, no end ranges) for its auto-injected denial outlines — it must work synchronously with zero external dependencies. The explicit `code_outline` tool uses all four backends including AST and ctags.
 
 ## Supported Languages (zero dependencies)
 

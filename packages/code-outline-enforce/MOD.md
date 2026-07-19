@@ -28,7 +28,7 @@ The agent should never attempt to bypass the permission overlay by reading witho
 Model-callable structural outline tool. Accepts a `file_path` parameter and returns functions, classes, methods, and other structural elements with line numbers.
 
 Backends tried in order:
-- Python `ast` for `.py` files (accurate start+end lines, plus call-site references showing what functions each function calls)
+- Python `ast` for `.py` files (accurate start+end lines, plus call-site references showing up to 10 bare-name and attribute calls at the function's own scope level, excluding nested definitions)
 - Universal Ctags (optional, 50+ languages, expanded kind coverage: `func` for Go, `table`/`view` for SQL, `macro` for C/C++, `selector`/`id` for CSS)
 - Regex patterns (35+ languages/formats, zero dependencies)
 - Fallback (line count + first 15 lines)
@@ -46,7 +46,8 @@ Safety bounds:
 - 5 symbols per file (with "+N more symbols" marker)
 - Excluded directories: .git, node_modules, __pycache__, .venv, venv, build, dist, coverage, .next, target, bin, obj
 - Hidden files/dirs (dot prefix) and symbolic links are skipped
-- Unknown/binary extensions are ignored
+- Unknown/binary extensions are ignored (only CODE_EXTS extensions are outlined)
+- Note: `.env`, `.gitignore`, and `.editorconfig` are supported by `code_outline` (single-file mode) but not by `code_outline_dir` (directory mode skips dot-prefixed files)
 - Deterministic sort order
 - Stop reason and counters reported in truncation suffix
 
@@ -54,7 +55,7 @@ Safety bounds:
 
 The permission overlay:
 
-- **Blocks** `Read`-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on code files (extensions listed in CODE_EXTS) above LINE_THRESHOLD (default 500) or BYTE_THRESHOLD (default 512 KB) when:
+- **Blocks** `Read`-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on supported code and structured text files (extensions listed in CODE_EXTS, which includes code languages plus Markdown, JSON, YAML, CSV, TOML, XML, .env, .gitignore, .editorconfig) above LINE_THRESHOLD (default 500) or BYTE_THRESHOLD (default 512 KB) when:
   - No offset or limit is provided (blind full-file read)
   - A tiny unanchored limit (< MIN_UNANCHORED_LIMIT, default 50) is provided without an offset (sequential crawl from the top)
 - **Allows** reads with a valid positive offset (anchored to an outline location) even with a small limit — the agent knows where it's going.

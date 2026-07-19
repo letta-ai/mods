@@ -327,17 +327,15 @@ const REGEX_PATTERNS = {
   ],
 
   ".yml": [
-    [/^\s*(\w[\w\s]*?):\s*$/, "key"],
-    [/^\s*-\s+(\w[\w\s]*?):\s*$/, "listKey"],
+    [/^\s*(\w[\w\s.]*?):\s+\S/, "key"],
+    [/^\s*(\w[\w\s.]*?):\s*$/, "key"],
+    [/^\s*-\s+(\w[\w\s.]*?):\s+\S/, "listKey"],
+    [/^\s*-\s+(\w[\w\s.]*?):\s*$/, "listKey"],
   ],
   ".yaml": null,
 
-  ".csv": [
-    [/^([^,\r\n]+(?:,[^,\r\n]+)*)$/, "columns"],
-  ],
-  ".tsv": [
-    [/^([^\t\r\n]+(?:\t[^\t\r\n]+)*)$/, "columns"],
-  ],
+  ".csv": null,
+  ".tsv": null,
 
   ".toml": [
     [/^\[(.+)\]/, "section"],
@@ -699,9 +697,15 @@ async function outlineWithPython(filePath) {
     'class V(ast.NodeVisitor):',
     '  def _calls(self,body):',
     '    c=set()',
-    '    for n in ast.walk(ast.Module(body=body if isinstance(body,list) else [body])):',
-    '      if isinstance(n,ast.Call) and hasattr(n.func,"id") and not n.func.id.startswith("_"):',
-    '        c.add(n.func.id)',
+    '    stack=list(body if isinstance(body,list) else [body])',
+    '    while stack:',
+    '      n=stack.pop()',
+    '      if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):continue',
+    '      if isinstance(n,ast.Call):',
+    '        f=n.func',
+    '        if isinstance(f,ast.Name) and not f.id.startswith("_"):c.add(f.id)',
+    '        elif isinstance(f,ast.Attribute) and not f.attr.startswith("_"):c.add(f.attr)',
+    '      for child in ast.iter_child_nodes(n):stack.append(child)',
     '    return sorted(c)[:10]',
     '  def visit_FunctionDef(self,n):',
     '    c=self._calls(n.body)',
