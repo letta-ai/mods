@@ -349,7 +349,7 @@ const REGEX_PATTERNS = {
   ],
 
   ".env": [
-    [/^\s*(\w+)=/, "var"],
+    [/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/, "var"],
   ],
 
   ".gitignore": [
@@ -594,9 +594,9 @@ function getOutline(filePath, ext) {
     try {
       const content = buf.toString("utf-8");
       const lines = content.trim().split("\n");
+      const sep = ext === ".tsv" ? "\t" : ",";
       if (lines.length >= 2) {
         const rowCount = lines.length - 1;
-        const sep = ext === ".tsv" ? "\t" : ",";
         const colCount = lines[0].split(sep).length;
         outline = `  L1: columns ${colCount} cols\n  L2: rows ${rowCount} data rows`;
         const headers = lines[0].split(sep).map(h => h.trim());
@@ -604,9 +604,41 @@ function getOutline(filePath, ext) {
           outline += "\n  L1: headers " + headers.join(", ");
         }
         outline = buildCappedOutline(outline, lineCount);
+      } else if (lines.length === 1 && lines[0].trim()) {
+        // Header-only CSV/TSV
+        const headers = lines[0].split(sep).map(h => h.trim());
+        outline = `  L1: headers ${headers.length} cols: ${headers.slice(0, 15).join(", ")}`;
+        outline = buildCappedOutline(outline, lineCount);
       }
     } catch {
       // fall through to fallback
+    }
+  }
+
+  // Special: .env files must never use the raw content fallback (security)
+  if (!outline && ext === ".env") {
+    try {
+      const content = buf.toString("utf-8");
+      const lines = content.split("\n");
+      const varNames = [];
+      const envRe = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+      for (const line of lines) {
+        const m = line.match(envRe);
+        if (m) {
+          varNames.push(m[1]);
+          if (varNames.length >= 40) break;
+        }
+      }
+      if (varNames.length > 0) {
+        outline = `  L1: ${varNames.length} env vars: ${varNames.slice(0, 20).join(", ")}`;
+        if (varNames.length > 20) outline += ` (+${varNames.length - 20} more)`;
+        outline = buildCappedOutline(outline, lineCount);
+      } else {
+        // No variables recognized — return safe structural message, never raw content
+        outline = buildCappedOutline(`No environment variable names recognized.`, lineCount);
+      }
+    } catch {
+      outline = buildCappedOutline(`No environment variable names recognized.`, lineCount);
     }
   }
 
