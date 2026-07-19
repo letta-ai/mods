@@ -766,7 +766,7 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
   let stopReason = null;
 
   function walk(dir, depth) {
-    if (depth > maxDepth) { if (!stopReason) stopReason = "max depth reached"; return; }
+    if (depth > maxDepth) return;
     if (filesEmitted >= maxFiles) { if (!stopReason) stopReason = "requested max_files reached"; return; }
     if (directoriesVisited >= MAX_DIRS_VISITED) { if (!stopReason) stopReason = "directory-visit limit reached"; return; }
     if (entriesConsidered >= MAX_ENTRIES_CONSIDERED) { if (!stopReason) stopReason = "entry-consideration limit reached"; return; }
@@ -804,7 +804,7 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
         walk(fullPath, depth + 1);
       } else if (item.isFile()) {
         const ext = getExt(fullPath);
-        if (!ext) continue;
+        if (!CODE_EXTS.has(ext)) continue;
         const cached = getOutline(fullPath, ext);
         // Extract at most MAX_SYMBOLS_PER_FILE symbols for orientation
         let symbol = null;
@@ -1030,7 +1030,6 @@ export default function activate(letta) {
 
   // 3) Mod tool: code_outline_dir — directory-level structural outline
   if (letta.capabilities.tools) {
-    try {
       disposers.push(
       letta.tools.register({
         name: "code_outline_dir",
@@ -1133,11 +1132,10 @@ export default function activate(letta) {
             const name = entry.path.split("/").pop();
             let line;
 
-            if (entry.isDir) {
-              dirCount++;
+            const isDir = entry.isDir;
+            if (isDir) {
               line = `${indent}${name}/`;
             } else {
-              fileCount++;
               const info = [];
               if (entry.symbol) info.push(entry.symbol);
               if (entry.lineCount) info.push(`${entry.lineCount} lines`);
@@ -1150,30 +1148,42 @@ export default function activate(letta) {
               line = line.slice(0, 197) + "...";
             }
 
-            // Check character budget
+            // Check character budget before accepting
             if (currentLen + line.length + 1 > budget) {
               charLimitHit = true;
               break;
             }
 
+            // Only now accept the entry and increment counters
             lines.push(line);
             currentLen += line.length + 1; // +1 for newline
+            if (isDir) {
+              dirCount++;
+            } else {
+              fileCount++;
+            }
           }
 
           if (charLimitHit) {
-            // Remove last line if it doesn't fit, prefer truncating at newline boundary
+            // Recompute suffix from final accepted counts
             const capSuffix = `\n\u2026 truncated: output-character limit reached (${fileCount} files emitted, ${dirCount} directories visited, ${entriesConsidered} entries considered)`;
-            // Only add if it fits within the actual output
             const result = `## Directory: ${dirPath}\n\n${lines.join("\n")}${capSuffix}`;
             if (result.length <= MAX_DIR_OUTLINE_CHARS) {
               return result;
             }
-            // Remove lines until the suffix fits
+            // Remove lines until the suffix fits, tracking type
             while (lines.length > 0) {
               const last = lines.pop();
               currentLen -= last.length + 1;
-              fileCount--;
-              const testResult = `## Directory: ${dirPath}\n\n${lines.join("\n")}${capSuffix}`;
+              // Track what type was removed so counters stay accurate
+              const removedIsDir = last.endsWith("/");
+              if (removedIsDir) {
+                dirCount--;
+              } else {
+                fileCount--;
+              }
+              const updatedSuffix = `\n\u2026 truncated: output-character limit reached (${fileCount} files emitted, ${dirCount} directories visited, ${entriesConsidered} entries considered)`;
+              const testResult = `## Directory: ${dirPath}\n\n${lines.join("\n")}${updatedSuffix}`;
               if (testResult.length <= MAX_DIR_OUTLINE_CHARS) {
                 return testResult;
               }
@@ -1196,9 +1206,6 @@ export default function activate(letta) {
         },
       }),
     );
-    } catch(e) {
-      console.error("[code-outline-enforce] code_outline_dir registration failed:", e);
-    }
   }
 
   return () => {
