@@ -26,7 +26,7 @@ Gives the agent a structural outline (functions, classes, methods with line numb
 - **Regex patterns** — zero-dependency, covers 35+ languages/formats
 - **Fallback** — line count + first 15 lines
 
-Supports non-code formats: Markdown headings, JSON keys, YAML keys (inline and block styles), CSV/TSV headers and row counts (simple delimiter heuristic, does not handle quoted commas), XML tags, .env variable names (values never exposed), gitignore patterns, EditorConfig sections.
+Supports non-code formats: Markdown headings, JSON keys, YAML keys (inline and block styles), CSV/TSV headers and row counts (simple delimiter heuristic, does not handle quoted commas), TOML sections and keys, XML tags, .env variable names (values never exposed), gitignore patterns, EditorConfig sections.
 
 **No dependencies required.** Works out of the box. Python and ctags are optional enhancements.
 

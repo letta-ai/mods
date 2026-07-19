@@ -528,6 +528,43 @@ function buildCappedOutline(outlineLines, lineCount) {
 }
 
 /**
+ * Centralized safe .env outline builder.
+ * Extracts variable names only — never returns raw values.
+ * Used by both getOutline() (permission overlay) and the explicit code_outline tool.
+ */
+function buildEnvOutlineFromBuffer(buf, lineCount) {
+  const content = buf.toString("utf-8");
+  const lines = content.split("\n");
+  const seen = new Set();
+  const varNames = [];
+  const envRe = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Skip comments and blank lines
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+    const m = trimmed.match(envRe);
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      // Cap variable name length defensively
+      const name = m[1].length > 80 ? m[1].slice(0, 77) + "..." : m[1];
+      varNames.push(name);
+      if (varNames.length >= 40) break;
+    }
+  }
+
+  if (varNames.length > 0) {
+    const capNote = varNames.length >= 40 ? " (scan stopped at 40 var limit)" : "";
+    const shown = varNames.slice(0, 20).join(", ");
+    let outline = `  L1: ${varNames.length} env vars${capNote}: ${shown}`;
+    if (varNames.length > 20) outline += ` (+${varNames.length - 20} more)`;
+    return buildCappedOutline(outline, lineCount);
+  }
+  // No variables recognized — safe structural message, never raw content
+  return buildCappedOutline("No environment variable names recognized.", lineCount);
+}
+
+/**
  * Get or generate a cached outline for a file path.
  * Reads the file once per cache miss: stats for mtime+size, reads buffer,
  * counts lines from buffer, decodes for regex.
@@ -618,27 +655,9 @@ function getOutline(filePath, ext) {
   // Special: .env files must never use the raw content fallback (security)
   if (!outline && ext === ".env") {
     try {
-      const content = buf.toString("utf-8");
-      const lines = content.split("\n");
-      const varNames = [];
-      const envRe = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
-      for (const line of lines) {
-        const m = line.match(envRe);
-        if (m) {
-          varNames.push(m[1]);
-          if (varNames.length >= 40) break;
-        }
-      }
-      if (varNames.length > 0) {
-        outline = `  L1: ${varNames.length} env vars: ${varNames.slice(0, 20).join(", ")}`;
-        if (varNames.length > 20) outline += ` (+${varNames.length - 20} more)`;
-        outline = buildCappedOutline(outline, lineCount);
-      } else {
-        // No variables recognized — return safe structural message, never raw content
-        outline = buildCappedOutline(`No environment variable names recognized.`, lineCount);
-      }
+      outline = buildEnvOutlineFromBuffer(buf, lineCount);
     } catch {
-      outline = buildCappedOutline(`No environment variable names recognized.`, lineCount);
+      outline = buildCappedOutline("No environment variable names recognized.", lineCount);
     }
   }
 
@@ -985,6 +1004,12 @@ export default function activate(letta) {
             return { status: "error", content: `Could not read file: ${filePath}` };
           }
           const lineCount = countLinesFromBuffer(buf);
+
+          // .env files use centralized safe handler (security — never expose values)
+          if (ext === ".env") {
+            const safeOutline = buildEnvOutlineFromBuffer(buf, lineCount);
+            return `## ${filePath} (${lineCount} lines)\n\n${safeOutline}`;
+          }
 
           let outline = "";
 
