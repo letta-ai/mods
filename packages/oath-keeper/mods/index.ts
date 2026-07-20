@@ -178,10 +178,17 @@ class StateStore {
   setPollVer(ver: string): StateStore { this.data._pollVer = ver; this.dirty = true; return this; }
   prune(now: number): StateStore {
     const before = this.data.oaths.length;
-    this.data.oaths = this.data.oaths.filter((o) =>
-      o.status === "pending" || o.status === "queued" || o.status === "delivering" ||
-      (o.deliveredAt && (now - o.deliveredAt) < 86_400_000)
-    );
+    this.data.oaths = this.data.oaths.filter((o) => {
+      // Always keep active oaths
+      if (o.status === "pending" || o.status === "queued" || o.status === "delivering") return true;
+      // Prune prefilter_rejected after 1 hour (they're just debug noise)
+      if (o.status === "prefilter_rejected" && o.deliveredAt && (now - o.deliveredAt) > 3_600_000) return false;
+      // Prune false_positive after 6 hours
+      if (o.status === "false_positive" && o.deliveredAt && (now - o.deliveredAt) > 21_600_000) return false;
+      // Prune delivered/failed after 24 hours
+      if (o.deliveredAt && (now - o.deliveredAt) > 86_400_000) return false;
+      return true;
+    });
     if (this.data.oaths.length !== before) this.dirty = true;
     return this;
   }
