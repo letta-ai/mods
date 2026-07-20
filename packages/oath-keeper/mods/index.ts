@@ -551,34 +551,68 @@ function createOath(promise: string, context: string, conversationId: string, ag
   return { id: "oath-" + now + "-" + Math.random().toString(36).slice(2, 8), conversationId, agentId, promise, context, sourceMessageId, deliveryMode, createdAt: now, dueAt: due, status: "pending", result: null, deliveredAt: null };
 }
 
+// Cache the last-known-good port to avoid ss on every call
+let cachedBaseUrl: string | null = null;
+let lastPortCheck: number = 0;
+const PORT_CHECK_INTERVAL = 60_000; // re-verify port every 60s
+
 function getApiConfig() {
   let apiKey = process.env.LETTA_API_KEY;
   if (apiKey === "unset") apiKey = undefined;
-  let baseUrl = "";
   let agentId = "";
   let convId = "";
-
-  // Priority: process.env (always current in mod runtime) → env file → ss discovery → default
-  let envPort = process.env.LETTA_BASE_URL || "";
-  if (envPort && envPort !== "unset") baseUrl = envPort;
+  const now = Date.now();
 
   // Read agent/conv IDs from env file (these don't change across restarts)
   try {
     const env = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
     agentId = env.LETTA_AGENT_ID || "";
     convId = env.LETTA_CONVERSATION_ID || "";
-    // Use env file URL as fallback if process.env didn't have it
-    if (!baseUrl) baseUrl = env.LETTA_BASE_URL || "";
   } catch (e) {}
 
-  // ss discovery as final fallback
+  // Priority: cached (if checked recently) → process.env → env file → ss discovery → default
+  // Re-verify the port every 60s to handle app restarts
+  if (cachedBaseUrl && (now - lastPortCheck) < PORT_CHECK_INTERVAL) {
+    return { baseUrl: cachedBaseUrl, apiKey, agentId, convId };
+  }
+
+  let baseUrl = "";
+  let envPort = process.env.LETTA_BASE_URL || "";
+  if (envPort && envPort !== "unset") baseUrl = envPort;
+
+  if (!baseUrl) {
+    try {
+      const env = JSON.parse(fs.readFileSync(ENV_FILE, "utf8"));
+      baseUrl = env.LETTA_BASE_URL || "";
+    } catch (e) {}
+  }
+
+  // Verify the port is alive — if dead, discover via ss
+  if (baseUrl) {
+    try {
+      execSync(`curl -s -o /dev/null -w '%{http_code}' '${baseUrl}/v1/health' --max-time 1 2>/dev/null`, { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+      const alive = execSync(`curl -s -o /dev/null -w '%{http_code}' '${baseUrl}/v1/health' --max-time 1 2>/dev/null`, { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+      if (alive !== "200") {
+        log("Port " + baseUrl + " is dead, discovering...");
+        baseUrl = ""; // fall through to ss
+      }
+    } catch (e) {
+      baseUrl = ""; // fall through to ss
+    }
+  }
+
+  // ss discovery
   if (!baseUrl) {
     try {
       const output = execSync("ss -tlnp 2>/dev/null | grep letta-code | head -1 | grep -oP '127\\.0\\.0\\.1:\\K\\d+' 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
       if (output) baseUrl = "http://localhost:" + output;
     } catch (e) {}
   }
+
   if (!baseUrl) baseUrl = "http://localhost:8283";
+
+  cachedBaseUrl = baseUrl;
+  lastPortCheck = now;
 
   addDebugLog("getApiConfig: baseUrl=" + baseUrl + " agentId=" + (agentId ? agentId.slice(0,12) : "NONE") + " convId=" + (convId ? convId.slice(0,12) : "NONE"));
   return { baseUrl, apiKey, agentId, convId };
