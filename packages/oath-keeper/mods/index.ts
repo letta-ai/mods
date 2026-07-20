@@ -181,10 +181,10 @@ class StateStore {
     this.data.oaths = this.data.oaths.filter((o) => {
       // Always keep active oaths
       if (o.status === "pending" || o.status === "queued" || o.status === "delivering") return true;
-      // Prune prefilter_rejected after 1 hour (they're just debug noise)
-      if (o.status === "prefilter_rejected" && o.deliveredAt && (now - o.deliveredAt) > 3_600_000) return false;
-      // Prune false_positive after 6 hours
-      if (o.status === "false_positive" && o.deliveredAt && (now - o.deliveredAt) > 21_600_000) return false;
+      // Prune prefilter_rejected after 10 minutes (they're just debug noise)
+      if (o.status === "prefilter_rejected" && o.deliveredAt && (now - o.deliveredAt) > 600_000) return false;
+      // Prune false_positive after 30 minutes
+      if (o.status === "false_positive" && o.deliveredAt && (now - o.deliveredAt) > 1_800_000) return false;
       // Prune delivered/failed after 24 hours
       if (o.deliveredAt && (now - o.deliveredAt) > 86_400_000) return false;
       return true;
