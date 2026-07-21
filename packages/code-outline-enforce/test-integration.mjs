@@ -12,14 +12,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// Import the actual mod (absolute path to avoid CWD issues)
+// Import the actual mod
 import mod, {
   getExt,
   walkDirectory,
   REGEX_PATTERNS,
   MAX_DIR_READ_BYTES,
   EXCLUDED_DIRS,
-} from "file:///C:/Users/PC/Documents/GitHub/mods/packages/code-outline-enforce/mods/index.mjs";
+} from "./mods/index.mjs";
 
 let passed = 0;
 let failed = 0;

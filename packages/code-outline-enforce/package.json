@@ -30,6 +30,9 @@
     "MOD.md",
     "mods"
   ],
+  "scripts": {
+    "test": "node test-integration.mjs"
+  },
   "letta": {
     "manifestVersion": 1,
     "mods": ["./mods/index.mjs"],
