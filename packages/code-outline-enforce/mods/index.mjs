@@ -38,6 +38,7 @@ const MAX_DIRS_VISITED = 5000;
 const MAX_ENTRIES_CONSIDERED = 20000;
 const MAX_SYMBOL_LENGTH = 80;
 const MAX_SYMBOLS_PER_FILE = 5;
+const MAX_DIR_READ_BYTES = 10 * 1024 * 1024; // 10MB total file read limit for directory outline
 
 const EXCLUDED_DIRS = new Set([
   ".git", "node_modules", "__pycache__", ".venv", "venv",
@@ -317,7 +318,7 @@ const REGEX_PATTERNS = {
   // --- Non-code file formats ---
 
   ".md": [
-    [/^(#{1,6})\s+(.+)/, "heading"],
+    [/^#{1,6}\s+(.+)/, "heading"],
     [/^```(\w*)/, "codeblock"],
   ],
   ".markdown": null,
@@ -327,10 +328,10 @@ const REGEX_PATTERNS = {
   ],
 
   ".yml": [
-    [/^\s*(\w[\w\s.]*?):\s+\S/, "key"],
-    [/^\s*(\w[\w\s.]*?):\s*$/, "key"],
-    [/^\s*-\s+(\w[\w\s.]*?):\s+\S/, "listKey"],
-    [/^\s*-\s+(\w[\w\s.]*?):\s*$/, "listKey"],
+    [/^\s*(\w[\w\s.-]*?):\s+\S/, "key"],
+    [/^\s*(\w[\w\s.-]*?):\s*$/, "key"],
+    [/^\s*-\s+(\w[\w\s.-]*?):\s+\S/, "listKey"],
+    [/^\s*-\s+(\w[\w\s.-]*?):\s*$/, "listKey"],
   ],
   ".yaml": null,
 
@@ -345,7 +346,6 @@ const REGEX_PATTERNS = {
   ".xml": [
     [/^\s*<(\w+)[^>]*>/, "tag"],
     [/^\s*<!--\s*(.+?)\s*-->/, "comment"],
-    [/^\s*<\?xml[^>]*\?>/, "declaration"],
   ],
 
   ".env": [
@@ -389,7 +389,7 @@ function getExt(filePath) {
   // Dockerfile (case-insensitive, with optional .suffix)
   if (/^dockerfile(?:\.|$)/i.test(basename)) return "dockerfile";
   // .env files (exact name or .env.*)
-  if (/^\.env(?:\..+)?$/.test(basename)) return ".env";
+  if (/^\.env(?:\..+)?$/i.test(basename)) return ".env";
   // .gitignore (exact name)
   if (basename === ".gitignore") return ".gitignore";
   // .editorconfig (exact name)
@@ -818,6 +818,7 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
   let directoriesVisited = 0;
   let entriesConsidered = 0;
   let filesEmitted = 0;
+  let totalReadBytes = 0;
   let stopReason = null;
 
   function walk(dir, depth) {
@@ -825,6 +826,7 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
     if (filesEmitted >= maxFiles) { if (!stopReason) stopReason = "requested max_files reached"; return; }
     if (directoriesVisited >= MAX_DIRS_VISITED) { if (!stopReason) stopReason = "directory-visit limit reached"; return; }
     if (entriesConsidered >= MAX_ENTRIES_CONSIDERED) { if (!stopReason) stopReason = "entry-consideration limit reached"; return; }
+    if (totalReadBytes >= MAX_DIR_READ_BYTES) { if (!stopReason) stopReason = "total read bytes limit reached"; return; }
 
     let items;
     try {
@@ -861,6 +863,7 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
         const ext = getExt(fullPath);
         if (!CODE_EXTS.has(ext)) continue;
         const cached = getOutline(fullPath, ext);
+        totalReadBytes += cached.bytes || 0;
         // Extract at most MAX_SYMBOLS_PER_FILE symbols for orientation
         let symbol = null;
         if (cached.outline) {
