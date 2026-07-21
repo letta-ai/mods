@@ -15,7 +15,7 @@
  * For installation, configuration, and supported-language tables see README.md.
  */
 
-import { readFileSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, statSync, lstatSync, readdirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -862,6 +862,20 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
       } else if (item.isFile()) {
         const ext = getExt(fullPath);
         if (!CODE_EXTS.has(ext)) continue;
+
+        // Check byte budget before reading — stat first, skip if over budget
+        let fileSize = 0;
+        try {
+          fileSize = statSync(fullPath).size;
+        } catch {
+          continue;
+        }
+        if (totalReadBytes + fileSize > MAX_DIR_READ_BYTES) {
+          if (!stopReason) stopReason = "total read bytes limit reached";
+          // Skip this file (don't terminate the walk) — other files may still fit
+          continue;
+        }
+
         const cached = getOutline(fullPath, ext);
         totalReadBytes += cached.bytes || 0;
         // Extract at most MAX_SYMBOLS_PER_FILE symbols for orientation
@@ -898,6 +912,37 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
         });
       }
     }
+  }
+
+  // Validate root before traversal
+  // Use lstatSync to detect symlinks without following
+  let rootStat;
+  try {
+    rootStat = lstatSync(dirPath);
+  } catch {
+    return { entries: [], error: `Could not stat directory: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject symlink root
+  if (rootStat.isSymbolicLink()) {
+    return { entries: [], error: `Root directory is a symbolic link: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject if not a directory
+  if (!rootStat.isDirectory()) {
+    return { entries: [], error: `Not a directory: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject hidden root (dot-prefix basename)
+  const normalizedPath = n(dirPath);
+  const rootBase = normalizedPath.split("/").pop() || "";
+  if (rootBase.startsWith(".")) {
+    return { entries: [], error: `Root directory is hidden (dot-prefixed): ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject excluded root basename
+  if (EXCLUDED_DIRS.has(rootBase)) {
+    return { entries: [], error: `Root directory is excluded: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
   walk(dirPath, 0);
@@ -1164,7 +1209,11 @@ export default function activate(letta) {
             maxFiles = f;
           }
 
-          const { entries, stopReason, directoriesVisited, entriesConsidered, filesEmitted } = walkDirectory(dirPath, maxDepth, maxFiles);
+          const { entries, error, stopReason, directoriesVisited, entriesConsidered, filesEmitted } = walkDirectory(dirPath, maxDepth, maxFiles);
+
+          if (error) {
+            return { status: "error", content: error };
+          }
 
           if (entries.length === 0) {
             return { status: "error", content: `Directory is empty or could not be read: ${dirPath}` };
@@ -1276,3 +1325,6 @@ export default function activate(letta) {
     for (const dispose of disposers.reverse()) dispose();
   };
 }
+
+// Named exports for testing
+export { getExt, walkDirectory, REGEX_PATTERNS, MAX_DIR_READ_BYTES, EXCLUDED_DIRS };
