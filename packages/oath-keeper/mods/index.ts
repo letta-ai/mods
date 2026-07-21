@@ -918,7 +918,7 @@ async function fetchLatestAgentMessage(): Promise<{ id: string; text: string; us
 
 // ─── Mod Activation ──────────────────────────────────────────────
 
-export default async function activate(letta: any) {
+export default function activate(letta: any) {
   const disposers: Array<() => void> = [];
   const hasTurnEvents = letta.capabilities.events?.turns === true;
   turnEventsActive = hasTurnEvents;
