@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import mod, {
   getExt,
   walkDirectory,
+  getOutline,
   REGEX_PATTERNS,
   MAX_DIR_READ_BYTES,
   EXCLUDED_DIRS,
@@ -139,6 +140,31 @@ console.log("Fix 2a: Root directory validation (hidden/excluded/symlink)");
     const fileResult = walkDirectory(filePath, 3, 30);
     assertMatch(fileResult.error || "", /Not a directory/, "file path rejected as root");
     assertEq(fileResult.entries.length, 0, "file root has 0 entries");
+
+    // Path normalization: trailing slash should not affect root validation
+    const trailingSlashNormal = normalRoot + "/";
+    const trailingNormalResult = walkDirectory(trailingSlashNormal, 3, 30);
+    assertEq(trailingNormalResult.error, undefined, "normal root with trailing slash has no error");
+    assertEq(trailingNormalResult.entries.length, 1, "normal root with trailing slash has 1 entry");
+
+    // Path normalization: hidden root with trailing slash
+    const trailingSlashHidden = hiddenRoot + "/";
+    const trailingHiddenResult = walkDirectory(trailingSlashHidden, 3, 30);
+    // Error message uses resolved path (no trailing slash), so compare against hiddenRoot
+    assertEq(trailingHiddenResult.error, "Root directory is hidden (dot-prefixed): " + hiddenRoot, "hidden root with trailing slash rejected");
+    assertEq(trailingHiddenResult.entries.length, 0, "hidden root with trailing slash has 0 entries");
+
+    // Path normalization: excluded root with trailing slash
+    const trailingSlashExcluded = excludedRoot + "/";
+    const trailingExcludedResult = walkDirectory(trailingSlashExcluded, 3, 30);
+    assertEq(trailingExcludedResult.error, "Root directory is excluded: " + excludedRoot, "excluded root with trailing slash rejected");
+    assertEq(trailingExcludedResult.entries.length, 0, "excluded root with trailing slash has 0 entries");
+
+    // Path normalization: dot component (simulates resolvePath returning <cwd>/.)
+    const dotPath = normalRoot + "/.";
+    const dotResult = walkDirectory(dotPath, 3, 30);
+    assertEq(dotResult.error, undefined, "normal root with /. has no error (resolve normalizes it)");
+    assertEq(dotResult.entries.length, 1, "normal root with /. has 1 entry");
 
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -308,51 +334,36 @@ console.log();
 // ─── Fix 2b (cont): Fixture-based end-to-end test ───
 console.log("Fix 2b (cont): End-to-end .ENV.local suppression via walkDirectory");
 {
-  // This tests that getExt() routes .ENV.local to the .env handler,
-  // and the tool's permission overlay blocks reading the file content.
-  // The actual value suppression is done by the .env regex pattern
-  // (which extracts var names, not values).
+  // End-to-end test: call the actual getOutline() on a .ENV.local file
+  // and verify the outline contains var names but NOT secret values.
+  // This exercises the actual production code path (getExt -> getOutline -> .env regex).
   const root = createFixtureDir();
 
   try {
-    // Create a .ENV.local file with secrets
+    const envFilePath = join(root, ".ENV.local");
     writeFile(
-      join(root, ".ENV.local"),
+      envFilePath,
       'API_TOKEN=TOP_SECRET_VALUE\nexport DATABASE_URL=postgres://secret\n',
     );
 
-    // .ENV.local is a hidden file (dot-prefix), so walkDirectory skips it
-    // by default. The security comes from the permission overlay blocking
-    // raw reads, not from walkDirectory including it.
-    // But we can verify getExt recognizes it correctly (already tested above).
+    // Verify getExt routes it to .env handler
+    assertEq(getExt(envFilePath), ".env", "getExt recognizes .ENV.local as .env");
 
-    // Instead, test that a non-hidden .env-like file is handled correctly
-    // Create a regular .env file (not hidden... actually .env is always hidden)
-    // Let's test that the regex pattern for .env extracts var names, not values
-    const envPatterns = REGEX_PATTERNS[".env"];
-    assert(envPatterns !== undefined, ".env patterns exist");
-    assert(envPatterns !== null, ".env patterns are not null");
+    // Call the actual production getOutline() on the file
+    const ext = getExt(envFilePath);
+    const outline = getOutline(envFilePath, ext);
 
-    const [[envRegex]] = envPatterns;
-    const envContent = "API_TOKEN=TOP_SECRET_VALUE\nexport DATABASE_URL=postgres://secret\n";
-    const lines = envContent.split("\n");
+    // Should have an outline
+    assert(outline.outline !== null, ".ENV.local has outline");
+    assert(outline.lineCount >= 2, ".ENV.local has at least 2 lines");
 
-    let varCount = 0;
-    for (const line of lines) {
-      const m = line.match(envRegex);
-      if (m) {
-        varCount++;
-        // Verify we only capture the var name, not the value
-        const isExport = m[0].startsWith("export");
-        if (isExport) {
-          // "export API_TOKEN=..." -> match[1] should be "API_TOKEN"
-          assertEq(m[1], "DATABASE_URL", `export line: match[1] = var name (not value)`);
-        } else {
-          assertEq(m[1], "API_TOKEN", `var line: match[1] = var name (not value)`);
-        }
-      }
-    }
-    assertEq(varCount, 2, "2 env vars extracted (names only, no values)");
+    // Outline should contain variable names
+    assert(outline.outline.includes("API_TOKEN"), "outline contains var name API_TOKEN");
+    assert(outline.outline.includes("DATABASE_URL"), "outline contains var name DATABASE_URL");
+
+    // Outline must NOT contain secret values
+    assert(!outline.outline.includes("TOP_SECRET_VALUE"), "outline does not contain secret value");
+    assert(!outline.outline.includes("postgres://secret"), "outline does not contain secret DB URL");
 
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -15,9 +15,10 @@
  * For installation, configuration, and supported-language tables see README.md.
  */
 
-import { readFileSync, statSync, lstatSync, readdirSync } from "node:fs";
+import { readFileSync, statSync, lstatSync, opendirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -814,6 +815,9 @@ async function outlineWithCtags(filePath) {
  * stopReason is set when traversal stops due to a safety limit.
  */
 function walkDirectory(dirPath, maxDepth, maxFiles) {
+  // Normalize/canonicalize the root path — handles ".", "..", trailing slashes
+  const resolvedRoot = resolve(dirPath);
+
   const entries = [];
   let directoriesVisited = 0;
   let entriesConsidered = 0;
@@ -828,11 +832,22 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
     if (entriesConsidered >= MAX_ENTRIES_CONSIDERED) { if (!stopReason) stopReason = "entry-consideration limit reached"; return; }
     if (totalReadBytes >= MAX_DIR_READ_BYTES) { if (!stopReason) stopReason = "total read bytes limit reached"; return; }
 
-    let items;
+    // Incremental directory iteration — read entries one at a time up to the limit
+    let dirHandle;
     try {
-      items = readdirSync(dir, { withFileTypes: true });
+      dirHandle = opendirSync(dir);
     } catch {
       return;
+    }
+
+    const items = [];
+    try {
+      let entry;
+      while ((entry = dirHandle.readSync()) !== null && items.length < MAX_ENTRIES_CONSIDERED) {
+        items.push(entry);
+      }
+    } finally {
+      try { dirHandle.closeSync(); } catch { /* ignore close errors */ }
     }
 
     directoriesVisited++;
@@ -918,34 +933,34 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
   // Use lstatSync to detect symlinks without following
   let rootStat;
   try {
-    rootStat = lstatSync(dirPath);
+    rootStat = lstatSync(resolvedRoot);
   } catch {
-    return { entries: [], error: `Could not stat directory: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+    return { entries: [], error: `Could not stat directory: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
   // Reject symlink root
   if (rootStat.isSymbolicLink()) {
-    return { entries: [], error: `Root directory is a symbolic link: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+    return { entries: [], error: `Root directory is a symbolic link: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
   // Reject if not a directory
   if (!rootStat.isDirectory()) {
-    return { entries: [], error: `Not a directory: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+    return { entries: [], error: `Not a directory: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
   // Reject hidden root (dot-prefix basename)
-  const normalizedPath = n(dirPath);
+  const normalizedPath = n(resolvedRoot);
   const rootBase = normalizedPath.split("/").pop() || "";
   if (rootBase.startsWith(".")) {
-    return { entries: [], error: `Root directory is hidden (dot-prefixed): ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+    return { entries: [], error: `Root directory is hidden (dot-prefixed): ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
   // Reject excluded root basename
   if (EXCLUDED_DIRS.has(rootBase)) {
-    return { entries: [], error: `Root directory is excluded: ${dirPath}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+    return { entries: [], error: `Root directory is excluded: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
   }
 
-  walk(dirPath, 0);
+  walk(resolvedRoot, 0);
   return { entries, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
 }
 
@@ -1327,4 +1342,4 @@ export default function activate(letta) {
 }
 
 // Named exports for testing
-export { getExt, walkDirectory, REGEX_PATTERNS, MAX_DIR_READ_BYTES, EXCLUDED_DIRS };
+export { getExt, walkDirectory, getOutline, REGEX_PATTERNS, MAX_DIR_READ_BYTES, EXCLUDED_DIRS };
