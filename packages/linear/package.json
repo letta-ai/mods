@@ -1,0 +1,42 @@
+{
+  "name": "@letta-ai/linear",
+  "version": "0.1.0",
+  "description": "Batched Linear issue tools with dry-run previews and stale-state guards for Letta Code.",
+  "author": "overlord-letta",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "linear",
+    "issue-tracking",
+    "project-management"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/linear"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods",
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test ./tests"
+  },
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": [
+      "commands",
+      "tools",
+      "ui.panels"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.28.14"
+    }
+  }
+}
