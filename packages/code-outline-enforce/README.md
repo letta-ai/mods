@@ -4,10 +4,10 @@
 Agents waste context by reading entire large source files when they only need a few functions. A 5,000-line file burns ~15k tokens in a single Read call. System prompt reminders like "use code-outline first" don't work — the agent ignores them.
 
 **The Solution**
-Structural enforcement, not advisory. Two parts:
+Structural enforcement, not advisory. Three parts:
 
 **1. Permission Overlay (the gate)**
-Blocks Read-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on code files over 500 lines (configurable) or 512 KB in two cases:
+Blocks Read-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on supported code and structured text files over 500 lines (configurable) or 512 KB in two cases:
 
 - **No offset/limit at all** — agent would read the entire file blind
 - **Tiny unanchored limit (< 50 lines, no offset)** — agent would crawl from the top in small slices
@@ -21,14 +21,36 @@ Uses `letta.permissions.register`, not `tool_start`. Runs before the approval UI
 **2. Mod Tool: `code_outline` (the outline)**
 Gives the agent a structural outline (functions, classes, methods with line numbers) so it knows where to target its reads. Four backends tried in order:
 
-- **Python ast** — accurate start+end lines for `.py` files (requires Python, usually already installed)
-- **Ctags** (optional) — 50+ languages, best accuracy
-- **Regex patterns** — zero-dependency, covers 25+ languages
+- **Python ast** — accurate start+end lines for `.py` files, plus **call-site references** showing what functions each function calls (requires Python, usually already installed)
+- **Ctags** (optional) — 50+ languages, best accuracy. Expanded kind coverage: `func` (Go), `table`/`view` (SQL), `macro` (C/C++), `selector`/`id` (CSS)
+- **Regex patterns** — zero-dependency, covers 35+ languages/formats
 - **Fallback** — line count + first 15 lines
+
+Supports non-code formats: Markdown headings, JSON keys, YAML keys (inline and block styles), CSV/TSV headers and row counts (simple delimiter heuristic, does not handle quoted commas), TOML sections and keys, XML tags, .env variable names (values never exposed), gitignore patterns, EditorConfig sections.
 
 **No dependencies required.** Works out of the box. Python and ctags are optional enhancements.
 
-The permission overlay uses **regex/fallback only** (start lines, no end ranges) for its auto-injected denial outlines — it must work synchronously with zero external dependencies. The explicit `code_outline` tool uses all four backends including AST and ctags.
+**3. Mod Tool: `code_outline_dir` (directory outline)**
+Gives the agent a structural overview of an entire directory tree, showing file names and their top-level symbols. Parameters:
+
+- `dir_path` (required) — absolute or workspace-relative path
+- `depth` (optional, default 3, max 10) — maximum recursion depth
+- `max_files` (optional, default 30, max 100) — maximum files to include
+
+Safety bounds:
+- 8,000 character output cap
+- 5,000 directory visit limit
+- 20,000 entry consideration limit
+- 5 symbols per file (with "+N more symbols" marker)
+- Symbol names truncated at 80 characters
+- Excluded directories: .git, node_modules, __pycache__, .venv, venv, build, dist, coverage, .next, target, bin, obj
+- Hidden files/dirs (dot prefix) and symbolic links are skipped
+- Unknown/binary extensions are ignored (only supported extensions are outlined)
+- Note: `.env`, `.gitignore`, and `.editorconfig` are supported by `code_outline` (single-file mode) but not by `code_outline_dir` (directory mode skips dot-prefixed files)
+- Deterministic sort order (case-insensitive, case-stable tiebreaker)
+- Stop reason and counters reported in truncation suffix
+
+The permission overlay enforces on all supported extensions (code and structured text files). The overlay uses **regex/fallback only** (start lines, no end ranges) for its auto-injected denial outlines — it must work synchronously with zero external dependencies. The explicit `code_outline` tool uses all four backends including AST and ctags.
 
 ## Supported Languages (zero dependencies)
 

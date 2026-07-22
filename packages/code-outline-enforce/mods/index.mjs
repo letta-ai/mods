@@ -1,22 +1,24 @@
 /**
- * Code-Outline Enforcement Mod v4
+ * Code-Outline Enforcement Mod v0.3.0
  *
- * Two capabilities:
+ * Three capabilities:
  * 1. Permission overlay: blocks large reads on code files without offset/limit
- * 2. Mod tool "code_outline": multi-language structural outline
+ * 2. Mod tool "code_outline": multi-language structural outline (code + non-code)
+ * 3. Mod tool "code_outline_dir": directory-level structural outline
  *
  * Outline backends (tried in order):
- *   - Python ast for .py files (accurate start+end lines, requires Python)
+ *   - Python ast for .py files (accurate start+end lines, call-site refs, requires Python)
  *   - Universal Ctags for 50+ languages (start line only, optional)
- *   - Regex patterns for 25+ languages (start line only, zero dependencies)
+ *   - Regex patterns for 35+ languages/formats (start line only, zero dependencies)
  *   - Fallback: line count + first 15 lines
  *
  * For installation, configuration, and supported-language tables see README.md.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, lstatSync, opendirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -27,6 +29,34 @@ const BYTE_THRESHOLD = Math.max(1, parseInt(process.env.LETTA_OUTLINE_BYTE_THRES
 const MAX_OUTLINE_ENTRIES = 40;
 const MAX_OUTLINE_CHARS = 3000;
 const MIN_UNANCHORED_LIMIT = Math.max(1, parseInt(process.env.LETTA_OUTLINE_MIN_UNANCHORED_LIMIT)) || 50;
+
+// --- Directory outline bounds ---
+
+const MAX_DIR_OUTLINE_CHARS = 8000;
+const MAX_DIR_DEPTH = 10;
+const MAX_DIR_FILES = 100;
+const MAX_DIRS_VISITED = 5000;
+const MAX_ENTRIES_CONSIDERED = 20000;
+const MAX_SYMBOL_LENGTH = 80;
+const MAX_SYMBOLS_PER_FILE = 5;
+const MAX_DIR_READ_BYTES = 10 * 1024 * 1024; // 10MB total file read limit for directory outline
+
+const EXCLUDED_DIRS = new Set([
+  ".git", "node_modules", "__pycache__", ".venv", "venv",
+  "build", "dist", "coverage", ".next", "target", "bin", "obj",
+]);
+
+// --- Deterministic sort comparator (locale-independent) ---
+
+function compareEntryNames(a, b) {
+  const al = a.name.toLowerCase();
+  const bl = b.name.toLowerCase();
+  if (al < bl) return -1;
+  if (al > bl) return 1;
+  if (a.name < b.name) return -1;
+  if (a.name > b.name) return 1;
+  return 0;
+}
 
 // --- Read-tool family normalization ---
 
@@ -46,7 +76,7 @@ const READ_TOOL_NAMES = new Set([
   "readlsp",
 ]);
 
-// --- Supported code file extensions ---
+// --- Supported code + non-code file extensions ---
 
 const CODE_EXTS = new Set([
   ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
@@ -55,6 +85,15 @@ const CODE_EXTS = new Set([
   ".html", ".htm", ".css", ".scss", ".sass", ".less",
   ".sh", ".bash", ".zsh", ".ps1", ".psm1",
   ".sql", ".dart", ".vue", ".svelte",
+  ".md", ".markdown",
+  ".json",
+  ".yml", ".yaml",
+  ".csv", ".tsv",
+  ".toml",
+  ".xml",
+  ".env",
+  ".gitignore",
+  ".editorconfig",
   "dockerfile",
 ]);
 
@@ -276,6 +315,52 @@ const REGEX_PATTERNS = {
     [/^\s*(HEALTHCHECK)\s/, "healthcheck"],
     [/^\s*(SHELL)\s/, "shell"],
   ],
+
+  // --- Non-code file formats ---
+
+  ".md": [
+    [/^#{1,6}\s+(.+)/, "heading"],
+    [/^```(\w*)/, "codeblock"],
+  ],
+  ".markdown": null,
+
+  ".json": [
+    [/^\s*"([^"]+)"\s*:/, "key"],
+  ],
+
+  ".yml": [
+    [/^\s*(\w[\w\s.-]*?):\s+\S/, "key"],
+    [/^\s*(\w[\w\s.-]*?):\s*$/, "key"],
+    [/^\s*-\s+(\w[\w\s.-]*?):\s+\S/, "listKey"],
+    [/^\s*-\s+(\w[\w\s.-]*?):\s*$/, "listKey"],
+  ],
+  ".yaml": null,
+
+  ".csv": null,
+  ".tsv": null,
+
+  ".toml": [
+    [/^\[(.+)\]/, "section"],
+    [/^\s*(\w+)\s*=\s*/, "key"],
+  ],
+
+  ".xml": [
+    [/^\s*<(\w+)[^>]*>/, "tag"],
+    [/^\s*<!--\s*(.+?)\s*-->/, "comment"],
+  ],
+
+  ".env": [
+    [/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/, "var"],
+  ],
+
+  ".gitignore": [
+    [/^(\S.*)$/, "pattern"],
+  ],
+
+  ".editorconfig": [
+    [/^\[(.+)\]/, "section"],
+    [/^\s*(\w+)\s*=/, "property"],
+  ],
 };
 
 // Extension alias map
@@ -288,6 +373,9 @@ const EXT_ALIASES = {
   ".bash": ".sh", ".zsh": ".sh",
   ".psm1": ".ps1",
   ".less": ".css",
+  ".markdown": ".md",
+  ".yaml": ".yml",
+  ".tsv": ".csv",
 };
 
 // --- Helpers ---
@@ -301,6 +389,12 @@ function getExt(filePath) {
   const basename = normalized.split("/").pop() || "";
   // Dockerfile (case-insensitive, with optional .suffix)
   if (/^dockerfile(?:\.|$)/i.test(basename)) return "dockerfile";
+  // .env files (exact name or .env.*)
+  if (/^\.env(?:\..+)?$/i.test(basename)) return ".env";
+  // .gitignore (exact name)
+  if (basename === ".gitignore") return ".gitignore";
+  // .editorconfig (exact name)
+  if (basename === ".editorconfig") return ".editorconfig";
   const dot = basename.lastIndexOf(".");
   if (dot === -1) return "";
   return basename.slice(dot).toLowerCase();
@@ -435,6 +529,43 @@ function buildCappedOutline(outlineLines, lineCount) {
 }
 
 /**
+ * Centralized safe .env outline builder.
+ * Extracts variable names only — never returns raw values.
+ * Used by both getOutline() (permission overlay) and the explicit code_outline tool.
+ */
+function buildEnvOutlineFromBuffer(buf, lineCount) {
+  const content = buf.toString("utf-8");
+  const lines = content.split("\n");
+  const seen = new Set();
+  const varNames = [];
+  const envRe = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Skip comments and blank lines
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+    const m = trimmed.match(envRe);
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      // Cap variable name length defensively
+      const name = m[1].length > 80 ? m[1].slice(0, 77) + "..." : m[1];
+      varNames.push(name);
+      if (varNames.length >= 40) break;
+    }
+  }
+
+  if (varNames.length > 0) {
+    const capNote = varNames.length >= 40 ? " (scan stopped at 40 var limit)" : "";
+    const shown = varNames.slice(0, 20).join(", ");
+    let outline = `  L1: ${varNames.length} env vars${capNote}: ${shown}`;
+    if (varNames.length > 20) outline += ` (+${varNames.length - 20} more)`;
+    return buildCappedOutline(outline, lineCount);
+  }
+  // No variables recognized — safe structural message, never raw content
+  return buildCappedOutline("No environment variable names recognized.", lineCount);
+}
+
+/**
  * Get or generate a cached outline for a file path.
  * Reads the file once per cache miss: stats for mtime+size, reads buffer,
  * counts lines from buffer, decodes for regex.
@@ -493,6 +624,41 @@ function getOutline(filePath, ext) {
       }
     } catch {
       // regex parse error — fall through to fallback
+    }
+  }
+
+  // Special: for CSV/TSV files, add a row count summary if no regex match
+  if (!outline && (ext === ".csv" || ext === ".tsv")) {
+    try {
+      const content = buf.toString("utf-8");
+      const lines = content.trim().split("\n");
+      const sep = ext === ".tsv" ? "\t" : ",";
+      if (lines.length >= 2) {
+        const rowCount = lines.length - 1;
+        const colCount = lines[0].split(sep).length;
+        outline = `  L1: columns ${colCount} cols\n  L2: rows ${rowCount} data rows`;
+        const headers = lines[0].split(sep).map(h => h.trim());
+        if (headers.length <= 15) {
+          outline += "\n  L1: headers " + headers.join(", ");
+        }
+        outline = buildCappedOutline(outline, lineCount);
+      } else if (lines.length === 1 && lines[0].trim()) {
+        // Header-only CSV/TSV
+        const headers = lines[0].split(sep).map(h => h.trim());
+        outline = `  L1: headers ${headers.length} cols: ${headers.slice(0, 15).join(", ")}`;
+        outline = buildCappedOutline(outline, lineCount);
+      }
+    } catch {
+      // fall through to fallback
+    }
+  }
+
+  // Special: .env files must never use the raw content fallback (security)
+  if (!outline && ext === ".env") {
+    try {
+      outline = buildEnvOutlineFromBuffer(buf, lineCount);
+    } catch {
+      outline = buildCappedOutline("No environment variable names recognized.", lineCount);
     }
   }
 
@@ -577,8 +743,37 @@ async function outlineWithPython(filePath) {
   const py = await findPython();
   if (!py) throw new Error("python not found");
 
-  const script =
-    "import ast,sys;f=open(sys.argv[1],encoding='utf-8');src=f.read();f.close();tree=ast.parse(src);out=[];[out.append('  L{}-{}: {} {}'.format(n.lineno,getattr(n,'end_lineno',n.lineno),'class' if isinstance(n,ast.ClassDef) else 'def',n.name)) for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))];print(chr(10).join(out))";
+  // Extended Python script that extracts function/class definitions and their calls
+  const script = [
+    'import ast,sys;f=open(sys.argv[1],encoding="utf-8");src=f.read();f.close();tree=ast.parse(src);out=[]',
+    'class V(ast.NodeVisitor):',
+    '  def _calls(self,body):',
+    '    c=set()',
+    '    stack=list(body if isinstance(body,list) else [body])',
+    '    while stack:',
+    '      n=stack.pop()',
+    '      if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):continue',
+    '      if isinstance(n,ast.Call):',
+    '        f=n.func',
+    '        if isinstance(f,ast.Name) and not f.id.startswith("_"):c.add(f.id)',
+    '        elif isinstance(f,ast.Attribute) and not f.attr.startswith("_"):c.add(f.attr)',
+    '      for child in ast.iter_child_nodes(n):stack.append(child)',
+    '    return sorted(c)[:10]',
+    '  def visit_FunctionDef(self,n):',
+    '    c=self._calls(n.body)',
+    '    s="  L{}-{}: def {}".format(n.lineno,getattr(n,"end_lineno",n.lineno),n.name)',
+    '    if c:s+=" -> "+", ".join(c)',
+    '    out.append(s);self.generic_visit(n)',
+    '  def visit_AsyncFunctionDef(self,n):',
+    '    c=self._calls(n.body)',
+    '    s="  L{}-{}: async def {}".format(n.lineno,getattr(n,"end_lineno",n.lineno),n.name)',
+    '    if c:s+=" -> "+", ".join(c)',
+    '    out.append(s);self.generic_visit(n)',
+    '  def visit_ClassDef(self,n):',
+    '    out.append("  L{}-{}: class {}".format(n.lineno,getattr(n,"end_lineno",n.lineno),n.name))',
+    '    self.generic_visit(n)',
+    'V().visit(tree);print(chr(10).join(out))',
+  ].join("\n");
 
   const { stdout } = await execFileAsync(py, ["-c", script, filePath], {
     timeout: 5000,
@@ -596,8 +791,9 @@ async function outlineWithCtags(filePath) {
   );
 
   const USEFUL_KINDS = new Set([
-    "class", "method", "function", "interface", "struct", "enum",
-    "typedef", "namespace", "module", "constructor", "property",
+    "class", "method", "function", "func", "interface", "struct",
+    "enum", "typedef", "namespace", "module", "constructor", "property",
+    "table", "view", "macro", "selector", "id",
   ]);
 
   const tags = stdout
@@ -609,6 +805,168 @@ async function outlineWithCtags(filePath) {
     .sort((a, b) => a.line - b.line);
 
   return tags.map((t) => `  L${t.line}: ${t.kind} ${t.name}`).join("\n");
+}
+
+// --- Directory walker for code_outline_dir ---
+
+/**
+ * Recursively walk a directory and collect file outlines.
+ * Returns array of { path, isDir, depth, outline?, lineCount?, stopReason? }.
+ * stopReason is set when traversal stops due to a safety limit.
+ */
+function walkDirectory(dirPath, maxDepth, maxFiles) {
+  // Normalize/canonicalize the root path — handles ".", "..", trailing slashes
+  const resolvedRoot = resolve(dirPath);
+
+  const entries = [];
+  let directoriesVisited = 0;
+  let entriesConsidered = 0;
+  let filesEmitted = 0;
+  let totalReadBytes = 0;
+  let stopReason = null;
+
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    if (filesEmitted >= maxFiles) { if (!stopReason) stopReason = "requested max_files reached"; return; }
+    if (directoriesVisited >= MAX_DIRS_VISITED) { if (!stopReason) stopReason = "directory-visit limit reached"; return; }
+    if (entriesConsidered >= MAX_ENTRIES_CONSIDERED) { if (!stopReason) stopReason = "entry-consideration limit reached"; return; }
+    if (totalReadBytes >= MAX_DIR_READ_BYTES) { if (!stopReason) stopReason = "total read bytes limit reached"; return; }
+
+    // Incremental directory iteration — read entries one at a time up to the limit
+    let dirHandle;
+    try {
+      dirHandle = opendirSync(dir);
+    } catch {
+      return;
+    }
+
+    const items = [];
+    try {
+      let entry;
+      while (
+        entriesConsidered < MAX_ENTRIES_CONSIDERED &&
+        (entry = dirHandle.readSync()) !== null
+      ) {
+        items.push(entry);
+        entriesConsidered++;
+      }
+      if (entriesConsidered >= MAX_ENTRIES_CONSIDERED && !stopReason) {
+        stopReason = "entry-consideration limit reached";
+      }
+    } finally {
+      try { dirHandle.closeSync(); } catch { /* ignore close errors */ }
+    }
+
+    directoriesVisited++;
+
+    // Sort deterministically
+    items.sort(compareEntryNames);
+
+    for (const item of items) {
+      if (filesEmitted >= maxFiles) { if (!stopReason) stopReason = "requested max_files reached"; break; }
+
+      // Skip symbolic links
+      if (item.isSymbolicLink()) continue;
+
+      // Skip hidden files/dirs (dot prefix)
+      if (item.name.startsWith(".")) continue;
+
+      const fullPath = n(dir + "/" + item.name);
+
+      if (item.isDirectory()) {
+        // Skip excluded directories by exact basename
+        if (EXCLUDED_DIRS.has(item.name)) continue;
+
+        entries.push({ path: fullPath, isDir: true, depth });
+        walk(fullPath, depth + 1);
+      } else if (item.isFile()) {
+        const ext = getExt(fullPath);
+        if (!CODE_EXTS.has(ext)) continue;
+
+        // Check byte budget before reading — stat first, skip if over budget
+        let fileSize = 0;
+        try {
+          fileSize = statSync(fullPath).size;
+        } catch {
+          continue;
+        }
+        if (totalReadBytes + fileSize > MAX_DIR_READ_BYTES) {
+          if (!stopReason) stopReason = "total read bytes limit reached";
+          // Skip this file (don't terminate the walk) — other files may still fit
+          continue;
+        }
+
+        const cached = getOutline(fullPath, ext);
+        totalReadBytes += cached.bytes || 0;
+        // Extract at most MAX_SYMBOLS_PER_FILE symbols for orientation
+        let symbol = null;
+        if (cached.outline) {
+          const symbolLines = cached.outline.split("\n");
+          const shown = [];
+          for (const line of symbolLines) {
+            const trimmed = line.replace(/^  L\d+: /, "").trim();
+            if (trimmed && !trimmed.startsWith("...")) {
+              if (trimmed.length > MAX_SYMBOL_LENGTH) {
+                shown.push(trimmed.slice(0, MAX_SYMBOL_LENGTH) + "...");
+              } else {
+                shown.push(trimmed);
+              }
+              if (shown.length >= MAX_SYMBOLS_PER_FILE) {
+                const remaining = symbolLines.length - MAX_SYMBOLS_PER_FILE;
+                if (remaining > 0) {
+                  shown.push(`\u2026 +${remaining} more symbols`);
+                }
+                break;
+              }
+            }
+          }
+          symbol = shown.join("; ");
+        }
+        filesEmitted++;
+        entries.push({
+          path: fullPath,
+          isDir: false,
+          depth,
+          symbol,
+          lineCount: cached.lineCount,
+        });
+      }
+    }
+  }
+
+  // Validate root before traversal
+  // Use lstatSync to detect symlinks without following
+  let rootStat;
+  try {
+    rootStat = lstatSync(resolvedRoot);
+  } catch {
+    return { entries: [], error: `Could not stat directory: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject symlink root
+  if (rootStat.isSymbolicLink()) {
+    return { entries: [], error: `Root directory is a symbolic link: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject if not a directory
+  if (!rootStat.isDirectory()) {
+    return { entries: [], error: `Not a directory: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject hidden root (dot-prefix basename)
+  const normalizedPath = n(resolvedRoot);
+  const rootBase = normalizedPath.split("/").pop() || "";
+  if (rootBase.startsWith(".")) {
+    return { entries: [], error: `Root directory is hidden (dot-prefixed): ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  // Reject excluded root basename
+  if (EXCLUDED_DIRS.has(rootBase)) {
+    return { entries: [], error: `Root directory is excluded: ${resolvedRoot}`, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
+  }
+
+  walk(resolvedRoot, 0);
+  return { entries, stopReason, directoriesVisited, entriesConsidered, filesEmitted };
 }
 
 // --- Mod activation ---
@@ -669,7 +1027,7 @@ export default function activate(letta) {
 
   // 2) Mod tool: code_outline — multi-language structural outline
   if (letta.capabilities.tools) {
-    disposers.push(
+      disposers.push(
       letta.tools.register({
         name: "code_outline",
         description:
@@ -678,13 +1036,14 @@ export default function activate(letta) {
           "right line ranges. Supported languages (zero dependencies): Python, " +
           "JavaScript, TypeScript, Go, Rust, C, C++, Java, C#, Ruby, PHP, Swift, " +
           "Kotlin, Scala, Lua, HTML, CSS/SCSS, Shell, PowerShell, SQL, Dart, Vue, " +
-          "Svelte, Dockerfile. No dependencies required.",
+          "Svelte, Dockerfile, Markdown, JSON, YAML, CSV, TOML, XML, env, gitignore. " +
+          "No dependencies required.",
         parameters: {
           type: "object",
           properties: {
             file_path: {
               type: "string",
-              description: "Absolute or workspace-relative path to the source file to outline.",
+              description: "Absolute or workspace-relative path to the file to outline.",
             },
           },
           required: ["file_path"],
@@ -714,6 +1073,12 @@ export default function activate(letta) {
           }
           const lineCount = countLinesFromBuffer(buf);
 
+          // .env files use centralized safe handler (security — never expose values)
+          if (ext === ".env") {
+            const safeOutline = buildEnvOutlineFromBuffer(buf, lineCount);
+            return `## ${filePath} (${lineCount} lines)\n\n${safeOutline}`;
+          }
+
           let outline = "";
 
           // Python ast for .py files (accurate start+end lines)
@@ -724,8 +1089,15 @@ export default function activate(letta) {
                 outline = buildCappedOutline(outline.split("\n"), lineCount);
                 return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
               }
-            } catch {
-              // fall through
+            } catch (error) {
+              try {
+                letta.diagnostics.report({
+                  severity: "warning",
+                  message: `code_outline Python AST failed: ${error instanceof Error ? error.message : String(error)}`,
+                });
+              } catch {
+                // diagnostics.report not available
+              }
             }
           }
 
@@ -753,6 +1125,14 @@ export default function activate(letta) {
             return `## ${filePath} (${lineCount} lines)\n\n${outline}`;
           }
 
+          // Special: CSV/TSV — getOutline has row count logic
+          if (ext === ".csv" || ext === ".tsv") {
+            const cached = getOutline(filePath, ext);
+            if (cached.outline && !cached.outline.startsWith("File has ")) {
+              return `## ${filePath} (${lineCount} lines)\n\n${cached.outline}`;
+            }
+          }
+
           // Fallback — capped
           try {
             const content = readFileSync(filePath, "utf-8");
@@ -777,7 +1157,194 @@ export default function activate(letta) {
     );
   }
 
+  // 3) Mod tool: code_outline_dir — directory-level structural outline
+  if (letta.capabilities.tools) {
+      disposers.push(
+      letta.tools.register({
+        name: "code_outline_dir",
+        description:
+          "Get a structural outline of an entire directory tree, showing file names " +
+          "and their top-level symbols. Use when exploring an unfamiliar codebase to " +
+          "understand the module structure before diving into specific files.",
+        parameters: {
+          type: "object",
+          properties: {
+            dir_path: {
+              type: "string",
+              description: "Absolute or workspace-relative path to the directory to outline.",
+            },
+            depth: {
+              type: "integer",
+              minimum: 1,
+              maximum: 10,
+              default: 3,
+              description: "Maximum recursion depth (default 3, max 10).",
+            },
+            max_files: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+              description: "Maximum files to include (default 30, max 100).",
+            },
+          },
+          required: ["dir_path"],
+          additionalProperties: false,
+        },
+        requiresApproval: false,
+        parallelSafe: false,
+        async run(ctx) {
+          const inputPath = ctx.args.dir_path;
+          if (typeof inputPath !== "string" || !inputPath.trim()) {
+            return { status: "error", content: "dir_path is required" };
+          }
+
+          const dirPath = resolvePath(inputPath, ctx);
+          if (!dirPath) {
+            return { status: "error", content: `Could not resolve directory: ${inputPath}` };
+          }
+
+          // Strict argument validation
+          let maxDepth = 3;
+          if (ctx.args.depth !== undefined && ctx.args.depth !== null) {
+            const d = ctx.args.depth;
+            if (typeof d !== "number" || !Number.isFinite(d) || !Number.isInteger(d)) {
+              return { status: "error", content: "depth must be a finite integer" };
+            }
+            if (d < 1 || d > 10) {
+              return { status: "error", content: "depth must be between 1 and 10" };
+            }
+            maxDepth = d;
+          }
+
+          let maxFiles = 30;
+          if (ctx.args.max_files !== undefined && ctx.args.max_files !== null) {
+            const f = ctx.args.max_files;
+            if (typeof f !== "number" || !Number.isFinite(f) || !Number.isInteger(f)) {
+              return { status: "error", content: "max_files must be a finite integer" };
+            }
+            if (f < 1 || f > 100) {
+              return { status: "error", content: "max_files must be between 1 and 100" };
+            }
+            maxFiles = f;
+          }
+
+          const { entries, error, stopReason, directoriesVisited, entriesConsidered, filesEmitted } = walkDirectory(dirPath, maxDepth, maxFiles);
+
+          if (error) {
+            return { status: "error", content: error };
+          }
+
+          if (entries.length === 0) {
+            return { status: "error", content: `Directory is empty or could not be read: ${dirPath}` };
+          }
+
+          // Build truncation suffix first so we know its exact length
+          const truncParts = [];
+          if (stopReason) truncParts.push(stopReason);
+          if (stopReason !== "requested max_files reached" && filesEmitted >= maxFiles) {
+            truncParts.push("requested max_files reached");
+          }
+          let truncSuffix = "";
+          if (truncParts.length > 0) {
+            truncSuffix = `\n\u2026 truncated: ${truncParts.join("; ")} (${filesEmitted} files emitted, ${directoriesVisited} directories visited, ${entriesConsidered} entries considered)`;
+          }
+
+          const reservedSuffixLen = truncSuffix.length;
+          const headerLen = `## Directory: ${dirPath}\n\n`.length;
+          const budget = MAX_DIR_OUTLINE_CHARS - headerLen - reservedSuffixLen;
+
+          const lines = [];
+          let dirCount = 0;
+          let fileCount = 0;
+          let currentLen = 0;
+          let charLimitHit = false;
+
+          for (const entry of entries) {
+            const indent = "  ".repeat(entry.depth);
+            const name = entry.path.split("/").pop();
+            let line;
+
+            const isDir = entry.isDir;
+            if (isDir) {
+              line = `${indent}${name}/`;
+            } else {
+              const info = [];
+              if (entry.symbol) info.push(entry.symbol);
+              if (entry.lineCount) info.push(`${entry.lineCount} lines`);
+              const suffix = info.length > 0 ? `  (${info.join(", ")})` : "";
+              line = `${indent}${name}${suffix}`;
+            }
+
+            // Truncate line length for safety
+            if (line.length > 200) {
+              line = line.slice(0, 197) + "...";
+            }
+
+            // Check character budget before accepting
+            if (currentLen + line.length + 1 > budget) {
+              charLimitHit = true;
+              break;
+            }
+
+            // Only now accept the entry and increment counters
+            lines.push(line);
+            currentLen += line.length + 1; // +1 for newline
+            if (isDir) {
+              dirCount++;
+            } else {
+              fileCount++;
+            }
+          }
+
+          if (charLimitHit) {
+            // Recompute suffix from final accepted counts
+            const capSuffix = `\n\u2026 truncated: output-character limit reached (${fileCount} files emitted, ${dirCount} directories visited, ${entriesConsidered} entries considered)`;
+            const result = `## Directory: ${dirPath}\n\n${lines.join("\n")}${capSuffix}`;
+            if (result.length <= MAX_DIR_OUTLINE_CHARS) {
+              return result;
+            }
+            // Remove lines until the suffix fits, tracking type
+            while (lines.length > 0) {
+              const last = lines.pop();
+              currentLen -= last.length + 1;
+              // Track what type was removed so counters stay accurate
+              const removedIsDir = last.endsWith("/");
+              if (removedIsDir) {
+                dirCount--;
+              } else {
+                fileCount--;
+              }
+              const updatedSuffix = `\n\u2026 truncated: output-character limit reached (${fileCount} files emitted, ${dirCount} directories visited, ${entriesConsidered} entries considered)`;
+              const testResult = `## Directory: ${dirPath}\n\n${lines.join("\n")}${updatedSuffix}`;
+              if (testResult.length <= MAX_DIR_OUTLINE_CHARS) {
+                return testResult;
+              }
+            }
+            // Fallback: minimal output
+            return `## Directory: ${dirPath}\n\n(too many entries to display)\n\u2026 truncated: output-character limit reached`;
+          }
+
+          let result = `## Directory: ${dirPath}\n\n${lines.join("\n")}`;
+          if (truncSuffix) {
+            result += truncSuffix;
+          }
+
+          // Ensure total output fits within cap
+          if (result.length > MAX_DIR_OUTLINE_CHARS) {
+            result = result.slice(0, MAX_DIR_OUTLINE_CHARS - 3) + "...";
+          }
+
+          return result;
+        },
+      }),
+    );
+  }
+
   return () => {
     for (const dispose of disposers.reverse()) dispose();
   };
 }
+
+// Named exports for testing
+export { getExt, walkDirectory, getOutline, REGEX_PATTERNS, MAX_DIR_READ_BYTES, EXCLUDED_DIRS };

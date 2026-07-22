@@ -9,7 +9,7 @@ description: "Permission overlay + outline tool that forces agents to structure 
 
 Use this mod when working with large source code files where full-file reads waste context tokens. The mod is especially valuable in codebases with files over 500 lines where an agent might otherwise read entire files to find a single function or class.
 
-This package provides a permission overlay and a model-callable outline tool. The overlay blocks `Read` on large code files unless offset/limit is specified, and auto-injects the outline into the denial message. The `code_outline` tool is available for explicit use.
+This package provides a permission overlay and two model-callable tools (`code_outline` and `code_outline_dir`). The overlay blocks `Read` on large code files unless offset/limit is specified, and auto-injects the outline into the denial message. The `code_outline` and `code_outline_dir` tools are available for explicit use.
 
 ## Behavioral contract
 
@@ -28,16 +28,34 @@ The agent should never attempt to bypass the permission overlay by reading witho
 Model-callable structural outline tool. Accepts a `file_path` parameter and returns functions, classes, methods, and other structural elements with line numbers.
 
 Backends tried in order:
-- Python `ast` for `.py` files (accurate start+end lines)
-- Universal Ctags (optional, 50+ languages)
-- Regex patterns (25+ languages, zero dependencies)
+- Python `ast` for `.py` files (accurate start+end lines, plus call-site references showing up to 10 bare-name and attribute calls at the function's own scope level, excluding nested definitions)
+- Universal Ctags (optional, 50+ languages, expanded kind coverage: `func` for Go, `table`/`view` for SQL, `macro` for C/C++, `selector`/`id` for CSS)
+- Regex patterns (35+ languages/formats, zero dependencies)
 - Fallback (line count + first 15 lines)
+
+Supports non-code formats: Markdown headings, JSON keys, YAML keys, CSV headers, TOML sections, XML tags, .env vars, gitignore patterns, EditorConfig sections.
+
+### `code_outline_dir`
+
+Model-callable directory outline tool. Accepts `dir_path` (required), `depth` (default 3, max 10), and `max_files` (default 30, max 100). Returns an indented directory tree with file symbols and safety-truncation markers.
+
+Safety bounds:
+- 8,000 character output cap
+- 5,000 directory visit limit
+- 20,000 entry consideration limit
+- 5 symbols per file (with "+N more symbols" marker)
+- Excluded directories: .git, node_modules, __pycache__, .venv, venv, build, dist, coverage, .next, target, bin, obj
+- Hidden files/dirs (dot prefix) and symbolic links are skipped
+- Unknown/binary extensions are ignored (only CODE_EXTS extensions are outlined)
+- Note: `.env`, `.gitignore`, and `.editorconfig` are supported by `code_outline` (single-file mode) but not by `code_outline_dir` (directory mode skips dot-prefixed files)
+- Deterministic sort order
+- Stop reason and counters reported in truncation suffix
 
 ## Permission invariants
 
 The permission overlay:
 
-- **Blocks** `Read`-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on code files (extensions listed in CODE_EXTS) above LINE_THRESHOLD (default 500) or BYTE_THRESHOLD (default 512 KB) when:
+- **Blocks** `Read`-family tools (Read, read_file, ReadFile, ReadFileGemini, ReadLSP, ReadFileCodex) on supported code and structured text files (extensions listed in CODE_EXTS, which includes code languages plus Markdown, JSON, YAML, CSV, TOML, XML, .env, .gitignore, .editorconfig) above LINE_THRESHOLD (default 500) or BYTE_THRESHOLD (default 512 KB) when:
   - No offset or limit is provided (blind full-file read)
   - A tiny unanchored limit (< MIN_UNANCHORED_LIMIT, default 50) is provided without an offset (sequential crawl from the top)
 - **Allows** reads with a valid positive offset (anchored to an outline location) even with a small limit — the agent knows where it's going.
