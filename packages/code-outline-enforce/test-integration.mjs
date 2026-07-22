@@ -25,6 +25,25 @@ import mod, {
 let passed = 0;
 let failed = 0;
 
+// --- Mock Letta API for tool-boundary tests ---
+const registeredTools = new Map();
+const mockLetta = {
+  capabilities: { tools: true, permissions: true },
+  tools: {
+    register(def) {
+      registeredTools.set(def.name, def);
+      return () => registeredTools.delete(def.name);
+    },
+  },
+  permissions: { register() { return () => {}; } },
+  diagnostics: { report() {} },
+};
+
+// Activate the mod with the mock API
+mod(mockLetta);
+const codeOutlineTool = registeredTools.get("code_outline");
+const codeOutlineDirTool = registeredTools.get("code_outline_dir");
+
 function assert(condition, name) {
   if (condition) {
     passed++;
@@ -165,6 +184,89 @@ console.log("Fix 2a: Root directory validation (hidden/excluded/symlink)");
     const dotResult = walkDirectory(dotPath, 3, 30);
     assertEq(dotResult.error, undefined, "normal root with /. has no error (resolve normalizes it)");
     assertEq(dotResult.entries.length, 1, "normal root with /. has 1 entry");
+
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+console.log();
+
+// ─── Fix 2a-tool: Tool-boundary root validation via registered code_outline_dir ───
+console.log("Fix 2a-tool: Root validation via registered code_outline_dir tool");
+{
+  const root = createFixtureDir();
+
+  try {
+    // Hidden root
+    const hiddenRoot = join(root, ".hidden-root");
+    mkdir(hiddenRoot);
+    writeFile(join(hiddenRoot, "visible.js"), "function INSIDE_HIDDEN_ROOT() {}");
+    const hiddenResult = await codeOutlineDirTool.run({
+      args: { dir_path: hiddenRoot, depth: 3, max_files: 30 },
+    });
+    assertEq(hiddenResult.status, "error", "hidden root tool returns error status");
+    assertMatch(hiddenResult.content, /hidden/, "hidden root tool error mentions hidden");
+
+    // Excluded root
+    const excludedRoot = join(root, "node_modules");
+    mkdir(excludedRoot);
+    writeFile(join(excludedRoot, "package.js"), "function INSIDE_EXCLUDED_ROOT() {}");
+    const excludedResult = await codeOutlineDirTool.run({
+      args: { dir_path: excludedRoot, depth: 3, max_files: 30 },
+    });
+    assertEq(excludedResult.status, "error", "excluded root tool returns error status");
+    assertMatch(excludedResult.content, /excluded/, "excluded root tool error mentions excluded");
+
+    // Normal directory (should produce a string output, not an error object)
+    const normalRoot = join(root, "normal-root");
+    mkdir(normalRoot);
+    writeFile(join(normalRoot, "test.js"), "function test() {}");
+    const normalResult = await codeOutlineDirTool.run({
+      args: { dir_path: normalRoot, depth: 3, max_files: 30 },
+    });
+    assertEq(typeof normalResult, "string", "normal root tool returns a string");
+    assert(normalResult.includes("test.js"), "normal root tool output includes file name");
+
+    // Non-existent directory
+    const missingResult = await codeOutlineDirTool.run({
+      args: { dir_path: join(root, "does-not-exist"), depth: 3, max_files: 30 },
+    });
+    assertEq(missingResult.status, "error", "missing root tool returns error status");
+
+    // File path (not a directory)
+    const filePath = join(root, "not-a-dir.js");
+    writeFile(filePath, "// just a file");
+    const fileResult = await codeOutlineDirTool.run({
+      args: { dir_path: filePath, depth: 3, max_files: 30 },
+    });
+    assertEq(fileResult.status, "error", "file path tool returns error status");
+
+    // Path normalization: trailing slash hidden root
+    const trailingHiddenResult = await codeOutlineDirTool.run({
+      args: { dir_path: hiddenRoot + "/", depth: 3, max_files: 30 },
+    });
+    assertEq(trailingHiddenResult.status, "error", "trailing slash hidden root tool returns error");
+
+    // Path normalization: trailing slash excluded root
+    const trailingExcludedResult = await codeOutlineDirTool.run({
+      args: { dir_path: excludedRoot + "/", depth: 3, max_files: 30 },
+    });
+    assertEq(trailingExcludedResult.status, "error", "trailing slash excluded root tool returns error");
+
+    // Relative path with workingDirectory: dir_path "." should resolve to normalRoot
+    const dotResult = await codeOutlineDirTool.run({
+      args: { dir_path: ".", depth: 3, max_files: 30 },
+      workingDirectory: normalRoot,
+    });
+    assertEq(typeof dotResult, "string", 'dir_path "." with workingDirectory returns a string');
+    assert(dotResult.includes("test.js"), 'dir_path "." output includes test.js');
+
+    // Trailing slash normal root (relative with workingDirectory)
+    const trailingNormalResult = await codeOutlineDirTool.run({
+      args: { dir_path: normalRoot + "/", depth: 3, max_files: 30 },
+    });
+    assertEq(typeof trailingNormalResult, "string", "trailing slash normal root tool returns a string");
+    assert(trailingNormalResult.includes("test.js"), "trailing slash normal root output includes test.js");
 
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -349,21 +451,21 @@ console.log("Fix 2b (cont): End-to-end .ENV.local suppression via walkDirectory"
     // Verify getExt routes it to .env handler
     assertEq(getExt(envFilePath), ".env", "getExt recognizes .ENV.local as .env");
 
-    // Call the actual production getOutline() on the file
-    const ext = getExt(envFilePath);
-    const outline = getOutline(envFilePath, ext);
+    // Call the registered code_outline tool on the file
+    const toolResult = await codeOutlineTool.run({
+      args: { file_path: envFilePath },
+    });
 
-    // Should have an outline
-    assert(outline.outline !== null, ".ENV.local has outline");
-    assert(outline.lineCount >= 2, ".ENV.local has at least 2 lines");
+    // Should be a string output (not an error object)
+    assertEq(typeof toolResult, "string", ".ENV.local tool output is a string");
 
-    // Outline should contain variable names
-    assert(outline.outline.includes("API_TOKEN"), "outline contains var name API_TOKEN");
-    assert(outline.outline.includes("DATABASE_URL"), "outline contains var name DATABASE_URL");
+    // Output should contain variable names
+    assert(toolResult.includes("API_TOKEN"), "tool output contains var name API_TOKEN");
+    assert(toolResult.includes("DATABASE_URL"), "tool output contains var name DATABASE_URL");
 
-    // Outline must NOT contain secret values
-    assert(!outline.outline.includes("TOP_SECRET_VALUE"), "outline does not contain secret value");
-    assert(!outline.outline.includes("postgres://secret"), "outline does not contain secret DB URL");
+    // Output must NOT contain secret values
+    assert(!toolResult.includes("TOP_SECRET_VALUE"), "tool output does not contain secret value");
+    assert(!toolResult.includes("postgres://secret"), "tool output does not contain secret DB URL");
 
   } finally {
     rmSync(root, { recursive: true, force: true });

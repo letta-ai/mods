@@ -843,8 +843,15 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
     const items = [];
     try {
       let entry;
-      while ((entry = dirHandle.readSync()) !== null && items.length < MAX_ENTRIES_CONSIDERED) {
+      while (
+        entriesConsidered < MAX_ENTRIES_CONSIDERED &&
+        (entry = dirHandle.readSync()) !== null
+      ) {
         items.push(entry);
+        entriesConsidered++;
+      }
+      if (entriesConsidered >= MAX_ENTRIES_CONSIDERED && !stopReason) {
+        stopReason = "entry-consideration limit reached";
       }
     } finally {
       try { dirHandle.closeSync(); } catch { /* ignore close errors */ }
@@ -857,8 +864,6 @@ function walkDirectory(dirPath, maxDepth, maxFiles) {
 
     for (const item of items) {
       if (filesEmitted >= maxFiles) { if (!stopReason) stopReason = "requested max_files reached"; break; }
-      if (entriesConsidered >= MAX_ENTRIES_CONSIDERED) { if (!stopReason) stopReason = "entry-consideration limit reached"; break; }
-      entriesConsidered++;
 
       // Skip symbolic links
       if (item.isSymbolicLink()) continue;
