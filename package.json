@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "validate": "node scripts/validate-manifests.mjs"
+    "validate": "node scripts/validate-manifests.mjs && node scripts/validate-featured.mjs"
   }
 }
