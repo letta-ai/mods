@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "catalog/**"
       - "packages/**"
       - "scripts/**"
       - "package.json"
@@ -28,7 +29,7 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
-      - name: Validate manifests
+      - name: Validate repository
         run: npm run validate
 
       - name: Detect changed packages
@@ -100,6 +101,14 @@ jobs:
               continue
             fi
 
+            case "$name" in
+              @letta-ai/*) ;;
+              *)
+                echo "Skipping community-owned package $name; this workflow only publishes the @letta-ai scope."
+                continue
+                ;;
+            esac
+
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "Skipping $name@$version because it is already published."
               continue
@@ -109,11 +118,10 @@ jobs:
             npm publish "./$package_dir" --access public
           done < changed-packages.txt
 
-  # Tell the marketing site to regenerate its mod catalog now that new packages
-  # are on npm. The target repo is kept in a secret (not hardcoded) so this public
-  # workflow / its logs don't reference the private site repo. No-ops if the
-  # secrets are absent — the site also refreshes on a schedule, so this just makes
-  # the update near-real-time.
+  # Tell the catalog site to regenerate after package publications or public
+  # curation changes. The dispatch destination stays configurable through
+  # repository secrets. No-ops if the secrets are absent — the site also refreshes
+  # on a schedule.
   notify-site:
     needs: publish
     runs-on: ubuntu-latest

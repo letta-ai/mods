@@ -3,6 +3,7 @@ name: Validate
 on:
   pull_request:
     paths:
+      - "catalog/**"
       - "packages/**"
       - "scripts/**"
       - "package.json"
@@ -15,7 +16,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate mod packages
+    name: Validate mods repository
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,5 +27,5 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate manifests
+      - name: Validate repository
         run: npm run validate
