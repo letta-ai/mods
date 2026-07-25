@@ -790,12 +790,27 @@ async function pollDeliveryCycle() {
     }
     queueStore.save();
 
-    // 3. Try to deliver one queued oath (REST API — only when turn_end is NOT active)
-    // When turn_end IS active, delivery happens via { continue } on the next turn_end event
+    // 3. Try to deliver one queued oath
+    // turn_end { continue } is preferred, but if the oath has been queued
+    // for more than 60 seconds without a turn_end firing (user idle),
+    // fall back to REST API delivery.
+    const QUEUED_TIMEOUT = 60_000; // 60 seconds before REST fallback
+    let queuedOath = undefined;
+
     if (turnEventsActive) {
-      log("Skipping REST delivery — turn_end will handle via { continue }");
+      // Check if any queued oath has been waiting too long
+      const overdue = queueStore.oaths.find((o) =>
+        o.status === "queued" && (now - o.dueAt) > QUEUED_TIMEOUT
+      );
+      if (overdue) {
+        log("Oath " + overdue.id + " queued for >60s without turn_end — falling back to REST API");
+        queuedOath = overdue;
+      } else {
+        log("Skipping REST delivery — turn_end will handle via { continue }");
+      }
+    } else {
+      queuedOath = queueStore.oaths.find((o) => o.status === "queued");
     }
-    const queuedOath = turnEventsActive ? undefined : queueStore.oaths.find((o) => o.status === "queued");
     if (queuedOath) {
       store.updateOath(queuedOath.id, { status: "delivering" });
       store.save();
