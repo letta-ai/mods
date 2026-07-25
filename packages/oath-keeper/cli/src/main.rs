@@ -388,7 +388,7 @@ fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
                                 _ => ("UNKNOWN".to_string(), Color::Gray),
                             };
 
-                            let source = if o.id.contains("manual") { "manual".to_string() } else { o.delivery_mode.clone().unwrap_or_else(|| "mod".to_string()) };
+                            let source = if o.id.contains("manual") { "manual".to_string() } else { o.delivery_mode.clone().unwrap_or_else(|| "unknown".to_string()) };
                             let age = fmt_ago(o.created_at);
 
                             // Line 1: status badge + promise

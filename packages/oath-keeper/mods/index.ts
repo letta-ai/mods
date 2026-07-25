@@ -129,7 +129,7 @@ interface Oath {
   promise: string;
   context: string;
   sourceMessageId?: string;
-  deliveryMode?: "turn_end" | "polling";
+  deliveryMode?: "turn_end" | "rest_api" | "polling";
   createdAt: number;
   dueAt: number;
   status: "pending" | "queued" | "delivering" | "delivered" | "failed" | "false_positive" | "prefilter_rejected";
@@ -762,7 +762,7 @@ async function pollDeliveryCycle() {
               const promptSnippet = oath.promise.slice(0, 40);
               if (recentText.includes("[Oath Keeper]") && recentText.includes(promptSnippet)) {
                 if (recentText.includes("[Oath Delivered]")) {
-                  checkStore.updateOath(oath.id, { status: "delivered", result: "Confirmed via conversation history", deliveredAt: Date.now() });
+                  checkStore.updateOath(oath.id, { status: "delivered", deliveryMode: "turn_end", result: recentText.slice(-500), deliveredAt: Date.now() });
                   checkChanged = true;
                   log("Oath " + oath.id + " confirmed delivered (found in conversation history)");
                 } else {
@@ -826,7 +826,7 @@ async function pollDeliveryCycle() {
         updateStore.save();
         log("Oath " + queuedOath.id + " back to queued (busy)");
       } else if (result.status === "ok") {
-        updateStore.updateOath(queuedOath.id, { status: "delivered", result: result.answer.slice(0, 500), deliveredAt: Date.now() });
+        updateStore.updateOath(queuedOath.id, { status: "delivered", deliveryMode: "rest_api", result: result.answer.slice(0, 500), deliveredAt: Date.now() });
         updateStore.save();
         log("Oath " + queuedOath.id + " delivered");
       } else {
@@ -964,7 +964,7 @@ export default function activate(letta: any) {
 
         if (dueOath) {
           log("turn_end: delivering oath via { continue } — " + dueOath.id);
-          deliverStore.updateOath(dueOath.id, { status: "delivering" });
+          deliverStore.updateOath(dueOath.id, { status: "delivering", deliveryMode: "turn_end" });
           deliverStore.save();
 
           const prompt = buildDeliveryPrompt(dueOath);
@@ -976,7 +976,7 @@ export default function activate(letta: any) {
           const store = StateStore.load("turn_end-mark");
           for (const oath of store.oaths) {
             if (oath.status === "delivering" || oath.status === "queued") {
-              store.updateOath(oath.id, { status: "delivered", result: lastMsg.slice(0, 500), deliveredAt: Date.now() });
+              store.updateOath(oath.id, { status: "delivered", deliveryMode: "turn_end", result: lastMsg.slice(0, 500), deliveredAt: Date.now() });
             }
           }
           store.save();
