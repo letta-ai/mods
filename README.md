@@ -73,6 +73,7 @@ packages/
 ├── cruise-code/          # Evidence-first coding workflow for tasks and UX handoffs
 ├── cruise-ux/            # UX discovery workflow from framing to implementation handoff
 ├── environment-compass/  # Read-only environment and git orientation
+├── explicit-oath/        # Explicit opt-in future promises through durable schedules
 ├── git-status/           # Git branch, dirty state, and ahead/behind statusline
 ├── goal-mode/            # Goal workflow with commands, tools, and turn reminders
 ├── hypa/                 # Local context runtime that compresses noisy tool output
@@ -109,6 +110,7 @@ scripts/
 - **cruise-code** - Evidence-first coding workflow for implementation tasks, checks, verdicts, and reports
 - **cruise-ux** - UX discovery workflow for framing, research, interviews, ideation, specs, review, and implementation handoff
 - **environment-compass** - Read-only environment and git orientation for local/remote runtimes
+- **explicit-oath** - Explicit opt-in future promises delivered through durable schedules
 - **git-status** - Git branch, dirty state, and ahead/behind statusline
 - **goal-mode** - Goal workflow using commands, tools, turn reminders, and local state
 - **hypa** - Local context runtime that compresses noisy tool output

@@ -1,0 +1,44 @@
+{
+  "name": "@letta-ai/explicit-oath",
+  "version": "0.1.0",
+  "description": "Explicit opt-in follow-up promises for Letta Code agents, delivered through durable schedules without passive phrase detection.",
+  "author": "Kainoa",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "promises",
+    "follow-up",
+    "scheduling",
+    "accountability",
+    "explicit-consent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/explicit-oath"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods",
+    "tests"
+  ],
+  "scripts": {
+    "test": "bun test"
+  },
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.29.9"
+    }
+  }
+}
