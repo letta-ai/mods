@@ -78,6 +78,7 @@ packages/
 ├── hypa/                 # Local context runtime that compresses noisy tool output
 ├── image-understanding/  # Vision bridge for text-only agents
 ├── jukebox/              # Jamendo-powered terminal music player
+├── linear/               # Batched Linear issue operations with dry-run guards
 ├── memfs-search/         # Agent-callable MemFS memory search
 ├── muscle-memory/        # Self-maintaining skill library from real tool-use patterns
 ├── oath-keeper/          # Detects agent promises and delivers on them automatically
@@ -114,6 +115,7 @@ scripts/
 - **hypa** - Local context runtime that compresses noisy tool output
 - **image-understanding** - Image-understanding tool, commands, and optional auto-captioning for text-only agents
 - **jukebox** - Jamendo-powered terminal music player with a now-playing panel
+- **linear** - Batched Linear issue reads and writes with dry-run previews and stale-state guards
 - **memfs-search** - Agent-callable MemFS memory search with optional QMD semantic/hybrid search
 - **muscle-memory** - Self-maintaining skill library from real tool-use patterns
 - **oath-keeper** - Detects agent promises and delivers on them automatically
