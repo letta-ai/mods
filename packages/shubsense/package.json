@@ -1,0 +1,33 @@
+{
+  "name": "@letta-ai/shubsense",
+  "version": "0.1.0",
+  "description": "A Letta Code mod that occasionally follows up with \"doesn't make sense\".",
+  "author": "Letta",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "turn-events",
+    "humor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/shubsense"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["events.turns"],
+    "engines": {
+      "lettaCodeCli": ">=0.28.0"
+    }
+  }
+}
