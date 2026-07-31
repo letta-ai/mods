@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/memfs-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Letta Code mod package that adds an agent-callable MemFS memory search tool.",
   "author": "just-cameron",
   "license": "MIT",
