@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "npm",
+      "package": "@letta-ai/analysis-mode"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/conversation-summary"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/git-status"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/goal-mode"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/image-understanding"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/memfs-search"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/pets"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/plan-mode"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/spotify-statusline"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/user-timestamps"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/web-search"
+    }
+  ]
+}
