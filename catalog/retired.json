@@ -26,11 +26,6 @@
       "pullRequest": 32
     },
     {
-      "package": "@letta-ai/cruise-code",
-      "owner": "homebodify",
-      "pullRequest": 56
-    },
-    {
       "package": "@letta-ai/cruise-ux",
       "owner": "homebodify",
       "pullRequest": 56
