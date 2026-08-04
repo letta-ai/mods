@@ -11,6 +11,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/emotions"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/git-status"
     },
     {
