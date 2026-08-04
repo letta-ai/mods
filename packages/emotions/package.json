@@ -1,0 +1,47 @@
+{
+  "name": "@letta-ai/emotions",
+  "version": "0.1.0",
+  "description": "Persistent computational affect for Letta Code agents, with mixed feelings, mood, emotional episodes, and soft action tendencies.",
+  "author": "just-cameron",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "emotions",
+    "affect",
+    "memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/emotions"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "LICENSE",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "tools",
+      "commands",
+      "events.turns",
+      "events.tools",
+      "events.llm",
+      "ui.panels"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.29.9"
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test.mjs"
+  }
+}
