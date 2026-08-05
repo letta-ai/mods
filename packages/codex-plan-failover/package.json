@@ -1,0 +1,35 @@
+{
+  "name": "@letta-ai/codex-plan-failover",
+  "version": "0.1.0",
+  "description": "Letta Code mod that automatically moves Codex conversations off exhausted ChatGPT OAuth plans.",
+  "author": "Sarah Wooders",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "codex",
+    "chatgpt",
+    "oauth",
+    "failover"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/codex-plan-failover"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": ["./mods/index.ts"],
+    "capabilities": ["commands", "events.turns"],
+    "engines": {
+      "lettaCodeCli": ">=0.29.12"
+    }
+  }
+}

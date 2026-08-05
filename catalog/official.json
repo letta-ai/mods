@@ -7,6 +7,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/codex-plan-failover"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/conversation-summary"
     },
     {
