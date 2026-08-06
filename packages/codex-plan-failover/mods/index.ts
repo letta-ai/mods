@@ -272,7 +272,7 @@ export default function activate(letta: any) {
           typeof letta.ui.notify === "function"
         ) {
           letta.ui.notify(
-            `Got error: The usage limit has been reached, so the codex-plan-failover mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
+            `The usage limit has been reached, so the codex-plan-failover mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
           );
         }
       }),

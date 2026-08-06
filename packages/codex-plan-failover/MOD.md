@@ -5,6 +5,10 @@ description: "Automatically switches Codex conversations away from exhausted Cha
 
 # Codex plan failover semantics
 
+## Requirements
+
+Requires Letta Code 0.30.8 or newer. That version includes listener-side model refresh after `turn_start` handlers and persistent TUI-only transcript notifications.
+
 ## When to use
 
 Use this mod when multiple ChatGPT OAuth providers are connected to Letta and Codex conversations should continue on a plan with available quota instead of failing on an exhausted plan.
