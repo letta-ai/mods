@@ -1,0 +1,42 @@
+{
+  "name": "@letta-ai/codex-quota-router",
+  "version": "0.1.0",
+  "description": "Letta Code mod that routes Codex conversations around exhausted ChatGPT OAuth plan quotas.",
+  "author": "Sarah Wooders",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "codex",
+    "chatgpt",
+    "oauth",
+    "quota",
+    "routing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/codex-quota-router"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "events.turns",
+      "ui.panels"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.30.8"
+    }
+  }
+}

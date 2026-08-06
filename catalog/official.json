@@ -7,6 +7,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/codex-quota-router"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/conversation-summary"
     },
     {
