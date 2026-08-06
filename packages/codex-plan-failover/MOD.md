@@ -28,10 +28,33 @@ The turn proceeds normally after the model update. The mod does not rewrite user
 
 ## Commands
 
-- `/codex-failover status` shows whether failover is enabled and the cached usage state.
-- `/codex-failover refresh` discovers providers and refreshes usage.
-- `/codex-failover on` and `/codex-failover off` control automatic switching.
-- `/codex-failover plans name,...` restricts failover to the listed provider names.
+The command defaults to `status` when called without arguments:
+
+```text
+/codex-failover
+/codex-failover status
+```
+
+Both forms show whether failover is enabled and the cached quota state for each eligible plan.
+
+```text
+/codex-failover refresh
+```
+
+Re-discovers connected non-base `chatgpt_oauth` providers and force-refreshes their usage snapshots. General Letta client access is unavailable to Desktop listener mods, so run this command in the TUI/CLI when Desktop needs a fresh cache.
+
+```text
+/codex-failover on
+/codex-failover off
+```
+
+Enables or disables automatic switching without removing providers or cached usage state.
+
+```text
+/codex-failover plans chatgpt-work,chatgpt-personal
+```
+
+Replaces the cached eligible provider list with the comma-separated names and removes cached entries for providers no longer listed. The next successful automatic discovery or `refresh` replaces this list with the currently connected ChatGPT OAuth providers.
 
 ## State and security boundary
 
