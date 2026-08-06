@@ -11,7 +11,7 @@ const STATE_PATH = join(
   homedir(),
   ".letta",
   "mods",
-  "codex-plan-failover.state.json",
+  "codex-quota-router.state.json",
 );
 const REFRESH_TTL_MS = 30_000;
 
@@ -197,10 +197,10 @@ async function refreshUsage(
 
 function formatStatus(state: FailoverState): string {
   const lines = [
-    `Codex plan failover: ${state.enabled ? "on" : "off"}`,
+    `Codex Quota Router: ${state.enabled ? "on" : "off"}`,
   ];
   if (state.providerNames.length === 0) {
-    lines.push("No ChatGPT OAuth plans discovered. Run /codex-failover refresh.");
+    lines.push("No ChatGPT OAuth plans discovered. Run /codex-quota-router refresh.");
   }
   for (const name of state.providerNames) {
     const usage = state.usage[name];
@@ -272,7 +272,7 @@ export default function activate(letta: any) {
           typeof letta.ui.notify === "function"
         ) {
           letta.ui.notify(
-            `The usage limit has been reached, so the codex-plan-failover mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
+            `The usage limit has been reached, so the codex-quota-router mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
           );
         }
       }),
@@ -282,8 +282,8 @@ export default function activate(letta: any) {
   if (letta.capabilities.commands) {
     disposers.push(
       letta.commands.register({
-        id: "codex-failover",
-        description: "Show or configure automatic Codex OAuth plan failover",
+        id: "codex-quota-router",
+        description: "Show or configure automatic Codex OAuth quota routing",
         args: "[status|refresh|on|off|plans <name,...>]",
         async run(ctx: any) {
           const input = ctx.args.trim();
@@ -297,7 +297,7 @@ export default function activate(letta: any) {
             writeState(state);
             return {
               type: "output",
-              output: `Codex plan failover ${input}.`,
+              output: `Codex Quota Router ${input}.`,
             };
           }
           if (input === "refresh") {
@@ -336,7 +336,7 @@ export default function activate(letta: any) {
           return {
             type: "output",
             output:
-              "Usage: /codex-failover [status|refresh|on|off|plans name,...]",
+              "Usage: /codex-quota-router [status|refresh|on|off|plans name,...]",
           };
         },
       }),

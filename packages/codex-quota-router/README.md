@@ -1,11 +1,11 @@
-# Codex plan failover
+# Codex Quota Router
 
 A Letta Code mod that automatically moves a conversation to another connected ChatGPT OAuth plan when its current Codex plan has exhausted its usage allowance.
 
 ## Install
 
 ```bash
-letta install npm:@letta-ai/codex-plan-failover
+letta install npm:@letta-ai/codex-quota-router
 ```
 
 Run `/reload` after installation.
@@ -26,11 +26,11 @@ The agent's default model is not changed. In the TUI, a persistent transcript no
 ## Commands
 
 ```text
-/codex-failover status
-/codex-failover refresh
-/codex-failover on
-/codex-failover off
-/codex-failover plans chatgpt-work,chatgpt-personal
+/codex-quota-router status
+/codex-quota-router refresh
+/codex-quota-router on
+/codex-quota-router off
+/codex-quota-router plans chatgpt-work,chatgpt-personal
 ```
 
 Connected plans are discovered automatically on refresh. The `plans` command can restrict failover to a specific allowlist.
@@ -40,18 +40,18 @@ Connected plans are discovered automatically on refresh. The `plans` command can
 The mod stores usage metadata and configuration in:
 
 ```text
-~/.letta/mods/codex-plan-failover.state.json
+~/.letta/mods/codex-quota-router.state.json
 ```
 
 It does not store OAuth tokens. Usage and provider metadata are read through the authenticated Letta client already used by Letta Code. The state file is written with owner-only permissions when created.
 
-Desktop listener sessions cannot make general Letta client requests from mods. They use the most recently cached usage snapshot written by a CLI or another supported surface; run `/codex-failover refresh` in the CLI if that cache is missing or stale. On Letta Code 0.30.8 or newer, the mod also overrides the in-flight Desktop turn so the replacement plan takes effect immediately rather than only updating persisted conversation state.
+Desktop listener sessions cannot make general Letta client requests from mods. They use the most recently cached usage snapshot written by a CLI or another supported surface; run `/codex-quota-router refresh` in the CLI if that cache is missing or stale. On Letta Code 0.30.8 or newer, the mod also overrides the in-flight Desktop turn so the replacement plan takes effect immediately rather than only updating persisted conversation state.
 
 ## Safety and recovery
 
 Mods are trusted local code. Review the source before installing third-party mods.
 
-Disable automatic switching with `/codex-failover off`. If a mod breaks startup or command handling, recover with:
+Disable automatic switching with `/codex-quota-router off`. If a mod breaks startup or command handling, recover with:
 
 ```bash
 letta --no-mods

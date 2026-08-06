@@ -1,7 +1,7 @@
 {
-  "name": "@letta-ai/codex-plan-failover",
+  "name": "@letta-ai/codex-quota-router",
   "version": "0.1.0",
-  "description": "Letta Code mod that automatically moves Codex conversations off exhausted ChatGPT OAuth plans.",
+  "description": "Letta Code mod that routes Codex conversations around exhausted ChatGPT OAuth plan quotas.",
   "author": "Sarah Wooders",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,12 +12,13 @@
     "codex",
     "chatgpt",
     "oauth",
-    "failover"
+    "quota",
+    "routing"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/letta-ai/mods.git",
-    "directory": "packages/codex-plan-failover"
+    "directory": "packages/codex-quota-router"
   },
   "files": [
     "README.md",
@@ -26,8 +27,14 @@
   ],
   "letta": {
     "manifestVersion": 1,
-    "mods": ["./mods/index.ts"],
-    "capabilities": ["commands", "events.turns", "ui.panels"],
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "events.turns",
+      "ui.panels"
+    ],
     "engines": {
       "lettaCodeCli": ">=0.30.8"
     }

@@ -1,9 +1,9 @@
 ---
-name: "@letta-ai/codex-plan-failover"
+name: "@letta-ai/codex-quota-router"
 description: "Automatically switches Codex conversations away from exhausted ChatGPT OAuth plans."
 ---
 
-# Codex plan failover semantics
+# Codex Quota Router semantics
 
 ## Requirements
 
@@ -31,27 +31,27 @@ The turn proceeds normally after the model update. The mod does not rewrite user
 The command defaults to `status` when called without arguments:
 
 ```text
-/codex-failover
-/codex-failover status
+/codex-quota-router
+/codex-quota-router status
 ```
 
 Both forms show whether failover is enabled and the cached quota state for each eligible plan.
 
 ```text
-/codex-failover refresh
+/codex-quota-router refresh
 ```
 
 Re-discovers connected non-base `chatgpt_oauth` providers and force-refreshes their usage snapshots. General Letta client access is unavailable to Desktop listener mods, so run this command in the TUI/CLI when Desktop needs a fresh cache.
 
 ```text
-/codex-failover on
-/codex-failover off
+/codex-quota-router on
+/codex-quota-router off
 ```
 
 Enables or disables automatic switching without removing providers or cached usage state.
 
 ```text
-/codex-failover plans chatgpt-work,chatgpt-personal
+/codex-quota-router plans chatgpt-work,chatgpt-personal
 ```
 
 Replaces the cached eligible provider list with the comma-separated names and removes cached entries for providers no longer listed. The next successful automatic discovery or `refresh` replaces this list with the currently connected ChatGPT OAuth providers.
@@ -61,7 +61,7 @@ Replaces the cached eligible provider list with the comma-separated names and re
 State is stored in:
 
 ```text
-~/.letta/mods/codex-plan-failover.state.json
+~/.letta/mods/codex-quota-router.state.json
 ```
 
 The state contains provider names, usage percentages, reset timestamps, and enabled/configuration flags. It does not contain OAuth credentials. Provider and usage data are requested through `letta.getClient()`; the mod does not read provider auth files or environment credentials.

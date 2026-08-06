@@ -7,7 +7,7 @@
     },
     {
       "type": "npm",
-      "package": "@letta-ai/codex-plan-failover"
+      "package": "@letta-ai/codex-quota-router"
     },
     {
       "type": "npm",
