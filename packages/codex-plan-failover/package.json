@@ -27,9 +27,9 @@
   "letta": {
     "manifestVersion": 1,
     "mods": ["./mods/index.ts"],
-    "capabilities": ["commands", "events.turns"],
+    "capabilities": ["commands", "events.turns", "ui.panels"],
     "engines": {
-      "lettaCodeCli": ">=0.29.12"
+      "lettaCodeCli": ">=0.30.8"
     }
   }
 }

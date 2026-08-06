@@ -21,7 +21,7 @@ Before a Codex turn, the mod:
 
 The model name is preserved. For example, an exhausted `chatgpt-work/gpt-5.5` conversation may move to `chatgpt-personal/gpt-5.5`.
 
-The agent's default model is not changed.
+The agent's default model is not changed. In the TUI, a transient panel reports the replacement model and reasoning effort. That notice is local UI state and is never added to the agent's messages or context.
 
 ## Commands
 
@@ -45,7 +45,7 @@ The mod stores usage metadata and configuration in:
 
 It does not store OAuth tokens. Usage and provider metadata are read through the authenticated Letta client already used by Letta Code. The state file is written with owner-only permissions when created.
 
-Desktop listener sessions cannot make general Letta client requests from mods. They use the most recently cached usage snapshot written by a CLI or another supported surface; run `/codex-failover refresh` in the CLI if that cache is missing or stale.
+Desktop listener sessions cannot make general Letta client requests from mods. They use the most recently cached usage snapshot written by a CLI or another supported surface; run `/codex-failover refresh` in the CLI if that cache is missing or stale. On Letta Code 0.30.8 or newer, the mod also overrides the in-flight Desktop turn so the replacement plan takes effect immediately rather than only updating persisted conversation state.
 
 ## Safety and recovery
 
