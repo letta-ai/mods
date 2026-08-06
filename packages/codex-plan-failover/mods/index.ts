@@ -267,7 +267,10 @@ export default function activate(letta: any) {
         const reasoning = ctx.model.reasoningEffort
           ? ` (${ctx.model.reasoningEffort} reasoning)`
           : "";
-        if (letta.capabilities.ui.panels) {
+        if (
+          letta.capabilities.ui.panels &&
+          typeof letta.ui.notify === "function"
+        ) {
           letta.ui.notify(
             `Got error: The usage limit has been reached, so the codex-plan-failover mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
           );
