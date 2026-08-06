@@ -232,7 +232,7 @@ export default function activate(letta: any) {
       noticePanel = letta.ui.openPanel({
         id: "codex-plan-failover-notice",
         order: 100,
-        render: () => noticeText,
+        render: ({ chalk }: any) => chalk.hex("#87af87")(noticeText),
       });
     }
     noticePanel.update();
@@ -289,7 +289,9 @@ export default function activate(letta: any) {
         const reasoning = ctx.model.reasoningEffort
           ? ` (${ctx.model.reasoningEffort} reasoning)`
           : "";
-        showSwapNotice(`Switched to ${displayName} (${nextProvider})${reasoning}`);
+        showSwapNotice(
+          `Got error: The usage limit has been reached, so codex-plan-failover auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
+        );
       }),
     );
   }
