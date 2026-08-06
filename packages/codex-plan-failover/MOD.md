@@ -20,7 +20,7 @@ On each outbound turn, the mod:
 5. Updates only the conversation-level model handle, preserving the model suffix and leaving the agent default unchanged.
 6. Relies on Letta Code 0.30.8 or newer to refresh the persisted conversation model after `turn_start`, preventing Desktop/listener requests from retaining a stale provider captured before the update.
 
-The turn proceeds normally after the model update. The mod does not rewrite user input or replay completed tool calls. On TUI hosts with panel support, it shows a transient local notice naming the replacement model, provider, and reasoning effort; this UI notice never enters agent context.
+The turn proceeds normally after the model update. The mod does not rewrite user input or replay completed tool calls. On TUI hosts, it shows a persistent local transcript notification naming the quota error, mod, replacement model, provider, and reasoning effort; this UI notification never enters agent context.
 
 ## Commands
 

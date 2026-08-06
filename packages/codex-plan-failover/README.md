@@ -21,7 +21,7 @@ Before a Codex turn, the mod:
 
 The model name is preserved. For example, an exhausted `chatgpt-work/gpt-5.5` conversation may move to `chatgpt-personal/gpt-5.5`.
 
-The agent's default model is not changed. In the TUI, a transient panel reports the replacement model and reasoning effort. That notice is local UI state and is never added to the agent's messages or context.
+The agent's default model is not changed. In the TUI, a persistent transcript notification reports the quota error, mod name, replacement model, and reasoning effort. Like the `Dreamed; no durable memory changes were needed.` notification, it is local UI state and is never added to the agent's messages or context.
 
 ## Commands
 

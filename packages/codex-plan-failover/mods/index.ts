@@ -221,28 +221,6 @@ function formatStatus(state: FailoverState): string {
 
 export default function activate(letta: any) {
   const disposers: Array<() => void> = [];
-  let noticePanel: { close(): void; update(): void } | null = null;
-  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-  let noticeText = "";
-
-  function showSwapNotice(text: string): void {
-    if (!letta.capabilities.ui.panels) return;
-    noticeText = text;
-    if (!noticePanel) {
-      noticePanel = letta.ui.openPanel({
-        id: "codex-plan-failover-notice",
-        order: 100,
-        render: ({ chalk }: any) => chalk.hex("#87af87")(noticeText),
-      });
-    }
-    noticePanel.update();
-    if (noticeTimer) clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => {
-      noticeText = "";
-      noticePanel?.update();
-      noticeTimer = null;
-    }, 10_000);
-  }
 
   if (letta.capabilities.events.turns) {
     disposers.push(
@@ -289,9 +267,11 @@ export default function activate(letta: any) {
         const reasoning = ctx.model.reasoningEffort
           ? ` (${ctx.model.reasoningEffort} reasoning)`
           : "";
-        showSwapNotice(
-          `Got error: The usage limit has been reached, so codex-plan-failover auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
-        );
+        if (letta.capabilities.ui.panels) {
+          letta.ui.notify(
+            `Got error: The usage limit has been reached, so the codex-plan-failover mod auto-swapped to ${displayName} (${nextProvider})${reasoning}`,
+          );
+        }
       }),
     );
   }
@@ -361,8 +341,6 @@ export default function activate(letta: any) {
   }
 
   return () => {
-    if (noticeTimer) clearTimeout(noticeTimer);
-    noticePanel?.close();
     for (const dispose of disposers.reverse()) dispose();
   };
 }
