@@ -356,7 +356,10 @@ export default function activate(letta) {
         if (!goal || goal.status !== "active") return;
         const updatedGoal = setGoal(event.conversationId, updateUsage(goal, ctx));
         return {
-          input: [{ role: "user", content: buildGoalReminder(updatedGoal) }, ...event.input],
+          queueItems: [
+            ...event.queueItems,
+            { kind: "context", content: buildGoalReminder(updatedGoal) },
+          ],
         };
       }),
     );
