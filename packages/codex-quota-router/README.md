@@ -14,10 +14,12 @@ Run `/reload` after installation.
 
 Before a Codex turn, the mod:
 
-1. Discovers connected `chatgpt_oauth` providers.
-2. Reads current usage for each plan.
-3. Checks whether the conversation's selected plan has reached its limit.
-4. If needed, changes only the conversation-level model provider to the available plan with the most quota remaining.
+1. Discovers connected non-base `chatgpt_oauth` providers and caches that verified set.
+2. Reads current usage for each verified plan.
+3. Checks that the conversation's selected provider is verified and has reached its limit.
+4. If needed, changes only the conversation-level model provider to the verified available plan with the most quota remaining.
+
+Both sides of every route must be in the verified ChatGPT OAuth set. Base providers, non-OpenAI providers, unknown aliases, and stale manually injected names are ignored.
 
 The model name is preserved. For example, an exhausted `chatgpt-work/gpt-5.5` conversation may move to `chatgpt-personal/gpt-5.5`.
 

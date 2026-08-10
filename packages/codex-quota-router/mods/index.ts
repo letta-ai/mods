@@ -26,6 +26,7 @@ interface FailoverState {
   enabled: boolean;
   providerNames: string[];
   usage: Record<string, UsageState>;
+  verifiedChatgptOauthProviderNames: string[];
 }
 
 interface ProviderRecord {
@@ -47,6 +48,7 @@ const DEFAULT_STATE: FailoverState = {
   enabled: true,
   providerNames: [],
   usage: {},
+  verifiedChatgptOauthProviderNames: [],
 };
 
 function normalizeProviderNames(value: unknown): string[] {
@@ -70,6 +72,9 @@ function readState(): FailoverState {
       enabled: raw.enabled !== false,
       providerNames: normalizeProviderNames(raw.providerNames),
       usage: raw.usage && typeof raw.usage === "object" ? raw.usage : {},
+      verifiedChatgptOauthProviderNames: normalizeProviderNames(
+        raw.verifiedChatgptOauthProviderNames,
+      ),
     };
   } catch {
     return structuredClone(DEFAULT_STATE);
@@ -131,7 +136,9 @@ function chooseProvider(
   state: FailoverState,
   currentProvider: string,
 ): string | null {
+  const verified = new Set(state.verifiedChatgptOauthProviderNames);
   const candidates = state.providerNames
+    .filter((name) => verified.has(name))
     .filter((name) => name !== currentProvider)
     .filter((name) => !activeLimitReached(state.usage[name]))
     .sort(
@@ -150,7 +157,12 @@ async function refreshUsage(
     0,
     ...Object.values(state.usage).map((entry) => entry.fetchedAt || 0),
   );
-  if (Date.now() - newestFetch < REFRESH_TTL_MS) return state;
+  if (
+    state.verifiedChatgptOauthProviderNames.length > 0 &&
+    Date.now() - newestFetch < REFRESH_TTL_MS
+  ) {
+    return state;
+  }
 
   const client = await letta.getClient();
   const providers = (await client.get("/v1/providers")) as ProviderRecord[];
@@ -160,8 +172,7 @@ async function refreshUsage(
       .filter((provider) => provider.provider_category !== "base")
       .map((provider) => provider.name),
   );
-  const providerNames =
-    discovered.length > 0 ? discovered : state.providerNames;
+  const providerNames = discovered;
 
   const results = await Promise.allSettled(
     providerNames.map(async (providerName) => {
@@ -190,7 +201,12 @@ async function refreshUsage(
     }
   }
 
-  const refreshed = { ...state, providerNames, usage };
+  const refreshed = {
+    ...state,
+    providerNames,
+    usage,
+    verifiedChatgptOauthProviderNames: discovered,
+  };
   writeState(refreshed);
   return refreshed;
 }
@@ -249,7 +265,12 @@ export default function activate(letta: any) {
           }
         }
 
-        if (!state.providerNames.includes(model.provider)) return;
+        if (
+          !state.providerNames.includes(model.provider) ||
+          !state.verifiedChatgptOauthProviderNames.includes(model.provider)
+        ) {
+          return;
+        }
         if (!activeLimitReached(state.usage[model.provider])) return;
 
         const nextProvider = chooseProvider(state, model.provider);
@@ -322,6 +343,26 @@ export default function activate(letta: any) {
                 type: "output",
                 output:
                   "Provide comma-separated ChatGPT OAuth provider names.",
+              };
+            }
+            try {
+              state = await refreshUsage(letta, { ...state, usage: {} });
+            } catch (error) {
+              return {
+                type: "output",
+                output: `Could not verify ChatGPT OAuth providers: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              };
+            }
+            const invalid = providerNames.filter(
+              (name) =>
+                !state.verifiedChatgptOauthProviderNames.includes(name),
+            );
+            if (invalid.length > 0) {
+              return {
+                type: "output",
+                output: `Not eligible ChatGPT OAuth providers: ${invalid.join(", ")}`,
               };
             }
             state.providerNames = providerNames;

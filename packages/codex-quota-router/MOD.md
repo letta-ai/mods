@@ -19,8 +19,8 @@ On each outbound turn, the mod:
 
 1. Resolves the conversation-level model handle.
 2. Refreshes connected `chatgpt_oauth` provider usage when the host exposes the Letta client and the cache is stale.
-3. Leaves non-ChatGPT providers and available ChatGPT plans unchanged.
-4. If the selected plan is exhausted, selects the non-exhausted connected plan with the highest remaining percentage.
+3. Verifies both the current and destination provider against cached records discovered as non-base `chatgpt_oauth`; non-OpenAI providers, unverified aliases, and stale manually injected names are never routed.
+4. If the selected verified ChatGPT OAuth plan is exhausted, selects the verified non-exhausted connected plan with the highest remaining percentage.
 5. Updates only the conversation-level model handle, preserving the model suffix and leaving the agent default unchanged.
 6. Relies on Letta Code 0.30.8 or newer to refresh the persisted conversation model after `turn_start`, preventing Desktop/listener requests from retaining a stale provider captured before the update.
 
@@ -54,7 +54,7 @@ Enables or disables automatic switching without removing providers or cached usa
 /codex-quota-router plans chatgpt-work,chatgpt-personal
 ```
 
-Replaces the cached eligible provider list with the comma-separated names and removes cached entries for providers no longer listed. The next successful automatic discovery or `refresh` replaces this list with the currently connected ChatGPT OAuth providers.
+First refreshes provider metadata, then replaces the cached eligible provider list with the comma-separated names only if every name is currently verified as a non-base `chatgpt_oauth` provider. Non-OpenAI and unknown aliases are rejected. The next successful automatic discovery or `refresh` replaces this list with the currently connected ChatGPT OAuth providers.
 
 ## State and security boundary
 
