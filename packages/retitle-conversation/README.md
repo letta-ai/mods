@@ -26,9 +26,9 @@ The tool asks for approval before each update in permission modes that require a
 
 The tool normalizes the requested title before it saves the title:
 
-- Replaces terminal control characters and bidirectional text controls with spaces.
+- Replaces terminal controls, bidirectional text controls, and unsafe invisible separators with spaces.
 - Collapses line breaks and repeated whitespace into one space.
-- Rejects empty titles and titles longer than 100 characters.
+- Rejects empty, invisible-only, and longer-than-100-character titles.
 
 The active Letta Code interface receives the title update through the conversation mod API. Other clients can show the new title after they receive or reload the stored conversation state.
 

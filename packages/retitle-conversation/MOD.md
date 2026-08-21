@@ -25,8 +25,8 @@ Choose a short title, usually two to seven words. Describe the work with concret
 - Runs as a non-parallel mutation.
 - Requires a current conversation ID.
 - Uses `ctx.conversation.updateTitle()` to save the title and refresh active local interface state.
-- Replaces control characters, bidirectional text controls, line breaks, and repeated whitespace with spaces.
-- Rejects empty titles and titles longer than 100 Unicode code points.
+- Replaces terminal controls, bidirectional text controls, unsafe invisible separators, line breaks, and repeated whitespace with spaces.
+- Rejects empty, invisible-only, and longer-than-100-code-point titles.
 - Returns an error without mutation when the host cannot update conversation titles.
 
 ## Safety boundaries
@@ -42,5 +42,5 @@ Choose a short title, usually two to seven words. Describe the work with concret
 
 - Keep the tool scoped to `ctx.conversation`. Do not replace the conversation handle with a global client call.
 - Keep `requiresApproval: true` and `parallelSafe: false` because the tool changes stored conversation state.
-- Preserve terminal-control and bidirectional-control filtering if title formatting changes.
+- Preserve control and invisible-content filtering if title formatting changes.
 - Update the minimum Letta Code version if the package starts using a newer mod API.

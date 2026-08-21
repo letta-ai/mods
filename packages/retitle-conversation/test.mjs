@@ -70,7 +70,8 @@ test("does not register without the tools capability", () => {
 test("normalizes and persists a safe conversation title", async () => {
   const harness = createHarness();
   const { ctx, updates } = conversationContext({
-    title: "  Release\n\t readiness \u0000 review \u202e ",
+    title:
+      "  Release\n\t readiness \u0000 review \u061c\u200e\u200f\u202e ",
   });
 
   const result = await harness.tool.run(ctx);
@@ -95,10 +96,18 @@ test("accepts 100 Unicode code points and rejects 101", async () => {
   });
 });
 
-test("rejects invalid input before mutation", async () => {
+test("rejects empty and invisible-only input before mutation", async () => {
   const harness = createHarness();
 
-  for (const title of ["", " \n\t ", 42, null]) {
+  for (const title of [
+    "",
+    " \n\t ",
+    "\u200b",
+    "\u200c\u200d",
+    "\u2060\ufeff",
+    42,
+    null,
+  ]) {
     const { ctx, updates } = conversationContext({ title });
     ctx.args.title = title;
     const result = await harness.tool.run(ctx);
@@ -108,6 +117,17 @@ test("rejects invalid input before mutation", async () => {
     });
     assert.deepEqual(updates, []);
   }
+});
+
+test("preserves joiners when the title also contains visible text", async () => {
+  const harness = createHarness();
+  const { ctx, updates } = conversationContext({
+    title: "Visible\u200c title\u200d",
+  });
+
+  await harness.tool.run(ctx);
+
+  assert.deepEqual(updates, ["Visible\u200c title\u200d"]);
 });
 
 test("reports unavailable conversation state without a partial update", async () => {

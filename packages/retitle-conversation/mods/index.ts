@@ -1,6 +1,7 @@
 const MAX_TITLE_LENGTH = 100;
 const UNSAFE_TITLE_CHARACTERS =
-  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+  /[\p{Cc}\p{Bidi_Control}\u200b\u2060\ufeff]/gu;
+const INVISIBLE_TITLE_CHARACTERS = /\p{Default_Ignorable_Code_Point}/gu;
 
 function normalizeTitle(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -12,6 +13,10 @@ function normalizeTitle(value: unknown): string {
 
 function titleLength(title: string): number {
   return Array.from(title).length;
+}
+
+function hasVisibleContent(title: string): boolean {
+  return title.replace(INVISIBLE_TITLE_CHARACTERS, "").trim().length > 0;
 }
 
 export default function activate(letta: any) {
@@ -46,7 +51,7 @@ export default function activate(letta: any) {
       }
 
       const title = normalizeTitle(ctx.args?.title);
-      if (!title) {
+      if (!title || !hasVisibleContent(title)) {
         return {
           status: "error",
           content: "The conversation title must not be empty.",
