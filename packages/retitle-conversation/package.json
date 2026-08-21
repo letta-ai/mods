@@ -1,0 +1,41 @@
+{
+  "name": "@letta-ai/retitle-conversation",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that lets agents update the current conversation title.",
+  "author": "just-cameron",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "conversation-title",
+    "retitle"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/retitle-conversation"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "LICENSE",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.30.21"
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test.mjs"
+  }
+}

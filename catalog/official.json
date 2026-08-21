@@ -43,6 +43,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/retitle-conversation"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/spotify-statusline"
     },
     {
