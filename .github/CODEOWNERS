@@ -1,6 +1,3 @@
-# Official package source, ecosystem curation, and release infrastructure
-* @cpacker @carenthomas
-
-/catalog/ @cpacker @carenthomas
-/.github/ @cpacker @carenthomas
-/scripts/ @cpacker @carenthomas
+# Official package source, ecosystem curation, and release infrastructure.
+# Any member of @letta-ai/mods-owners can satisfy required code-owner review.
+* @letta-ai/mods-owners
