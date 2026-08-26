@@ -24,6 +24,7 @@ Choose a short title, usually two to seven words. Describe the work with concret
 - Requires approval in permission modes that enforce tool approval.
 - Runs as a non-parallel mutation.
 - Requires a current conversation ID.
+- Rejects the default conversation because it has no stored conversation record to rename.
 - Uses `ctx.conversation.updateTitle()` to save the title and refresh active local interface state.
 - Replaces terminal controls, bidirectional text controls, unsafe invisible separators, line breaks, and repeated whitespace with spaces.
 - Rejects empty, invisible-only, and longer-than-100-code-point titles.
