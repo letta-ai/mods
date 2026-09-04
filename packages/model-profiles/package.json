@@ -1,0 +1,39 @@
+{
+  "name": "@letta-ai/model-profiles",
+  "version": "0.1.0",
+  "description": "Letta Code mod package for managing per-model context window and reasoning effort profiles in MemFS.",
+  "author": "cameron",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "model-profiles",
+    "context-window",
+    "memfs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/model-profiles"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
