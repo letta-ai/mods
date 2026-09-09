@@ -35,6 +35,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/model-profiles"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/pets"
     },
     {
