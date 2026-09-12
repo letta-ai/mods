@@ -27,6 +27,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/horizon-mode"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/image-understanding"
     },
     {
