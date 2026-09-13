@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  promises as fs,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -14,7 +13,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_BUDGET_SECS = 72_000;
 const DEFAULT_RESERVE_SECS = 600;
-const MAX_MEMORY_BYTES = 60_000;
 
 type Mode = "auto" | "on" | "off";
 
@@ -162,30 +160,6 @@ function budgetLine(info: Awaited<ReturnType<typeof runtime>>): string {
   return `Remaining task budget: ${duration(info.remaining)} (${percentage}%).`;
 }
 
-function memoryRoot(ctx: any): string | null {
-  if (ctx.memfs?.memoryDir) return path.resolve(ctx.memfs.memoryDir);
-  if (process.env.MEMORY_DIR) return path.resolve(process.env.MEMORY_DIR);
-  if (ctx.agent?.id) {
-    return path.join(homedir(), ".letta", "agents", ctx.agent.id, "memory");
-  }
-  return null;
-}
-
-async function memoryIndexExcerpt(ctx: any): Promise<string> {
-  const root = memoryRoot(ctx);
-  if (!root) return "";
-  const candidates = [path.join(root, "reference", "MEMORY.md"), path.join(root, "MEMORY.md")];
-  for (const candidate of candidates) {
-    try {
-      const text = await fs.readFile(candidate, "utf8");
-      return `\n\nDeferred-memory index (use read_deferred_memory for linked files):\n${text.slice(0, 12_000)}`;
-    } catch {
-      // Try the next conventional index path.
-    }
-  }
-  return "";
-}
-
 async function gitCommit(cwd: string, requested: string): Promise<{
   full: string;
   short: string;
@@ -321,57 +295,6 @@ export default function activate(letta: any) {
     }));
   }
 
-  if (letta.capabilities.tools) {
-    disposers.push(letta.tools.register({
-      name: "read_deferred_memory",
-      description: "Read a deferred memory index or linked Markdown file from the active agent's MemFS. Call this at the start of a long-running task when system memory names reference files that are not in the workspace.",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Path relative to the memory root. Defaults to reference/MEMORY.md.",
-          },
-        },
-        additionalProperties: false,
-      },
-      requiresApproval: false,
-      parallelSafe: true,
-      async run(ctx: any) {
-        const root = memoryRoot(ctx);
-        if (!root) return { status: "error", content: "This agent has no projected memory directory." };
-        const requested = String(ctx.args.path ?? "reference/MEMORY.md");
-        if (path.isAbsolute(requested) || path.win32.isAbsolute(requested)) {
-          return { status: "error", content: "Path must be relative to the agent memory directory." };
-        }
-        const relative = requested.replace(/^\/+/, "");
-        const target = path.resolve(root, relative);
-        if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
-          return { status: "error", content: "Path must remain inside the agent memory directory." };
-        }
-        if (!target.endsWith(".md")) {
-          return { status: "error", content: "Only Markdown memory files can be read." };
-        }
-        try {
-          const [realRoot, realTarget] = await Promise.all([fs.realpath(root), fs.realpath(target)]);
-          if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}${path.sep}`)) {
-            return { status: "error", content: "Linked memory file resolves outside the agent memory directory." };
-          }
-          if (!realTarget.endsWith(".md")) {
-            return { status: "error", content: "Only Markdown memory files can be read." };
-          }
-          const text = await fs.readFile(realTarget, "utf8");
-          if (Buffer.byteLength(text, "utf8") > MAX_MEMORY_BYTES) {
-            return `${text.slice(0, MAX_MEMORY_BYTES)}\n\n[Truncated; request a more specific linked file.]`;
-          }
-          return text;
-        } catch (error: any) {
-          return { status: "error", content: `Cannot read ${relative}: ${error?.message ?? "file not found"}` };
-        }
-      },
-    }));
-  }
-
   if (letta.capabilities.commands && letta.capabilities.events.turns) {
     disposers.push(letta.commands.register({
       id: "horizon",
@@ -417,8 +340,7 @@ export default function activate(letta: any) {
       }
       state.turnNumber = (state.turnNumber ?? 0) + 1;
       state.toolsThisTurn = 0;
-      const memory = await memoryIndexExcerpt(ctx);
-      event.input = prependReminder(event.input, `${continuationPrompt(info, state)}${memory}`);
+      event.input = prependReminder(event.input, continuationPrompt(info, state));
       await saveState();
       return { input: event.input };
     }));

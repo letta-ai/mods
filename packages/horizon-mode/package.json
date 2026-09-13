@@ -1,7 +1,7 @@
 {
   "name": "@letta-ai/horizon-mode",
   "version": "0.1.0",
-  "description": "Long-horizon autonomous work mode with budget-aware continuation, checkpoints, and deferred-memory access for Letta Code.",
+  "description": "Long-horizon autonomous work mode with budget-aware continuation and clean Git checkpoints for Letta Code.",
   "author": "kl2806",
   "license": "Apache-2.0",
   "type": "module",

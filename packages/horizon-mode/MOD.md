@@ -15,12 +15,11 @@ In `auto` mode, a working `sandbox-timer remaining` command identifies such an e
 
 While Horizon mode is active, the agent should:
 
-1. Read deferred task memory before choosing an approach.
-2. Establish a measurable baseline and optimize the actual objective, not a weak proxy.
-3. Keep known-good work committed and record useful checkpoints with `submit`.
-4. Continue after a checkpoint while meaningful budget and credible improvements remain.
-5. Validate correctness, held-out behavior, and regressions before final confirmation.
-6. Confirm a final submission only when the selected clean commit is the best validated result.
+1. Establish a measurable baseline and optimize the actual objective, not a weak proxy.
+2. Keep known-good work committed and record useful checkpoints with `submit`.
+3. Continue after a checkpoint while meaningful budget and credible improvements remain.
+4. Validate correctness, held-out behavior, and regressions before final confirmation.
+5. Confirm a final submission only when the selected clean commit is the best validated result.
 
 Horizon mode automatically starts another model turn when the agent ends without a confirmed final submission and more than the configured reserve remains. It does not continue after cancellation, interruption, errors, final confirmation, or budget reserve.
 
@@ -35,10 +34,6 @@ Horizon mode automatically starts another model turn when the agent ends without
 The tool accepts a Git commit or revision. It rejects unknown commits and dirty worktrees because a checkpoint should identify all submitted changes.
 
 The first call records a checkpoint. The same commit confirms the final submission only when called in a later turn with no earlier tool action in that turn. Any other tool call cancels pending confirmation without deleting the recorded checkpoint.
-
-### `read_deferred_memory`
-
-The tool reads only `.md` files below `ctx.memfs.memoryDir`, falling back to the conventional local agent-memory location. Absolute paths and traversal outside the memory root are rejected.
 
 ## Adaptation notes
 

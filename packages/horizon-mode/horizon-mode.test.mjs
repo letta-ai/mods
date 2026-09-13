@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -98,7 +98,7 @@ test("registers the Horizon command, tools, and continuation events", async (t) 
   });
 
   const h = harness();
-  assert.deepEqual([...h.tools.keys()].sort(), ["read_deferred_memory", "submit"]);
+  assert.deepEqual([...h.tools.keys()], ["submit"]);
   assert.deepEqual([...h.commands.keys()], ["horizon"]);
   assert.deepEqual([...h.events.keys()].sort(), ["tool_start", "turn_end", "turn_start"]);
 
@@ -115,7 +115,7 @@ test("does not advertise continuation controls on hosts without turn events", as
   const h = harness({ tools: true, commands: true, events: { turns: false, tools: false } });
   t.after(h.dispose);
 
-  assert.deepEqual([...h.tools.keys()], ["read_deferred_memory"]);
+  assert.equal(h.tools.size, 0);
   assert.equal(h.commands.size, 0);
   assert.equal(h.events.size, 0);
 });
@@ -141,7 +141,6 @@ test("injects reminders only while Horizon mode is active", async (t) => {
   const active = [{ role: "user", content: "work" }];
   const transformed = await h.events.get("turn_start")({ input: active }, ctx);
   assert.match(reminderText(transformed.input), /Horizon mode is active/);
-  assert.match(reminderText(transformed.input), /Deferred-memory index/);
   assert.match(reminderText(transformed.input), /work$/);
 });
 
@@ -172,29 +171,6 @@ test("auto mode follows sandbox-timer and stops inside the reserve", async (t) =
 
   process.env.HORIZON_TEST_REMAINING = "500";
   assert.equal(await h.events.get("turn_end")({ stopReason: "end_turn" }, ctx), undefined);
-});
-
-test("reads only Markdown files below the active memory root", async (t) => {
-  const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
-  process.env.HORIZON_MODE = "off";
-  t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
-    delete process.env.HORIZON_MODE;
-  });
-  const h = harness();
-  t.after(h.dispose);
-  const tool = h.tools.get("read_deferred_memory");
-  const ctx = context(f, "conv-memory");
-  const outside = join(f.root, "outside.md");
-  await writeFile(outside, "outside\n");
-  await symlink(outside, join(f.memoryDir, "reference", "outside.md"));
-
-  assert.match(await tool.run({ ...ctx, args: { path: "reference/task/MEMORY.md" } }), /real objective/);
-  assert.equal((await tool.run({ ...ctx, args: { path: "../outside.md" } })).status, "error");
-  assert.equal((await tool.run({ ...ctx, args: { path: "/reference/MEMORY.md" } })).status, "error");
-  assert.equal((await tool.run({ ...ctx, args: { path: "reference/outside.md" } })).status, "error");
-  assert.equal((await tool.run({ ...ctx, args: { path: "reference/data.json" } })).status, "error");
 });
 
 test("records a clean checkpoint, continues, then confirms it in a later turn", async (t) => {
@@ -254,7 +230,7 @@ test("rejects dirty checkpoints and cancels confirmation after another tool", as
 
   await submit.run({ ...ctx, args: { commit: f.commit } });
   await turnStart({ input: [{ role: "user", content: "continue" }] }, ctx);
-  await toolStart({ toolName: "read_deferred_memory" }, ctx);
+  await toolStart({ toolName: "exec_command" }, ctx);
   await toolStart({ toolName: "submit" }, ctx);
   const result = await submit.run({ ...ctx, args: { commit: f.commit } });
   assert.match(result, /Submission #2 recorded/);
