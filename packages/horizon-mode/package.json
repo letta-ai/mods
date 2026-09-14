@@ -1,0 +1,44 @@
+{
+  "name": "@letta-ai/horizon-mode",
+  "version": "0.1.0",
+  "description": "Long-horizon autonomous work mode with budget-aware continuation and clean Git checkpoints for Letta Code.",
+  "author": "kl2806",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "horizon-mode",
+    "long-horizon",
+    "benchmark"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/horizon-mode"
+  },
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.ts"
+    ],
+    "capabilities": [
+      "commands",
+      "tools",
+      "events.turns",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.31.12"
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test horizon-mode.test.mjs"
+  }
+}
