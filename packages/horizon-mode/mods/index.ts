@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
@@ -13,27 +15,30 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_BUDGET_SECS = 72_000;
 const DEFAULT_RESERVE_SECS = 600;
+const STAGNANT_TURN_LIMIT = 3;
+const REPOSITORY_SEARCH_DEPTH = 2;
 
 type Mode = "auto" | "on" | "off";
 
 type Submission = {
   commit: string;
   subject: string;
+  repository: string;
   recordedAt: string;
+  bundlePath?: string;
 };
 
 type ConversationState = {
   mode?: Mode;
-  active?: boolean;
   startedAt?: number;
-  turnNumber?: number;
-  toolsThisTurn?: number;
   submissionCount?: number;
   submissions?: Submission[];
-  pendingCommit?: string | null;
-  pendingTurn?: number | null;
-  confirmed?: boolean;
   totalBudgetSecs?: number;
+  toolsThisTurn?: number;
+  lastTurnCheckpoint?: string | null;
+  lastAssistantFingerprint?: string | null;
+  stagnantTurns?: number;
+  pausedForStagnation?: boolean;
 };
 
 type PersistedState = {
@@ -58,13 +63,10 @@ function stateFor(ctx: any): ConversationState {
     store.conversations[key] = {
       mode: "auto",
       startedAt: Date.now(),
-      turnNumber: 0,
-      toolsThisTurn: 0,
       submissionCount: 0,
       submissions: [],
-      pendingCommit: null,
-      pendingTurn: null,
-      confirmed: false,
+      toolsThisTurn: 0,
+      stagnantTurns: 0,
     };
   }
   return store.conversations[key];
@@ -160,44 +162,199 @@ function budgetLine(info: Awaited<ReturnType<typeof runtime>>): string {
   return `Remaining task budget: ${duration(info.remaining)} (${percentage}%).`;
 }
 
-async function gitCommit(cwd: string, requested: string): Promise<{
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function nestedGitRepositories(root: string, depth = REPOSITORY_SEARCH_DEPTH): string[] {
+  const repositories: string[] = [];
+  const visit = (directory: string, remaining: number) => {
+    if (existsSync(path.join(directory, ".git"))) {
+      repositories.push(directory);
+      if (directory !== root) return;
+    }
+    if (remaining === 0) return;
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === ".git" || entry.name === ".letta" || entry.name === "node_modules") continue;
+      visit(path.join(directory, entry.name), remaining - 1);
+    }
+  };
+  visit(path.resolve(root), depth);
+  return repositories;
+}
+
+async function repositoryRoot(directory: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: directory,
+    timeout: 5_000,
+    maxBuffer: 64_000,
+  });
+  return path.resolve(stdout.trim());
+}
+
+async function resolvesCommit(repository: string, requested: string): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["rev-parse", "--verify", `${requested}^{commit}`], {
+      cwd: repository,
+      timeout: 5_000,
+      maxBuffer: 64_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveRepository(cwd: string, requested: string, supplied?: string): Promise<string> {
+  const workspace = path.resolve(cwd);
+  if (supplied) {
+    const candidate = path.resolve(workspace, supplied);
+    if (!isInside(workspace, candidate)) {
+      throw new Error(`repository must be inside the active workspace (${workspace})`);
+    }
+    const root = await repositoryRoot(candidate);
+    if (!isInside(workspace, root)) {
+      throw new Error(`repository root must be inside the active workspace (${workspace})`);
+    }
+    if (!await resolvesCommit(root, requested)) {
+      throw new Error(`commit ${requested} does not exist in ${root}`);
+    }
+    return root;
+  }
+
+  const candidates = new Set(nestedGitRepositories(workspace));
+  try {
+    const root = await repositoryRoot(workspace);
+    if (isInside(workspace, root)) candidates.add(root);
+  } catch {
+    // The task root may contain a nested repository rather than being one.
+  }
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    if (await resolvesCommit(candidate, requested)) matches.push(candidate);
+  }
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) {
+    const searched = [...candidates];
+    throw new Error(searched.length
+      ? `commit ${requested} was not found in: ${searched.join(", ")}`
+      : `no Git repository found within ${REPOSITORY_SEARCH_DEPTH} levels of ${workspace}`);
+  }
+  throw new Error(`commit ${requested} is ambiguous; pass repository explicitly. Matches: ${matches.join(", ")}`);
+}
+
+async function gitCommit(repository: string, requested: string): Promise<{
   full: string;
   short: string;
   subject: string;
   dirty: string;
+  head: string;
 }> {
-  const [{ stdout: full }, { stdout: dirty }] = await Promise.all([
+  const [{ stdout: full }, { stdout: dirty }, { stdout: head }] = await Promise.all([
     execFileAsync("git", ["rev-parse", "--verify", `${requested}^{commit}`], {
-      cwd,
+      cwd: repository,
       timeout: 5_000,
       maxBuffer: 64_000,
     }),
     execFileAsync("git", ["status", "--porcelain"], {
-      cwd,
+      cwd: repository,
       timeout: 5_000,
       maxBuffer: 256_000,
+    }),
+    execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repository,
+      timeout: 5_000,
+      maxBuffer: 64_000,
     }),
   ]);
   const hash = full.trim();
   const { stdout: subject } = await execFileAsync("git", ["show", "-s", "--format=%s", hash], {
-    cwd,
+    cwd: repository,
     timeout: 5_000,
     maxBuffer: 64_000,
   });
-  return { full: hash, short: hash.slice(0, 12), subject: subject.trim(), dirty: dirty.trim() };
+  return { full: hash, short: hash.slice(0, 12), subject: subject.trim(), dirty: dirty.trim(), head: head.trim() };
+}
+
+async function exportBundle(repository: string, commit: string, ctx: any): Promise<string | null> {
+  const configured = process.env.HORIZON_CHECKPOINT_DIR?.trim();
+  if (!configured) return null;
+  const destination = path.resolve(configured);
+  mkdirSync(destination, { recursive: true });
+  const scope = conversationKey(ctx).replace(/[^A-Za-z0-9._-]/g, "_");
+  const repositoryId = createHash("sha256").update(repository).digest("hex").slice(0, 12);
+  const filename = `${scope}-${path.basename(repository)}-${repositoryId}-${commit}.bundle`;
+  const finalPath = path.join(destination, filename);
+  const temporary = `${finalPath}.tmp-${process.pid}`;
+  await execFileAsync("git", ["bundle", "create", temporary, "HEAD"], {
+    cwd: repository,
+    timeout: 120_000,
+    maxBuffer: 1_000_000,
+  });
+  try {
+    await execFileAsync("git", ["bundle", "verify", temporary], {
+      cwd: repository,
+      timeout: 120_000,
+      maxBuffer: 1_000_000,
+    });
+    renameSync(temporary, finalPath);
+  } catch (error) {
+    try {
+      if (existsSync(temporary)) renameSync(temporary, `${temporary}.invalid`);
+    } catch {
+      // Preserve the original verification error.
+    }
+    throw error;
+  }
+  const manifestPath = `${finalPath}.json`;
+  const manifestTemporary = `${manifestPath}.tmp-${process.pid}`;
+  writeFileSync(manifestTemporary, `${JSON.stringify({
+    version: 1,
+    conversationId: conversationKey(ctx),
+    repository,
+    commit,
+    bundlePath: finalPath,
+    recordedAt: new Date().toISOString(),
+  }, null, 2)}\n`, "utf8");
+  renameSync(manifestTemporary, manifestPath);
+  return finalPath;
+}
+
+function checkpointKey(state: ConversationState): string | null {
+  const latest = state.submissions?.at(-1);
+  return latest ? `${latest.repository}:${latest.commit}` : null;
+}
+
+function assistantFingerprint(message: unknown): string | null {
+  const normalized = String(message ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
+}
+
+function completionMessage(message: unknown): boolean {
+  return /\b(task complete|completed|complete|finished|latest clean checkpoint|clean checkpoint)\b/i.test(String(message ?? ""));
 }
 
 function continuationPrompt(info: Awaited<ReturnType<typeof runtime>>, state: ConversationState): string {
-  const pending = state.pendingCommit
-    ? `Checkpoint ${state.pendingCommit.slice(0, 12)} is recorded, but final submission is not confirmed.`
-    : "No final submission is confirmed.";
+  const latest = state.submissions?.at(-1);
+  const checkpoint = latest
+    ? `Latest workspace checkpoint: ${latest.commit.slice(0, 12)} (\"${latest.subject}\").`
+    : "No workspace checkpoint has been recorded yet.";
   return [
     "<system-reminder>",
     "Horizon mode is active for this long-running task.",
     budgetLine(info),
-    pending,
+    checkpoint,
+    "Maintain /tmp/horizon/PROGRESS.md as a compact recovery ledger. Create it early, read it after compaction or continuation, and update it after objective measurements, checkpoints, strategy changes, and before long-running commands. Record the real baseline and best result, latest checkpoint, validation status, failed experiments, and next action.",
     "Continue working autonomously. Do not stop at a plausible implementation or a smoke test: measure the actual objective, search for another improvement, test held-out/generalization behavior, and preserve known-good checkpoints.",
-    "When certain the best clean commit is ready, call submit({commit}) once to record it, then call submit with the same commit as the only tool action of a later turn to confirm and end.",
+    "Use submit({commit}) whenever you have a better clean checkpoint. Checkpointing is nonterminal and does not end Horizon mode; the external task budget controls when work stops.",
+    `If you repeatedly report completion without using tools or producing a new checkpoint, Horizon pauses after ${STAGNANT_TURN_LIMIT} identical no-op turns.`,
     "</system-reminder>",
   ].join("\n");
 }
@@ -225,17 +382,20 @@ export default function activate(letta: any) {
   if (
     letta.capabilities.tools
     && letta.capabilities.events.turns
-    && letta.capabilities.events.tools
   ) {
     disposers.push(letta.tools.register({
       name: "submit",
-      description: "Record a clean git commit as a benchmark checkpoint. Call again with the same commit as the only tool action of a later turn to confirm the final submission and end the run.",
+      description: "Record a clean Git HEAD as the latest benchmark checkpoint without ending Horizon mode. Pass repository when the Git repository is nested below the active workspace.",
       parameters: {
         type: "object",
         properties: {
           commit: {
             type: "string",
             description: "Git commit hash or unambiguous revision to checkpoint.",
+          },
+          repository: {
+            type: "string",
+            description: "Optional repository path, relative to or inside the active workspace. Horizon otherwise searches the workspace and nested directories.",
           },
         },
         required: ["commit"],
@@ -253,10 +413,18 @@ export default function activate(letta: any) {
         if (!requested) return { status: "error", content: "commit is required" };
 
         let commit;
+        let repository;
         try {
-          commit = await gitCommit(ctx.cwd, requested);
+          repository = await resolveRepository(ctx.cwd, requested, String(ctx.args.repository ?? "").trim() || undefined);
+          commit = await gitCommit(repository, requested);
         } catch (error: any) {
           return { status: "error", content: `Cannot submit ${requested}: ${error?.stderr?.trim() || error?.message || "not a git commit"}` };
+        }
+        if (commit.full !== commit.head) {
+          return {
+            status: "error",
+            content: `Commit ${commit.short} is not HEAD of ${repository}. Commit or check out the exact checkpoint first (current HEAD: ${commit.head.slice(0, 12)}).`,
+          };
         }
         if (commit.dirty) {
           return {
@@ -265,32 +433,35 @@ export default function activate(letta: any) {
           };
         }
 
-        const samePending = state.pendingCommit === commit.full;
-        const laterTurn = (state.turnNumber ?? 0) > (state.pendingTurn ?? -1);
-        const onlyToolThisTurn = (state.toolsThisTurn ?? 0) <= 1;
-        const info = active;
-
-        if (samePending && laterTurn && onlyToolThisTurn) {
-          state.confirmed = true;
-          state.pendingCommit = null;
-          state.pendingTurn = null;
-          await saveState();
-          return `Final submission confirmed for ${commit.short} (\"${commit.subject}\"). Ending the session.`;
+        let bundlePath: string | null;
+        try {
+          bundlePath = await exportBundle(repository, commit.full, ctx);
+        } catch (error: any) {
+          return {
+            status: "error",
+            content: `Checkpoint ${commit.short} is clean, but external bundle export failed: ${error?.stderr?.trim() || error?.message || "unknown error"}`,
+          };
         }
+        const info = active;
 
         state.submissionCount = (state.submissionCount ?? 0) + 1;
         state.submissions = [
           ...(state.submissions ?? []),
-          { commit: commit.full, subject: commit.subject, recordedAt: new Date().toISOString() },
+          {
+            commit: commit.full,
+            subject: commit.subject,
+            repository,
+            recordedAt: new Date().toISOString(),
+            ...(bundlePath ? { bundlePath } : {}),
+          },
         ];
-        state.pendingCommit = commit.full;
-        state.pendingTurn = state.turnNumber ?? 0;
-        state.confirmed = false;
+        state.stagnantTurns = 0;
+        state.pausedForStagnation = false;
         await saveState();
-        const suffix = samePending && !laterTurn
-          ? " Confirmation must occur in a later turn."
-          : "";
-        return `Submission #${state.submissionCount} recorded from commit ${commit.short} (\"${commit.subject}\"). ${budgetLine(info)} You can continue working and submit again later; this checkpoint is preserved. If certain nothing more can be gained, call submit again with the same commit as your only tool action in a later turn to confirm the final submission.${suffix}`;
+        const durability = bundlePath
+          ? `Verified external bundle: ${bundlePath}.`
+          : "Workspace checkpoint only; HORIZON_CHECKPOINT_DIR is not configured, so this commit will not survive sandbox deletion.";
+        return `Submission #${state.submissionCount} recorded from ${repository} at commit ${commit.short} (\"${commit.subject}\"). ${durability} ${budgetLine(info)} Update /tmp/horizon/PROGRESS.md with this checkpoint and its validation evidence. This is nonterminal: continue improving and submit again when you have a better clean checkpoint.`;
       },
     }));
   }
@@ -306,7 +477,8 @@ export default function activate(letta: any) {
         if (["on", "off", "auto"].includes(action)) {
           state.mode = action as Mode;
           state.startedAt = Date.now();
-          state.confirmed = false;
+          state.pausedForStagnation = false;
+          state.stagnantTurns = 0;
           await saveState();
         } else if (action === "reset") {
           store.conversations[conversationKey(ctx)] = { mode: state.mode ?? "auto", startedAt: Date.now() };
@@ -322,8 +494,10 @@ export default function activate(letta: any) {
             `Horizon mode: ${current.mode ?? "auto"} (${info.active ? "active" : "inactive"})`,
             budgetLine(info),
             `Submissions: ${current.submissionCount ?? 0}`,
-            `Pending: ${current.pendingCommit?.slice(0, 12) ?? "none"}`,
-            `Final confirmed: ${current.confirmed ? "yes" : "no"}`,
+            `Latest checkpoint: ${current.submissions?.at(-1)?.commit.slice(0, 12) ?? "none"}`,
+            `Repository: ${current.submissions?.at(-1)?.repository ?? "none"}`,
+            `External bundle: ${current.submissions?.at(-1)?.bundlePath ?? "none"}`,
+            `Continuation: ${current.pausedForStagnation ? "paused after stagnant completion turns" : "running"}`,
           ].join("\n"),
         };
       },
@@ -334,11 +508,10 @@ export default function activate(letta: any) {
     disposers.push(letta.events.on("turn_start", async (event: any, ctx: any) => {
       const state = stateFor(ctx);
       const info = await runtime(ctx);
-      state.active = info.active;
       if (!info.active) {
         return;
       }
-      state.turnNumber = (state.turnNumber ?? 0) + 1;
+      state.pausedForStagnation = false;
       state.toolsThisTurn = 0;
       event.input = prependReminder(event.input, continuationPrompt(info, state));
       await saveState();
@@ -348,11 +521,32 @@ export default function activate(letta: any) {
     disposers.push(letta.events.on("turn_end", async (event: any, ctx: any) => {
       const state = stateFor(ctx);
       const info = await runtime(ctx);
-      await saveState();
-      if (!info.active || state.confirmed) return;
+      if (!info.active) return;
       if (info.remaining !== null && info.remaining <= info.reserve) return;
       const stop = String(event.stopReason ?? "").toLowerCase();
       if (/(error|cancel|interrupt|abort)/.test(stop)) return;
+
+      if (letta.capabilities.events.tools) {
+        const currentCheckpoint = checkpointKey(state);
+        const fingerprint = assistantFingerprint(event.assistantMessage);
+        const completionOnly = (state.toolsThisTurn ?? 0) === 0
+          && currentCheckpoint === (state.lastTurnCheckpoint ?? null)
+          && fingerprint !== null
+          && completionMessage(event.assistantMessage);
+        state.stagnantTurns = completionOnly
+          ? fingerprint === state.lastAssistantFingerprint
+            ? (state.stagnantTurns ?? 0) + 1
+            : 1
+          : 0;
+        state.lastTurnCheckpoint = currentCheckpoint;
+        state.lastAssistantFingerprint = fingerprint;
+        if ((state.stagnantTurns ?? 0) >= STAGNANT_TURN_LIMIT) {
+          state.pausedForStagnation = true;
+          await saveState();
+          return;
+        }
+      }
+      await saveState();
       return { continue: continuationPrompt(info, state) };
     }));
   }
@@ -360,14 +554,12 @@ export default function activate(letta: any) {
   if (letta.capabilities.events.tools) {
     disposers.push(letta.events.on("tool_start", async (event: any, ctx: any) => {
       const state = stateFor(ctx);
-      if (!state.active) return;
-      state.toolsThisTurn = (state.toolsThisTurn ?? 0) + 1;
       if (event.toolName !== "submit") {
-        state.pendingCommit = null;
-        state.pendingTurn = null;
-        state.confirmed = false;
+        state.toolsThisTurn = (state.toolsThisTurn ?? 0) + 1;
+        state.stagnantTurns = 0;
+        state.pausedForStagnation = false;
+        await saveState();
       }
-      await saveState();
     }));
   }
 
