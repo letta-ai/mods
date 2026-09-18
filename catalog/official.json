@@ -31,6 +31,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/jev-auto"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/memfs-search"
     },
     {
