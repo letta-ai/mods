@@ -29,13 +29,14 @@ Supported keys:
 - `TAVILY_API_KEY`
 - `PARALLEL_API_KEY`
 - `PERPLEXITY_API_KEY`
+- `YDC_API_KEY`
 
 Resolution order for each key:
 
 1. agent-scoped `/secret` store
 2. matching `process.env` variable
 
-Auto provider selection checks keys in this order: Exa, Tavily, Parallel, Perplexity. If no provider key is configured, the tool returns a normal error result with instructions to run `/secret set ... <value>`.
+Auto provider selection checks keys in this order: Exa, Tavily, Parallel, Perplexity, You.com. If no provider key is configured, the tool returns a normal error result with instructions to run `/secret set ... <value>`.
 
 Do not hardcode API keys or import private Letta Code secret internals.
 
@@ -45,6 +46,7 @@ Do not hardcode API keys or import private Letta Code secret internals.
 - Use `provider: "tavily"` for concise web answers plus ranked source results.
 - Use `provider: "perplexity"` for concise web-grounded answers with citations.
 - Use `provider: "parallel"` for LLM-optimized excerpts from targeted queries.
+- Use `provider: "youcom"` for web results with snippets and publication dates, with optional `freshness`, `country`, and `safesearch` filters.
 - Use `provider: "auto"` when any configured provider is acceptable.
 
 ## Behavior
