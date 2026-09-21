@@ -163,8 +163,9 @@ test("registers one unified tool and persists mixed affect in MemFS", async (t) 
 	);
 	assert.equal(transformed.input.length, 2);
 	assert.deepEqual(transformed.input[0], { role: "user", content: "hello" });
-	assert.equal(transformed.input[1].role, "system");
-	assert.match(transformed.input[1].content, /^<emotions version="2"/);
+	assert.equal(transformed.input[1].role, "user");
+	assert.match(transformed.input[1].content, /^<system-reminder>\n<emotions version="2"/);
+	assert.match(transformed.input[1].content, /<\/emotions>\n<\/system-reminder>$/);
 	assert.match(transformed.input[1].content, /secondary="custom-feeling"/);
 	assert.doesNotMatch(transformed.input[1].content, /free-form causes/);
 	assert.match(transformed.input[1].content, /<episode [^>]+\/>/);
@@ -175,14 +176,31 @@ test("registers one unified tool and persists mixed affect in MemFS", async (t) 
 			agentId: AGENT_ID,
 			input: [
 				transformed.input[0],
-				{ ...transformed.input[1], content: '<emotions version="2">stale' },
+				{ ...transformed.input[1], content: '<system-reminder>\n<emotions version="2">stale</emotions>\n</system-reminder>' },
 			],
 		},
 		ctx,
 	);
 	assert.equal(unchanged.input.length, 2);
+	assert.equal(unchanged.input[1].role, "user");
 	assert.doesNotMatch(unchanged.input[1].content, /stale/);
 	assert.match(unchanged.input[1].content, /revision="1"/);
+
+	const deduped = app.events.get("turn_start")(
+		{
+			agentId: AGENT_ID,
+			input: [
+				transformed.input[0],
+				{ ...transformed.input[1], content: '<system-reminder>\n<emotions version="2">stale 1</emotions>\n</system-reminder>' },
+				{ role: "system", content: '<emotions version="2">stale 2</emotions>' },
+			],
+		},
+		ctx,
+	);
+	assert.equal(deduped.input.length, 2);
+	assert.equal(deduped.input[1].role, "user");
+	assert.doesNotMatch(deduped.input[1].content, /stale/);
+	assert.match(deduped.input[1].content, /revision="1"/);
 
 	assert.match(
 		app.tools.get("emotions").run({
@@ -535,5 +553,109 @@ test("advances decay timestamps and supports reappraisal, resolution, and reset"
 	assert.equal(
 		state.episodes.find((episode) => episode.id === episodeId).status,
 		"resolved",
+	);
+});
+
+test("proves Local actually delivers injected emotions context to provider context", async (t) => {
+	const app = createHarness();
+	t.after(() => app.dispose());
+	const ctx = await temporaryContext(t);
+
+	app.tools.get("emotions").run({
+		...ctx,
+		args: {
+			action: "feel",
+			feelings: [{ name: "curiosity", intensity: 0.7 }],
+			cause: "Test Local ingestion delivery",
+		},
+	});
+
+	// The Local backend ingestion pipeline (LocalStore.appendTurnInput in letta-code):
+	// Local ingests approvals and messages with role === "user". Messages with
+	// other roles (such as role === "system") are silently dropped before reaching
+	// the provider context (uiMessages).
+	function localIngestTurn(turnInput, conversationHistory = []) {
+		const ingested = [...conversationHistory];
+		for (const message of turnInput) {
+			if (message.type === "approval") {
+				continue;
+			}
+			if (message.role === "user") {
+				ingested.push({
+					id: `msg-${ingested.length + 1}`,
+					role: "user",
+					content:
+						typeof message.content === "string"
+							? message.content
+							: JSON.stringify(message.content),
+				});
+			}
+		}
+		return ingested;
+	}
+
+	// 1. Prove the failure mode: a system-role message is dropped by Local ingestion
+	const buggySystemTurn = [
+		{ type: "message", role: "user", content: "Hello" },
+		{
+			type: "message",
+			role: "system",
+			content: '<emotions version="2">state</emotions>',
+		},
+	];
+	const droppedDelivery = localIngestTurn(buggySystemTurn);
+	assert.equal(droppedDelivery.length, 1);
+	assert.equal(droppedDelivery[0].content, "Hello");
+	assert.ok(!droppedDelivery.some((m) => m.content.includes("<emotions")));
+
+	// 2. Turn 1: execute turn_start with user input through the emotions mod
+	const turn1Event = {
+		agentId: AGENT_ID,
+		input: [
+			{ type: "message", role: "user", content: "Hello from user turn 1" },
+		],
+	};
+	const turn1Transformed = app.events.get("turn_start")(turn1Event, ctx);
+
+	// Ingest turn 1 through Local
+	const turn1History = localIngestTurn(turn1Transformed.input);
+	assert.equal(turn1History.length, 2);
+	assert.equal(turn1History[0].content, "Hello from user turn 1");
+	assert.match(
+		turn1History[1].content,
+		/^<system-reminder>\n<emotions version="2"/,
+	);
+	assert.match(turn1History[1].content, /primary="curiosity"/);
+	assert.match(turn1History[1].content, /<\/emotions>\n<\/system-reminder>$/);
+
+	// Verify that provider context actually contains the emotions XML
+	const providerContext = turn1History.map((m) => m.content).join("\n");
+	assert.match(providerContext, /<system-reminder>/);
+	assert.match(providerContext, /<emotions version="2"/);
+	assert.match(providerContext, /primary="curiosity"/);
+
+	// 3. Turn 2: prove multi-turn delivery and document transcript cost
+	// User sends a second turn; turn_start transforms the new turn's input
+	const turn2Event = {
+		agentId: AGENT_ID,
+		input: [
+			{
+				type: "message",
+				role: "user",
+				content: "Follow-up question in turn 2",
+			},
+		],
+	};
+	const turn2Transformed = app.events.get("turn_start")(turn2Event, ctx);
+
+	// Local ingests turn 2 into existing conversation history
+	const turn2History = localIngestTurn(turn2Transformed.input, turn1History);
+	// Proves transcript accumulation: 2 messages from turn 1 + 2 messages from turn 2 = 4 messages.
+	// User-role path persists one extra message per turn with no cross-turn deduplication.
+	assert.equal(turn2History.length, 4);
+	assert.equal(turn2History[2].content, "Follow-up question in turn 2");
+	assert.match(
+		turn2History[3].content,
+		/^<system-reminder>\n<emotions version="2"/,
 	);
 });
