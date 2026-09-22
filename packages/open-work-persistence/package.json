@@ -1,0 +1,32 @@
+{
+  "name": "open-work-persistence",
+  "version": "0.1.0",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "persistence",
+    "auto-continue",
+    "open-work"
+  ],
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "mods/open-work-persistence.ts"
+    ]
+  },
+  "description": "Letta Code mod that lets an agent resume its own declared open work: chains follow-up turns after turn_end while a guarded registry declares work open.",
+  "author": "Cyan Society (Ezra Cyan)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/mods.git",
+    "directory": "packages/open-work-persistence"
+  }
+}
