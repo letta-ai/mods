@@ -13,20 +13,28 @@
   "files": [
     "README.md",
     "MOD.md",
-    "mods"
+    "mods",
+    "tests"
   ],
   "letta": {
     "manifestVersion": 1,
     "mods": [
       "mods/open-work-persistence.ts"
-    ]
+    ],
+    "capabilities": ["events.turns"]
   },
-  "description": "Letta Code mod that lets an agent resume its own declared open work: chains follow-up turns after turn_end while a guarded registry declares work open.",
+  "description": "Letta Code mod for explicitly declared, identity-scoped, budgeted turn continuation.",
   "author": "Cyan Society (Ezra Cyan)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/letta-ai/mods.git",
     "directory": "packages/open-work-persistence"
+  },
+  "scripts": {
+    "test": "node --loader ./tests/typescript-loader.mjs --test tests/identity.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

@@ -1,28 +1,39 @@
+---
+name: open-work-persistence
+description: Identity-scoped, budgeted continuation for explicitly declared open work.
+---
+
 # open-work-persistence
 
-## Purpose
+## Purpose and scope
 
-Lets an agent resume its own declared open work by chaining a follow-up turn
-after `turn_end`, instead of depending on a user message to continue.
+Bounded continuation of explicitly authorized work. Entry point:
+`mods/open-work-persistence.ts`. Installing the mod does not create or arm a
+registry. See README for the complete v2 contract and manual opt-in process.
 
 ## Behavior
 
-- Subscribes to the `turn_end` event (guarded by `letta.capabilities.events.turns`).
-- Reads a JSON registry (`OPEN_WORK_REGISTRY`, default `/var/lib/letta/workspace/OPEN-WORK.json`).
-- When the registry declares open work (same conversation, < 6h old, budget > 0),
-  decrements `chain_budget` on disk **before** chaining, then returns
-  `{ continue: "..." }` — the harness-native turn-chaining contract — instructing
-  the agent to continue the declared task or mark it done.
-- Never chains on malformed registry, wrong conversation, stale declaration, or
-  exhausted budget; reports a diagnostic instead.
+- Guard registration with `capabilities.events.turns` and `events.on`.
+- Subscribe to `turn_end`; accept only the verified normal `end_turn` stop reason.
+- Route by event `agentId` AND `conversationId`; reject missing/unsafe IDs.
+- Use `<OPEN_WORK_REGISTRY_ROOT>/<agentId>/<conversationId>.json`, default root
+  under the running user's home at `~/.letta/open-work-v2`. Ignore the old
+  shared registry override.
+- Require schema 2, exact embedded identity, open status, bounded integer budget,
+  nonblank task, and a canonical nonfuture timestamp less than six hours old.
+- Serialize with exclusive lock; durably decrement before returning `{continue}`.
+  Never refresh declaration age or replenish budgets. Any failure means no chain.
+- Return a disposer that unsubscribes and disables even retained handler references.
 
-## Entry points
+## Safety and limitations
 
-- `mods/open-work-persistence.ts`
+No registry creation/migration/arming, model calls, or cross-session waking.
+No legacy unscoped records. No stale-lock stealing. Crashes may lose a unit but
+must not refund it. Manual writers must be quiescent or follow the lock protocol.
+Routing isolation is not same-UID security isolation. Trusted event identity,
+trusted local directories, and cooperative filesystem writers are prerequisites.
+No unique turn ID is provided by the public event, so exactly-once delivery or
+deduplication of repeated notifications cannot be promised; the durable total
+budget remains bounded. Unknown/non-normal stop reasons are refused.
 
-## Safety
-
-- Durable budget prevents runaway loops; decrement happens before the chained turn.
-- Staleness window (6h) prevents acting on outdated declarations.
-- Conversation scoping prevents cross-conversation chaining.
-- Registry read/write failures fail closed (no chain).
+`npm test` runs synthetic handler and multiprocess concurrency tests.

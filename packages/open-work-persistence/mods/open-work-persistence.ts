@@ -1,97 +1,120 @@
-// open-work-persistence — lets the agent resume declared open work without a
-// user message. The agent maintains a small registry file; when a turn ends
-// with work still open, this mod chains one follow-up turn, up to a durable
-// budget that prevents runaway loops. Cross-session resumption still needs a
-// cron or the next user message — this mod only continues an active session.
-//
-// Registry (JSON, agent-maintained), default path /var/lib/letta/workspace/OPEN-WORK.json
-// (override with OPEN_WORK_REGISTRY). Shape:
-//   {
-//     "task": "short description of the open work",
-//     "status": "open" | "done",
-//     "conversation": "default",           // only chain inside this conversation
-//     "chain_budget": 2,                    // max auto-chained turns, decremented durably
-//     "updated_at": "2026-09-12T...Z"      // older than 6h => stale, never chain
-//   }
-//
-// Guardrails: budget, staleness, conversation match, malformed file => never chain.
-
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+// Identity-scoped bounded continuation; never creates or replenishes declarations.
+import fs from "node:fs";
+import { join, isAbsolute } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
-const MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const MAX_BUDGET = 15;
+export function defaultRegistryRoot(home: string = homedir()): string {
+  return join(home, ".letta", "open-work-v2");
+}
+const DEFAULT_ROOT = defaultRegistryRoot();
+const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-interface OpenWork {
-  task?: unknown;
-  status?: unknown;
-  conversation?: unknown;
-  chain_budget?: unknown;
-  updated_at?: unknown;
+interface TurnEnd {
+  agentId?: unknown;
+  conversationId?: unknown;
+  stopReason?: unknown;
 }
 
-function registryPath(): string {
-  return process.env.OPEN_WORK_REGISTRY ?? "/var/lib/letta/workspace/OPEN-WORK.json";
+// IDs are opaque single path components, never inferred from process agent env.
+export function registryPath(root: string, agent: unknown, conversation: unknown): string | undefined {
+  if (!isAbsolute(root) || typeof agent !== "string" || !ID.test(agent) ||
+      typeof conversation !== "string" || !ID.test(conversation)) return;
+  return join(root, agent, `${conversation}.json`);
 }
 
-function readRegistry(): OpenWork | null {
+function consume(root: string, event: TurnEnd): { continue: string } | undefined {
+  const path = registryPath(root, event.agentId, event.conversationId);
+  if (!path || event.stopReason !== "end_turn") return;
+  const lock = `${path}.lock`;
+  let lockFd: number | undefined;
+  let fileFd: number | undefined;
+  let dirFd: number | undefined;
+  let temp: string | undefined;
+  let result: { continue: string } | undefined;
+  let failed = false;
   try {
-    const path = registryPath();
-    if (!existsSync(path)) return null;
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as OpenWork;
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
+    // Reject symlinked roots or ancestors in the trusted local registry tree.
+    // This is a deployment check, not a defense against hostile same-UID races.
+    if (fs.realpathSync.native(root) !== root || !fs.lstatSync(root).isDirectory()) return;
+    // Exclusive creation coordinates independent processes. Never steal stale locks.
+    lockFd = fs.openSync(lock, "wx", 0o600);
+    dirFd = fs.openSync(join(root, event.agentId as string),
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    fileFd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fileFd);
+    if (!stat.isFile() || stat.size > 16384) return;
+    const record = JSON.parse(fs.readFileSync(fileFd, "utf8"));
+    fs.closeSync(fileFd);
+    fileFd = undefined;
+    if (!record || Array.isArray(record) || record.schema_version !== 2 ||
+        record.agent_id !== event.agentId || record.conversation_id !== event.conversationId ||
+        record.status !== "open" || typeof record.task !== "string" ||
+        !record.task.trim() || record.task.length > 4096 ||
+        !Number.isSafeInteger(record.chain_budget) || record.chain_budget < 1 ||
+        record.chain_budget > MAX_BUDGET || typeof record.updated_at !== "string") return;
+    const updated = Date.parse(record.updated_at);
+    const now = Date.now();
+    // Canonical UTC timestamps only; no parser normalization or future declarations.
+    if (!Number.isFinite(updated) || new Date(updated).toISOString() !== record.updated_at ||
+        updated > now || now - updated >= MAX_AGE_MS) return;
+    const remaining = record.chain_budget - 1;
+    // Preserve declaration age: automatic turns must not refresh authorization.
+    const next = { ...record, chain_budget: remaining };
+    temp = `${path}.${randomUUID()}.tmp`;
+    fileFd = fs.openSync(temp, "wx", 0o600);
+    fs.writeFileSync(fileFd, JSON.stringify(next, null, 2) + "\n");
+    fs.fsyncSync(fileFd);
+    fs.closeSync(fileFd);
+    fileFd = undefined;
+    fs.renameSync(temp, path);
+    temp = undefined;
+    fs.fsyncSync(dirFd);
+    result = {
+      continue: `Automatic continuation (open-work-persistence, ${remaining} chain(s) left): ` +
+        `the declared open work is: ${record.task}. Continue only if genuinely still active and ` +
+        `within its original authorization. If complete or blocked, stop and mark this identity's ` +
+        `v2 registry done or blocked. Never replenish the budget automatically, bypass consent, ` +
+        `or start unrelated work.`,
+    };
   } catch {
-    return null;
+    failed = true; // Includes contention and every persistence failure: never chain.
+  } finally {
+    for (const fd of [fileFd, dirFd]) {
+      if (fd !== undefined) try { fs.closeSync(fd); } catch { failed = true; }
+    }
+    if (temp) try { fs.unlinkSync(temp); } catch { failed = true; }
+    if (lockFd !== undefined) {
+      try {
+        // A replaced lock pathname belongs to another owner. Retain our FD
+        // while comparing; never intentionally unlink a different inode.
+        const ours = fs.fstatSync(lockFd);
+        const current = fs.lstatSync(lock);
+        if (ours.dev !== current.dev || ours.ino !== current.ino) failed = true;
+        else fs.unlinkSync(lock);
+      } catch { failed = true; }
+      try { fs.closeSync(lockFd); } catch { failed = true; }
+    }
   }
+  return failed ? undefined : result;
 }
 
 export default function activate(letta: any) {
-  if (!letta.capabilities?.events?.turns || !letta.events) return;
-
-  return letta.events.on("turn_end", (event: any, _ctx: any) => {
-    const registry = readRegistry();
-    if (!registry) return;
-    if (registry.status !== "open") return;
-
-    // Only continue in the conversation where the work was declared.
-    const conversationId = event?.conversationId;
-    if (typeof conversationId !== "string" || registry.conversation !== conversationId) return;
-
-    // Stale declarations are never chained — the world may have moved on.
-    const updated = Date.parse(String(registry.updated_at ?? ""));
-    if (!Number.isFinite(updated) || Date.now() - updated > MAX_AGE_MS) {
-      letta.diagnostics?.report?.({
-        message: "OPEN-WORK.json is open but older than 6h — not chaining. Update or close it.",
-        severity: "warning",
-      });
-      return;
-    }
-
-    // Durable budget: decrement before chaining so a crash cannot reset it.
-    const budget = Number(registry.chain_budget);
-    if (!Number.isInteger(budget) || budget < 1) {
-      letta.diagnostics?.report?.({
-        message: "OPEN-WORK.json is open but chain_budget is exhausted or invalid — not chaining. Arrange a cron for cross-session resumption.",
-        severity: "warning",
-      });
-      return;
-    }
-    try {
-      const path = registryPath();
-      const next: OpenWork = { ...registry, chain_budget: budget - 1, updated_at: new Date().toISOString() };
-      writeFileSync(path, JSON.stringify(next, null, 2) + "\n");
-    } catch {
-      return; // could not persist the decrement — do not chain
-    }
-
-    const task = typeof registry.task === "string" ? registry.task : "the open task";
-    return {
-      continue:
-        `Automatic continuation (open-work-continuity mod, ${budget - 1} chain(s) left): ` +
-        `the declared open work is: ${task}. Continue it now if genuinely still active and within ` +
-        `its original authorization. If it is complete or blocked, update OPEN-WORK.json ` +
-        `(status "done", or the precise blocker) and stop. Do not start unrelated new work.`,
-    };
+  if (!letta.capabilities?.events?.turns || typeof letta.events?.on !== "function") return;
+  // Capture configuration, not identity. Legacy OPEN_WORK_REGISTRY is never read.
+  const root = process.env.OPEN_WORK_REGISTRY_ROOT ?? DEFAULT_ROOT;
+  let disposed = false;
+  const unsubscribe = letta.events.on("turn_end", (event: TurnEnd) => {
+    if (disposed || !event || typeof event !== "object") return;
+    return consume(root, event);
   });
+  return () => {
+    disposed = true;
+    if (typeof unsubscribe === "function") unsubscribe();
+  };
 }
 
-export const __file = import.meta.url ? fileURLToPath(import.meta.url) : undefined;
+export const __file = fileURLToPath(import.meta.url);
