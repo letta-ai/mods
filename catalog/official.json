@@ -55,6 +55,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/secrets-scrubber"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/spotify-statusline"
     },
     {
