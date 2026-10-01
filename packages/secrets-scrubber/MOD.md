@@ -15,15 +15,15 @@ The package registers one `tool_end` handler using the `events.tools` capability
 
 For every string tool result, the handler runs the local `@sanity-labs/secret-scan` detector plus narrow contextual rules for generic credential assignments and common authorization headers. It replaces matches with labeled redaction markers, preserves the original tool status, and passes clean results through without a replacement.
 
-The handler also recognizes Letta Code's exact overflow and background-output breadcrumb lines. It rewrites a referenced file only when all of these checks pass:
+The handler also recognizes Letta Code's exact overflow and background-output breadcrumb lines. It rewrites a referenced immutable overflow file only when all of these checks pass:
 
 - the path is absolute;
 - the parent resolves to a known Letta Code output directory;
-- the filename matches a harness-generated overflow or background-task shape;
+- the filename matches the harness-generated overflow-file shape;
 - the target opens without following symlinks and is a regular file;
 - the same file identity is still present immediately before atomic replacement.
 
-Known background task files are recorded at launch. Inline reads are always scanned, but the file itself is rewritten only after TaskOutput reports `completed` or `failed`; this avoids racing an active writer and losing appended output.
+Background logs named `bash_<n>.log` or `task_<n>.log` are never rewritten, whether discovered through Bash, Task, Monitor, or Workflow output or passed to the exported file scanner. The public mod API cannot establish that all writers have closed a background log, so replacing one could lose later appends. Inline background tool results handled through `tool_end` are still scanned and redacted before entering conversation history. Completion notifications delivered as messages are outside this mod's scope.
 
 ## Failure behavior
 
