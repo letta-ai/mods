@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/web-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Letta Code mod package that adds provider-backed web search tools using agent-scoped secrets.",
   "author": "carenthomas",
   "license": "Apache-2.0",
@@ -13,7 +13,8 @@
     "exa",
     "tavily",
     "perplexity",
-    "parallel"
+    "parallel",
+    "youcom"
   ],
   "repository": {
     "type": "git",

@@ -31,7 +31,8 @@ If semantic or hybrid search fails because QMD is unavailable, retry with `mode:
 ## Important behavior
 
 - The tool reads local markdown memory files from the current agent's MemFS projection.
-- The tool first checks `MEMORY_DIR`, then common Letta local memory paths for `ctx.agent.id`.
+- The tool first checks `ctx.memfs.memoryDir`, then `MEMORY_DIR`, then common Letta local memory paths for `ctx.agent.id`.
+- `status` shows relevant field availability and all candidate paths checked, without printing environment values.
 - Keyword search skips large files over 1 MB and searches `.md` files only.
 - QMD modes use collection name `memory` and `--no-rerank` to avoid surprise reranker/model downloads.
 - The tool is read-only and marked `parallelSafe: true`.

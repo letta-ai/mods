@@ -1,7 +1,7 @@
 {
-  "name": "@letta-ai/memfs-search",
+  "name": "@letta-ai/retitle-conversation",
   "version": "0.1.1",
-  "description": "Letta Code mod package that adds an agent-callable MemFS memory search tool.",
+  "description": "Letta Code mod package that lets agents update the current conversation title.",
   "author": "just-cameron",
   "license": "MIT",
   "type": "module",
@@ -9,14 +9,13 @@
     "letta-package",
     "letta-mod",
     "letta-code",
-    "memfs",
-    "memory-search",
-    "qmd"
+    "conversation-title",
+    "retitle"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/letta-ai/mods.git",
-    "directory": "packages/memfs-search"
+    "directory": "packages/retitle-conversation"
   },
   "files": [
     "README.md",
@@ -27,16 +26,16 @@
   "letta": {
     "manifestVersion": 1,
     "mods": [
-      "./mods/index.mjs"
+      "./mods/index.ts"
     ],
     "capabilities": [
       "tools"
     ],
     "engines": {
-      "lettaCodeCli": ">=0.27.14"
+      "lettaCodeCli": ">=0.30.21"
     }
   },
   "scripts": {
-    "test": "node --test test.mjs"
+    "test": "node --experimental-strip-types --test test.mjs"
   }
 }

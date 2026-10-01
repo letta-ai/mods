@@ -1,5 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { access, readdir, readFile, stat } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -10,23 +11,45 @@ const MAX_FILE_BYTES = 1_000_000;
 const COLLECTION_NAME = "memory";
 const QMD_TIMEOUT_MS = 60_000;
 
-function candidateMemoryDirs(ctx) {
+function candidateMemoryDirs(ctx, options = {}) {
   const candidates = [];
-  if (process.env.MEMORY_DIR) candidates.push(process.env.MEMORY_DIR);
+  const add = (source, value) => {
+    if (!value || typeof value !== "string") return;
+    const candidate = path.resolve(value);
+    if (!candidates.some((entry) => entry.path === candidate)) {
+      candidates.push({ source, path: candidate });
+    }
+  };
+
+  add("ctx.memfs.memoryDir", ctx?.memfs?.memoryDir);
+  add("env.MEMORY_DIR", process.env.MEMORY_DIR);
+
   const agentId = ctx?.agent?.id || process.env.AGENT_ID || "";
-  const home = process.env.HOME || "";
+  let home = "";
+  try {
+    home = options.homeDir ?? homedir();
+  } catch {
+    // Leave home empty when the operating system cannot resolve it.
+  }
   if (home && agentId) {
-    candidates.push(path.join(home, ".letta", "lc-local-backend", "memfs", agentId, "memory"));
-    candidates.push(path.join(home, ".letta", "agents", agentId, "memory"));
+    add(
+      "local-backend fallback",
+      path.join(home, ".letta", "lc-local-backend", "memfs", agentId, "memory"),
+    );
+    add(
+      "cloud-agent fallback",
+      path.join(home, ".letta", "agents", agentId, "memory"),
+    );
   }
   return candidates;
 }
 
 function memoryDir(ctx) {
-  for (const candidate of candidateMemoryDirs(ctx)) {
-    if (candidate && existsSync(candidate)) return candidate;
+  const candidates = candidateMemoryDirs(ctx);
+  for (const candidate of candidates) {
+    if (existsSync(candidate.path)) return candidate.path;
   }
-  return candidateMemoryDirs(ctx)[0] || "";
+  return candidates[0]?.path || "";
 }
 
 function clampLimit(value) {
@@ -38,31 +61,121 @@ function clampLimit(value) {
 function qmdEnv(extraPath = "") {
   const env = { ...process.env };
   delete env.BUN_INSTALL;
-  if (extraPath) env.PATH = `${extraPath}:${env.PATH || ""}`;
+  if (extraPath) {
+    env.PATH = [extraPath, env.PATH || env.Path || ""]
+      .filter(Boolean)
+      .join(path.delimiter);
+  }
   return env;
 }
 
-async function commandExists(command) {
-  try {
-    await execFileAsync("sh", ["-lc", `command -v ${command}`], { env: qmdEnv(), timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
+function executableNames(command, platform = process.platform, env = process.env) {
+  if (platform !== "win32") return [command];
+  if (path.extname(command)) return [command];
+
+  // npm global installs include a PowerShell shim. Prefer it to .cmd so args can
+  // be passed through execFile without constructing a shell command string.
+  const extensions = [".exe", ".com", ".ps1"];
+  for (const extension of String(env.PATHEXT || ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)) {
+    if (!extensions.includes(extension)) extensions.push(extension);
   }
+  return extensions.map((extension) => `${command}${extension}`);
 }
 
-async function qmdBinDir() {
-  const { stdout } = await execFileAsync("sh", ["-lc", "command -v qmd"], { env: qmdEnv(), timeout: 5_000 });
-  return path.dirname(stdout.trim());
+async function resolveExecutable(command, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const pathValue = env.PATH || env.Path || "";
+  const directories = pathValue.split(path.delimiter).filter(Boolean);
+  for (const directory of directories) {
+    for (const name of executableNames(command, platform, env)) {
+      const candidate = path.resolve(directory, name);
+      try {
+        await access(
+          candidate,
+          platform === "win32" ? constants.F_OK : constants.X_OK,
+        );
+        return candidate;
+      } catch {
+        // Try the next candidate.
+      }
+    }
+  }
+  return null;
+}
+
+async function qmdExecutable() {
+  return await resolveExecutable("qmd");
+}
+
+async function commandExists(command) {
+  return Boolean(await resolveExecutable(command));
+}
+
+function commandInvocation(executable, args, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const powerShellExecutable = options.powerShellExecutable ?? "powershell.exe";
+  const extension = path.extname(executable).toLowerCase();
+  if (platform === "win32" && extension === ".ps1") {
+    return {
+      executable: powerShellExecutable,
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        executable,
+        ...args,
+      ],
+    };
+  }
+  if (platform === "win32" && (extension === ".cmd" || extension === ".bat")) {
+    return {
+      executable: powerShellExecutable,
+      // powershell.exe joins every argument after -Command into executable code.
+      // Carry the shim path and its arguments through the environment so queries
+      // remain data rather than becoming part of that command string.
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$qmdArgs = @(ConvertFrom-Json -InputObject $env:LETTA_QMD_SHIM_ARGS); & $env:LETTA_QMD_SHIM_PATH @qmdArgs",
+      ],
+      env: {
+        LETTA_QMD_SHIM_PATH: executable,
+        LETTA_QMD_SHIM_ARGS: JSON.stringify(args),
+      },
+    };
+  }
+  return { executable, args };
+}
+
+async function execQmd(args, options = {}) {
+  const executable = await qmdExecutable();
+  if (!executable) throw new Error("qmd executable not found on PATH");
+  const invocation = commandInvocation(executable, args);
+  return await execFileAsync(invocation.executable, invocation.args, {
+    ...options,
+    env: {
+      ...qmdEnv(path.dirname(executable)),
+      ...invocation.env,
+    },
+  });
 }
 
 async function runQmd(args, cwd) {
   // QMD can break when Bun's sqlite runtime is selected; unset BUN_INSTALL.
   // Prefer the Node binary next to qmd so native sqlite modules match the qmd install.
-  const binDir = await qmdBinDir();
-  const { stdout, stderr } = await execFileAsync("qmd", args, {
+  const { stdout, stderr } = await execQmd(args, {
     cwd,
-    env: qmdEnv(binDir),
     timeout: QMD_TIMEOUT_MS,
     maxBuffer: 2 * 1024 * 1024,
   });
@@ -71,7 +184,7 @@ async function runQmd(args, cwd) {
 
 async function qmdFilesArgs() {
   try {
-    const { stdout } = await execFileAsync("qmd", ["query", "--help"], { env: qmdEnv(await qmdBinDir()), timeout: 5_000 });
+    const { stdout } = await execQmd(["query", "--help"], { timeout: 5_000 });
     return stdout.includes("--format") ? ["--format", "files"] : ["--files"];
   } catch {
     return ["--files"];
@@ -244,11 +357,31 @@ Try mode=keyword, or run the memfs-search skill setup/reindex flow.`,
 }
 
 async function status(ctx) {
+  const candidates = candidateMemoryDirs(ctx);
   const root = memoryDir(ctx);
   const lines = [];
   lines.push(`MEMORY_DIR: ${root || "not set"}`);
   lines.push(`exists: ${root && existsSync(root) ? "yes" : "no"}`);
-  lines.push(`qmd: ${(await commandExists("qmd")) ? "available" : "not found"}`);
+  lines.push("context:");
+  lines.push(`- ctx.memfs.memoryDir: ${ctx?.memfs?.memoryDir ? "set" : "not set"}`);
+  lines.push(`- ctx.agent.id: ${ctx?.agent?.id ? "set" : "not set"}`);
+  lines.push(`- env.MEMORY_DIR: ${process.env.MEMORY_DIR ? "set" : "not set"}`);
+  lines.push(`- env.AGENT_ID: ${process.env.AGENT_ID ? "set" : "not set"}`);
+  lines.push(`- env.HOME: ${process.env.HOME ? "set" : "not set"}`);
+  lines.push(`- env.USERPROFILE: ${process.env.USERPROFILE ? "set" : "not set"}`);
+  lines.push("candidates:");
+  if (candidates.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const candidate of candidates) {
+      lines.push(
+        `- ${candidate.source}: ${candidate.path} (exists: ${existsSync(candidate.path) ? "yes" : "no"})`,
+      );
+    }
+  }
+  const resolvedQmd = await qmdExecutable();
+  lines.push(`qmd: ${resolvedQmd ? "available" : "not found"}`);
+  if (resolvedQmd) lines.push(`qmd_path: ${resolvedQmd}`);
   if (root && existsSync(root)) {
     const count = (await walkMarkdown(root)).length;
     lines.push(`markdown_files: ${count}`);
@@ -303,3 +436,11 @@ export default function activate(letta) {
     },
   });
 }
+
+export const __test = {
+  candidateMemoryDirs,
+  commandInvocation,
+  executableNames,
+  qmdEnv,
+  resolveExecutable,
+};

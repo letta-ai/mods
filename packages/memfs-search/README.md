@@ -52,12 +52,16 @@ Status check:
 
 If QMD is unavailable, use `mode: "keyword"`.
 
+QMD discovery uses the current process `PATH` on macOS, Linux, and Windows. Windows npm PowerShell/command shims are supported without relying on a Unix `sh` executable.
+
 ## Memory path detection
 
-The mod first uses `MEMORY_DIR` when present. If not present in the mod runtime, it falls back to common local Letta memory paths using the current agent id:
+The mod checks the invocation-scoped `ctx.memfs.memoryDir` first, then `MEMORY_DIR` when present. If neither points to an existing directory, it falls back to common local Letta memory paths using `ctx.agent.id` (or `AGENT_ID`) and Node's cross-platform home-directory resolution:
 
 - `~/.letta/lc-local-backend/memfs/<agent-id>/memory`
 - `~/.letta/agents/<agent-id>/memory`
+
+`status` reports which context/environment fields were available and lists each candidate path with its existence result. It reports field availability rather than environment values to avoid exposing unrelated configuration.
 
 ## Safety
 

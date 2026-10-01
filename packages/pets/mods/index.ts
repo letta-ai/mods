@@ -173,8 +173,10 @@ function renderLines(): string[] {
   return [`${state.name} the ${pet.label}`, ...frame];
 }
 
-function rightPad(lines: string[]): string[] {
-  return lines.map((line) => `${" ".repeat(150)}${line}`);
+function rightAlign(lines: string[], width: number): string[] {
+  const blockWidth = Math.max(0, ...lines.map((line) => line.length));
+  const padding = " ".repeat(Math.max(0, width - blockWidth));
+  return lines.map((line) => `${padding}${line}`);
 }
 
 let panel: any = null;
@@ -199,7 +201,8 @@ export default function activate(letta: any) {
       panel = letta.ui.openPanel({
         id: "pets",
         order: 10_000,
-        render: () => rightPad(renderLines()),
+        render: ({ width }: { width: number }) =>
+          rightAlign(renderLines(), width),
       });
     } else {
       panel.update();

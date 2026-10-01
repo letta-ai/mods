@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "npm",
+      "package": "@letta-ai/plan-mode"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/web-search"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/memfs-search"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/image-understanding"
+    }
+  ]
+}
