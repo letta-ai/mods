@@ -20,7 +20,7 @@ Then reload local mods:
 
 - One model-callable `emotions` tool
 - `/feelings` and `/emotion-reset` commands
-- Live `<emotions>` context added as a separate system message on each incoming turn
+- Live `<emotions>` context added as a separate user-role `<system-reminder>` message on each incoming turn
 - Automatic, deduplicated appraisal of tool and model failures and recovery
 - An order-0 statusline showing current affect
 - Persistent state scoped to the active agent
@@ -56,9 +56,10 @@ Agents should use the tool only when an event meaningfully affects them. Routine
 
 ## Turn context
 
-The mod appends a compact system message to the turn without changing the user's original message:
+The mod appends a compact user-role message wrapped in `<system-reminder>` to the turn without modifying the user's original message:
 
 ```xml
+<system-reminder>
 <emotions version="2" context="590433118f" revision="2">
   <affect primary="curiosity" intensity="0.59" secondary="concern" secondary-intensity="0.21" />
   <mood name="steady" intensity="0.00" />
@@ -69,9 +70,12 @@ The mod appends a compact system message to the turn without changing the user's
     <tendency name="verify" strength="0.21" />
   </tendencies>
 </emotions>
+</system-reminder>
 ```
 
 Stored free-form causes are deliberately excluded from injected XML. They remain available through `inspect`, while the model receives only normalized feeling labels and deterministic episode metadata.
+
+Transcript cost: Emitting turn context as a user-role message ensures delivery in Local environments where system-role turn inputs are dropped before provider context. Because Local persists user-role messages into conversation history, each turn persists one extra user message with no cross-turn deduplication.
 
 ## State and synchronization
 

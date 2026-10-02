@@ -1641,27 +1641,44 @@ function buildEmotionsXml(state: EmotionState): string {
 </emotions>`;
 }
 
+function buildEmotionsReminder(xml: string): string {
+	return `<system-reminder>\n${xml}\n</system-reminder>`;
+}
+
 function appendEmotionsContext(input: TurnInput[], xml: string): TurnInput[] {
+	const reminder = buildEmotionsReminder(xml);
 	let replaced = false;
-	const refreshed = input.map((item) => {
-		if (
-			!replaced &&
-			item.role === "system" &&
+	const refreshed: TurnInput[] = [];
+
+	for (const item of input) {
+		const isEmotionsMessage =
+			(item.role === "user" || item.role === "system") &&
 			typeof item.content === "string" &&
-			item.content.includes('<emotions version="2"')
-		) {
-			replaced = true;
-			return { ...item, content: xml };
+			item.content.includes('<emotions version="2"');
+
+		if (isEmotionsMessage) {
+			if (!replaced) {
+				refreshed.push({
+					...item,
+					type: "message",
+					role: "user",
+					content: reminder,
+				});
+				replaced = true;
+			}
+		} else {
+			refreshed.push(item);
 		}
-		return item;
-	});
+	}
+
 	if (replaced) return refreshed;
+
 	return [
 		...refreshed,
 		{
 			type: "message",
-			role: "system",
-			content: xml,
+			role: "user",
+			content: reminder,
 		},
 	];
 }
@@ -2347,3 +2364,9 @@ export default function activate(letta: LettaLike) {
 		}
 	};
 }
+
+export const __test = {
+	appendEmotionsContext,
+	buildEmotionsReminder,
+	buildEmotionsXml,
+};

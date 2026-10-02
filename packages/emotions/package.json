@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/emotions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Persistent computational affect for Letta Code agents, with mixed feelings, mood, emotional episodes, and soft action tendencies.",
   "author": "just-cameron",
   "license": "MIT",
