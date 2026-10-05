@@ -16,6 +16,10 @@
     {
       "type": "npm",
       "package": "@letta-ai/image-understanding"
+    },
+    {
+      "type": "npm",
+      "package": "@coda-rho-bot/oath-keeper"
     }
   ]
 }
