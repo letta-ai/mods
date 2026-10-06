@@ -1,25 +1,30 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import activate from "./mods/index.ts";
+import activate, { pruneStateFiles } from "./mods/index.ts";
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "letta-horizon-mode-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const statePath = join(root, "state.json");
+  const stateDir = join(root, "state");
   const memoryDir = join(root, "memory");
   const repo = join(root, "repo");
   await mkdir(join(memoryDir, "reference", "task"), { recursive: true });
   await mkdir(repo);
   await writeFile(join(memoryDir, "reference", "MEMORY.md"), "# Reference index\n- [Task](task/MEMORY.md)\n");
   await writeFile(join(memoryDir, "reference", "task", "MEMORY.md"), "# Task memory\nMeasure the real objective.\n");
+  const commit = await initRepository(repo, { "answer.txt": "first\n" });
+  return { root, stateDir, memoryDir, repo, commit };
+}
+
+async function initRepository(repo, files) {
   execFileSync("git", ["init", "-q"], { cwd: repo });
-  await writeFile(join(repo, "answer.txt"), "first\n");
-  execFileSync("git", ["add", "answer.txt"], { cwd: repo });
+  for (const [name, content] of Object.entries(files)) await writeFile(join(repo, name), content);
+  execFileSync("git", ["add", ...Object.keys(files)], { cwd: repo });
   execFileSync("git", ["commit", "-qm", "initial checkpoint"], {
     cwd: repo,
     env: {
@@ -30,20 +35,23 @@ async function fixture(t) {
       GIT_COMMITTER_EMAIL: "horizon@example.com",
     },
   });
-  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
-  return { root, statePath, memoryDir, repo, commit };
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+}
+
+async function storedState(f, conversationId) {
+  return JSON.parse(await readFile(join(f.stateDir, `${conversationId}.json`), "utf8"));
 }
 
 function harness(capabilities = {
   tools: true,
   commands: true,
   events: { turns: true, tools: true },
-}) {
+}, activateMod = activate) {
   const tools = new Map();
   const commands = new Map();
   const events = new Map();
   const disposers = [];
-  const dispose = activate({
+  const dispose = activateMod({
     capabilities,
     tools: {
       register(definition) {
@@ -90,10 +98,10 @@ function reminderText(input) {
 
 test("registers the Horizon command, tools, and continuation events", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "off";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
 
@@ -110,8 +118,8 @@ test("registers the Horizon command, tools, and continuation events", async (t) 
 
 test("does not advertise continuation controls on hosts without turn events", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
-  t.after(() => delete process.env.HORIZON_STATE_PATH);
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  t.after(() => delete process.env.HORIZON_STATE_DIR);
   const h = harness({ tools: true, commands: true, events: { turns: false, tools: false } });
   t.after(h.dispose);
 
@@ -122,10 +130,10 @@ test("does not advertise continuation controls on hosts without turn events", as
 
 test("injects reminders only while Horizon mode is active", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "off";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -154,12 +162,12 @@ test("auto mode follows sandbox-timer and stops inside the reserve", async (t) =
   await chmod(timer, 0o755);
   const previousPath = process.env.PATH;
   process.env.PATH = `${bin}:${previousPath}`;
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   delete process.env.HORIZON_MODE;
   process.env.HORIZON_TEST_REMAINING = "71000";
   t.after(() => {
     process.env.PATH = previousPath;
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_TEST_REMAINING;
   });
   const h = harness();
@@ -167,7 +175,7 @@ test("auto mode follows sandbox-timer and stops inside the reserve", async (t) =
   const ctx = context(f, "conv-auto");
 
   const transformed = await h.events.get("turn_start")({ input: [{ role: "user", content: "work" }] }, ctx);
-  assert.match(reminderText(transformed.input), /19h 43m/);
+  assert.match(reminderText(transformed.input), /19h 43m \(100%\)/);
   assert.match((await h.events.get("turn_end")({ stopReason: "end_turn" }, ctx)).continue, /Continue working/);
 
   process.env.HORIZON_TEST_REMAINING = "500";
@@ -176,10 +184,10 @@ test("auto mode follows sandbox-timer and stops inside the reserve", async (t) =
 
 test("records clean checkpoints and continues after repeated submissions", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -201,19 +209,19 @@ test("records clean checkpoints and continues after repeated submissions", async
   assert.match(second, /Submission #2 recorded/);
   assert.match((await turnEnd({ stopReason: "end_turn" }, ctx)).continue, /Checkpointing is nonterminal/);
 
-  const stored = JSON.parse(await readFile(f.statePath, "utf8"));
-  assert.equal(stored.conversations["conv-submit"].submissions.length, 2);
-  assert.equal(stored.conversations["conv-submit"].submissions[0].commit, f.commit);
-  assert.equal(stored.conversations["conv-submit"].submissions[0].repository, f.repo);
-  assert.equal(stored.conversations["conv-submit"].submissions[1].commit, f.commit);
+  const stored = await storedState(f, "conv-submit");
+  assert.equal(stored.submissions.length, 2);
+  assert.equal(stored.submissions[0].commit, f.commit);
+  assert.equal(stored.submissions[0].repository, f.repo);
+  assert.equal(stored.submissions[1].commit, f.commit);
 });
 
 test("discovers a nested repository and accepts an explicit repository path", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -231,11 +239,11 @@ test("discovers a nested repository and accepts an explicit repository path", as
 test("exports and verifies a checkpoint bundle when configured", async (t) => {
   const f = await fixture(t);
   const checkpointDir = join(f.root, "durable-checkpoints");
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   process.env.HORIZON_CHECKPOINT_DIR = checkpointDir;
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
     delete process.env.HORIZON_CHECKPOINT_DIR;
   });
@@ -244,8 +252,7 @@ test("exports and verifies a checkpoint bundle when configured", async (t) => {
 
   const result = await h.tools.get("submit").run({ ...context(f, "conv-bundle"), args: { commit: f.commit } });
   assert.match(result, /Verified external bundle:/);
-  const stored = JSON.parse(await readFile(f.statePath, "utf8"));
-  const bundle = stored.conversations["conv-bundle"].submissions[0].bundlePath;
+  const bundle = (await storedState(f, "conv-bundle")).submissions[0].bundlePath;
   assert.ok(bundle.startsWith(checkpointDir));
   execFileSync("git", ["bundle", "verify", bundle], { cwd: f.repo });
   const manifest = JSON.parse(await readFile(`${bundle}.json`, "utf8"));
@@ -253,12 +260,12 @@ test("exports and verifies a checkpoint bundle when configured", async (t) => {
   assert.equal(manifest.commit, f.commit);
 });
 
-test("pauses after three identical completion-only turns", async (t) => {
+test("pauses after three turns without tool calls or a new checkpoint, whatever the wording", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -266,25 +273,92 @@ test("pauses after three identical completion-only turns", async (t) => {
   const ctx = context(f, "conv-stagnant");
   const turnStart = h.events.get("turn_start");
   const turnEnd = h.events.get("turn_end");
-  const event = { stopReason: "end_turn", assistantMessage: "Task complete. Latest clean checkpoint: abc123." };
+  const toolStart = h.events.get("tool_start");
+  const submit = h.tools.get("submit");
 
+  // A first checkpoint is progress; resubmitting the same commit is not.
   await turnStart({ input: [{ role: "user", content: "work" }] }, ctx);
-  assert.ok((await turnEnd(event, ctx)).continue);
-  await turnStart({ input: [{ role: "user", content: "continue" }] }, ctx);
-  assert.ok((await turnEnd(event, ctx)).continue);
-  await turnStart({ input: [{ role: "user", content: "continue" }] }, ctx);
-  assert.equal(await turnEnd(event, ctx), undefined);
+  await toolStart({ toolName: "submit" }, ctx);
+  await submit.run({ ...ctx, args: { commit: f.commit } });
+  let result = await turnEnd({ stopReason: "end_turn", assistantMessage: "Submitted." }, ctx);
+  assert.ok(result.continue);
 
-  const stored = JSON.parse(await readFile(f.statePath, "utf8"));
-  assert.equal(stored.conversations["conv-stagnant"].pausedForStagnation, true);
+  const messages = ["Task complete.", "All done — waiting on you.", "I resubmitted the same commit."];
+  for (const [index, assistantMessage] of messages.entries()) {
+    await turnStart({ input: [{ role: "user", content: result.continue }] }, ctx);
+    if (index === 2) {
+      await toolStart({ toolName: "submit" }, ctx);
+      await submit.run({ ...ctx, args: { commit: f.commit } });
+    }
+    result = await turnEnd({ stopReason: "end_turn", assistantMessage }, ctx);
+    if (index < 2) assert.ok(result.continue, `turn ${index + 1} should continue`);
+  }
+  assert.equal(result, undefined);
+  assert.equal((await storedState(f, "conv-stagnant")).pausedForStagnation, true);
+
+  // New user input restarts the count.
+  await turnStart({ input: [{ role: "user", content: "keep going" }] }, ctx);
+  assert.ok((await turnEnd({ stopReason: "end_turn", assistantMessage: "Done." }, ctx)).continue);
+});
+
+test("does not inject a second reminder into continuation turns", async (t) => {
+  const f = await fixture(t);
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  process.env.HORIZON_MODE = "on";
+  t.after(() => {
+    delete process.env.HORIZON_STATE_DIR;
+    delete process.env.HORIZON_MODE;
+  });
+  const h = harness();
+  t.after(h.dispose);
+  const ctx = context(f, "conv-continuation");
+
+  await h.events.get("turn_start")({ input: [{ role: "user", content: "work" }] }, ctx);
+  await h.events.get("tool_start")({ toolName: "exec_command" }, ctx);
+  const { continue: text } = await h.events.get("turn_end")({ stopReason: "end_turn" }, ctx);
+  const input = [{ type: "message", role: "user", content: text }];
+  const result = await h.events.get("turn_start")({ input }, ctx);
+  assert.equal(result, undefined);
+  assert.equal(input[0].content, text);
+  assert.equal(text.split("Horizon mode is active").length - 1, 1);
+});
+
+test("auto mode uses the first observed sandbox-timer value as the total budget", async (t) => {
+  const f = await fixture(t);
+  const bin = join(f.root, "bin");
+  const timer = join(bin, "sandbox-timer");
+  await mkdir(bin);
+  await writeFile(timer, "#!/bin/sh\nprintf '%s\\n' \"${HORIZON_TEST_REMAINING}\"\n");
+  await chmod(timer, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  delete process.env.HORIZON_MODE;
+  delete process.env.TASK_BUDGET_SECS;
+  process.env.HORIZON_TEST_REMAINING = "7200";
+  t.after(() => {
+    process.env.PATH = previousPath;
+    delete process.env.HORIZON_STATE_DIR;
+    delete process.env.HORIZON_TEST_REMAINING;
+  });
+  const h = harness();
+  t.after(h.dispose);
+  const ctx = context(f, "conv-budget");
+
+  const first = await h.events.get("turn_start")({ input: [{ role: "user", content: "work" }] }, ctx);
+  assert.match(reminderText(first.input), /Remaining task budget: 2h 0m \(100%\)/);
+  assert.equal((await storedState(f, "conv-budget")).totalBudgetSecs, 7200);
+
+  process.env.HORIZON_TEST_REMAINING = "3600";
+  assert.match((await h.events.get("turn_end")({ stopReason: "end_turn" }, ctx)).continue, /1h 0m \(50%\)/);
 });
 
 test("productive tool use resets the stagnation breaker", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -301,10 +375,10 @@ test("productive tool use resets the stagnation breaker", async (t) => {
 
 test("rejects dirty checkpoints", async (t) => {
   const f = await fixture(t);
-  process.env.HORIZON_STATE_PATH = f.statePath;
+  process.env.HORIZON_STATE_DIR = f.stateDir;
   process.env.HORIZON_MODE = "on";
   t.after(() => {
-    delete process.env.HORIZON_STATE_PATH;
+    delete process.env.HORIZON_STATE_DIR;
     delete process.env.HORIZON_MODE;
   });
   const h = harness();
@@ -320,4 +394,86 @@ test("rejects dirty checkpoints", async (t) => {
 
   const result = await submit.run({ ...ctx, args: { commit: f.commit } });
   assert.match(result, /Submission #1 recorded/);
+});
+
+test("submit defaults to the workspace repository when nested repositories also match", async (t) => {
+  const f = await fixture(t);
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  process.env.HORIZON_MODE = "on";
+  t.after(() => {
+    delete process.env.HORIZON_STATE_DIR;
+    delete process.env.HORIZON_MODE;
+  });
+  const outer = join(f.root, "outer");
+  await mkdir(join(outer, "inner"), { recursive: true });
+  await initRepository(join(outer, "inner"), { "inner.txt": "inner\n" });
+  const outerCommit = await initRepository(outer, { ".gitignore": "inner/\n" });
+  const h = harness();
+  t.after(h.dispose);
+  const submit = h.tools.get("submit");
+
+  const result = await submit.run({ ...context(f, "conv-head"), cwd: outer, args: { commit: "HEAD" } });
+  assert.match(result, new RegExp(`recorded from ${outer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} at commit ${outerCommit.slice(0, 12)}`));
+
+  // From a non-repository root, HEAD is still ambiguous across nested repositories.
+  const ambiguous = await submit.run({ ...context(f, "conv-head"), cwd: f.root, args: { commit: "HEAD" } });
+  assert.equal(ambiguous.status, "error");
+  assert.match(ambiguous.content, /ambiguous/);
+});
+
+test("stores each conversation in its own file so separate processes do not clobber each other", async (t) => {
+  const f = await fixture(t);
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  process.env.HORIZON_MODE = "on";
+  t.after(() => {
+    delete process.env.HORIZON_STATE_DIR;
+    delete process.env.HORIZON_MODE;
+  });
+  // A second module instance stands in for a second Letta Code process.
+  const { default: activateOther } = await import("./mods/index.ts?second-process");
+  const first = harness();
+  const second = harness(undefined, activateOther);
+  t.after(first.dispose);
+  t.after(second.dispose);
+
+  await first.tools.get("submit").run({ ...context(f, "conv-a"), args: { commit: f.commit } });
+  await second.tools.get("submit").run({ ...context(f, "conv-b"), args: { commit: f.commit } });
+  await first.commands.get("horizon").run({ ...context(f, "conv-a"), args: "status" });
+  await first.events.get("turn_start")({ input: [{ role: "user", content: "work" }] }, context(f, "conv-a"));
+
+  assert.equal((await storedState(f, "conv-a")).submissionCount, 1);
+  assert.equal((await storedState(f, "conv-b")).submissionCount, 1);
+  assert.deepEqual((await readdir(f.stateDir)).sort(), ["conv-a.json", "conv-b.json"]);
+});
+
+test("caps submission history and prunes old conversation state", async (t) => {
+  const f = await fixture(t);
+  process.env.HORIZON_STATE_DIR = f.stateDir;
+  process.env.HORIZON_MODE = "on";
+  t.after(() => {
+    delete process.env.HORIZON_STATE_DIR;
+    delete process.env.HORIZON_MODE;
+  });
+  await mkdir(f.stateDir, { recursive: true });
+  const old = Array.from({ length: 60 }, (_, index) => ({
+    commit: f.commit,
+    subject: `old ${index}`,
+    repository: f.repo,
+    recordedAt: new Date(0).toISOString(),
+  }));
+  await writeFile(join(f.stateDir, "conv-history.json"), JSON.stringify({ mode: "on", submissionCount: 60, submissions: old }));
+  const h = harness();
+  t.after(h.dispose);
+
+  assert.match(await h.tools.get("submit").run({ ...context(f, "conv-history"), args: { commit: f.commit } }), /Submission #61/);
+  const stored = await storedState(f, "conv-history");
+  assert.equal(stored.submissions.length, 50);
+  assert.equal(stored.submissions.at(-1).subject, "initial checkpoint");
+
+  for (const [index, name] of ["conv-old.json", "conv-mid.json"].entries()) {
+    await writeFile(join(f.stateDir, name), "{}");
+    await utimes(join(f.stateDir, name), index + 1, index + 1);
+  }
+  pruneStateFiles(2);
+  assert.deepEqual((await readdir(f.stateDir)).sort(), ["conv-history.json", "conv-mid.json"]);
 });

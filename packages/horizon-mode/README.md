@@ -16,7 +16,7 @@ Run `/reload` after installation.
 
 Horizon mode defaults to `auto`:
 
-- It activates automatically when `sandbox-timer remaining` returns a numeric budget.
+- It activates automatically when `sandbox-timer remaining` returns a numeric budget. The first value observed in a conversation is used as the total budget for percentage reporting.
 - It stays inactive during ordinary sessions without that timer.
 
 Control it explicitly with:
@@ -31,7 +31,7 @@ Control it explicitly with:
 
 While active, the agent receives the remaining budget and is prompted to continue measuring, improving, and validating until the external budget reaches its reserve. The mod registers one tool:
 
-- `submit({ commit, repository? })` records a clean Git `HEAD` as the latest checkpoint without ending the run. `repository` may point to a nested repository such as `/app/generator`; otherwise Horizon searches the workspace and its first two directory levels for the repository containing the commit.
+- `submit({ commit, repository? })` records a clean Git `HEAD` as the latest checkpoint without ending the run. `repository` may point to a nested repository such as `/app/generator`; otherwise Horizon uses the repository containing the active workspace when the commit resolves there (so `HEAD` means the workspace repository), and falls back to searching the first two directory levels for the unique repository containing the commit.
 
 When `HORIZON_CHECKPOINT_DIR` is configured, `submit` creates and verifies a Git bundle in that directory before recording the checkpoint. The directory must be runner-owned or mounted durable storage if checkpoints need to survive sandbox deletion. Without it, Horizon explicitly reports that the record is workspace-only.
 
@@ -45,25 +45,28 @@ Environment variables override conversation state:
 | --- | --- |
 | `HORIZON_MODE=on` | Force Horizon mode on even without `sandbox-timer` |
 | `HORIZON_MODE=off` | Force Horizon mode off |
-| `TASK_BUDGET_SECS` | Total fallback budget; defaults to 72,000 seconds |
+| `TASK_BUDGET_SECS` | Total budget; overrides the first observed `sandbox-timer` value. Without either, defaults to 72,000 seconds |
 | `HORIZON_RESERVE_SECS` | Stop automatic continuation this many seconds before expiry; defaults to 600 |
 | `HORIZON_CHECKPOINT_DIR` | Optional runner-owned or mounted directory for verified Git checkpoint bundles |
+| `HORIZON_STATE_DIR` | Directory for per-conversation state files; defaults to `~/.letta/mods/horizon-mode` |
 
 When forced on without `sandbox-timer`, the fallback budget starts when the conversation first enters Horizon mode.
 
 ## State
 
-Conversation-scoped mode and checkpoint state is stored in:
+Conversation-scoped mode and checkpoint state is stored in one file per conversation, so concurrent Letta Code sessions do not overwrite each other:
 
 ```text
-~/.letta/mods/horizon-mode.state.json
+~/.letta/mods/horizon-mode/<conversation-id>.json
 ```
+
+Each file keeps the 50 most recent submissions. On activation, Horizon keeps the 200 most recently updated conversation files and deletes older ones.
 
 `submit` invokes fixed `git` commands in the active workspace. It rejects repository paths outside that workspace, commits other than the selected repository's `HEAD`, and dirty worktrees. When checkpoint export is configured, it also writes verified Git bundles to `HORIZON_CHECKPOINT_DIR`. The mod does not use a shell, network access, or secrets.
 
 ## Stagnation protection
 
-Horizon pauses automatic continuation after three identical completion responses in consecutive turns when the actor used no non-submission tools and produced no new checkpoint. One premature completion is still continued; repeated no-op completion turns do not consume the remaining model budget. Any later user turn or productive tool use clears the pause.
+Horizon pauses automatic continuation after three consecutive turns in which the agent called no tool other than `submit` and the latest checkpoint did not change, regardless of what the agent wrote. Resubmitting the same commit does not count as progress. One or two idle turns are still continued; repeated no-op turns do not consume the remaining budget. A new user message or `/horizon on|off|auto` clears the pause and restarts the count.
 
 ## Recovery
 

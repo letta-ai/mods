@@ -22,7 +22,7 @@ While Horizon mode is active, the agent should:
 5. Validate correctness, held-out behavior, and regressions throughout the run.
 6. Keep the latest submission pointed at the best validated result before the budget expires.
 
-Horizon mode automatically starts another model turn when the agent ends while more than the configured reserve remains. It does not continue after cancellation, interruption, errors, budget reserve, or three consecutive identical completion-only turns with no productive tool calls or checkpoint change. Submitting a checkpoint never ends the run.
+Horizon mode automatically starts another model turn when the agent ends while more than the configured reserve remains. It does not continue after cancellation, interruption, errors, budget reserve, or three consecutive turns with no tool call other than `submit` and no checkpoint change, whatever the turn's text. Submitting a checkpoint never ends the run.
 
 ## Commands
 
@@ -32,7 +32,7 @@ Horizon mode automatically starts another model turn when the agent ends while m
 
 ### `submit`
 
-The tool accepts a Git commit or revision and an optional `repository` path. A supplied path must remain inside the active workspace. Without one, Horizon searches the workspace and nested directories to find the unique repository containing the commit. This supports task layouts such as `/app/generator` beneath a non-repository `/app` root.
+The tool accepts a Git commit or revision and an optional `repository` path. A supplied path must remain inside the active workspace. Without one, Horizon uses the repository containing the active workspace when the commit resolves there, so `HEAD` refers to the workspace repository. Otherwise it searches nested directories for the unique repository containing the commit. This supports task layouts such as `/app/generator` beneath a non-repository `/app` root.
 
 The commit must be that repository's current `HEAD`, and its worktree must be clean, so a checkpoint identifies all submitted changes. If `HORIZON_CHECKPOINT_DIR` is configured, Horizon creates and verifies a Git bundle there before recording the checkpoint. That directory must be backed by runner-owned or mounted durable storage to survive sandbox deletion; otherwise the checkpoint remains workspace-local and Horizon says so explicitly.
 
@@ -46,4 +46,4 @@ Update `/tmp/horizon/PROGRESS.md` after submitting so later turns and post-compa
 - Keep continuation conditional on a live budget; do not create an unbounded automatic loop in `auto` mode.
 - Keep checkpoint validation read-only. The mod must never commit, reset, or modify the user's repository.
 - Keep repository discovery bounded and reject paths outside the active workspace.
-- Keep state scoped by conversation ID. Bundle export is opt-in and must complete verification before a checkpoint is described as externally preserved.
+- Keep state scoped by conversation ID, with one state file per conversation. Bundle export is opt-in and must complete verification before a checkpoint is described as externally preserved.

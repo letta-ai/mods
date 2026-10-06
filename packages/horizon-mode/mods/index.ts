@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -17,6 +19,9 @@ const DEFAULT_BUDGET_SECS = 72_000;
 const DEFAULT_RESERVE_SECS = 600;
 const STAGNANT_TURN_LIMIT = 3;
 const REPOSITORY_SEARCH_DEPTH = 2;
+const MAX_SUBMISSIONS = 50;
+const MAX_CONVERSATION_FILES = 200;
+const REMINDER_MARKER = "Horizon mode is active for this long-running task.";
 
 type Mode = "auto" | "on" | "off";
 
@@ -33,69 +38,110 @@ type ConversationState = {
   startedAt?: number;
   submissionCount?: number;
   submissions?: Submission[];
+  /** Total budget inferred from the first observed sandbox-timer value. */
   totalBudgetSecs?: number;
   toolsThisTurn?: number;
   lastTurnCheckpoint?: string | null;
-  lastAssistantFingerprint?: string | null;
   stagnantTurns?: number;
   pausedForStagnation?: boolean;
 };
 
-type PersistedState = {
-  conversations: Record<string, ConversationState>;
-};
+// Each conversation is persisted in its own file so concurrent Letta Code
+// processes working on different conversations never overwrite each other.
+// Within a process, state is cached after the first read of a conversation.
+const cache = new Map<string, ConversationState>();
 
-let store: PersistedState = { conversations: {} };
-
-export function getStatePath(): string {
-  return process.env.HORIZON_STATE_PATH
-    ? path.resolve(process.env.HORIZON_STATE_PATH)
-    : path.join(homedir(), ".letta", "mods", "horizon-mode.state.json");
+export function getStateDir(): string {
+  return process.env.HORIZON_STATE_DIR
+    ? path.resolve(process.env.HORIZON_STATE_DIR)
+    : path.join(homedir(), ".letta", "mods", "horizon-mode");
 }
 
 function conversationKey(ctx: any): string {
-  return ctx.conversation?.id ?? ctx.agent?.id ?? "unknown";
+  const conversation = ctx.conversation?.id;
+  const agent = ctx.agent?.id;
+  // "default" names each agent's default conversation, so it is not unique.
+  if (!conversation || conversation === "default") {
+    return `${agent ?? "unknown"}-${conversation ?? "default"}`;
+  }
+  return conversation;
+}
+
+export function statePathFor(key: string): string {
+  return path.join(getStateDir(), `${key.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+}
+
+function freshState(mode: Mode = "auto"): ConversationState {
+  return {
+    mode,
+    startedAt: Date.now(),
+    submissionCount: 0,
+    submissions: [],
+    toolsThisTurn: 0,
+    stagnantTurns: 0,
+  };
+}
+
+function readState(key: string): ConversationState | null {
+  try {
+    const parsed = JSON.parse(readFileSync(statePathFor(key), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    // Missing or malformed state should not prevent Letta Code from working.
+    return null;
+  }
 }
 
 function stateFor(ctx: any): ConversationState {
   const key = conversationKey(ctx);
-  if (!store.conversations[key]) {
-    store.conversations[key] = {
-      mode: "auto",
-      startedAt: Date.now(),
-      submissionCount: 0,
-      submissions: [],
-      toolsThisTurn: 0,
-      stagnantTurns: 0,
-    };
+  let state = cache.get(key);
+  if (!state) {
+    state = readState(key) ?? freshState();
+    cache.set(key, state);
   }
-  return store.conversations[key];
+  return state;
 }
 
-function loadState(): void {
-  const statePath = getStatePath();
-  try {
-    if (!existsSync(statePath)) {
-      store = { conversations: {} };
-      return;
-    }
-    const parsed = JSON.parse(readFileSync(statePath, "utf8"));
-    if (parsed && typeof parsed === "object" && parsed.conversations) {
-      store = parsed;
-      return;
-    }
-  } catch {
-    // A malformed state file should not prevent Letta Code from starting.
-  }
-  store = { conversations: {} };
+function resetState(ctx: any, mode: Mode): ConversationState {
+  const state = freshState(mode);
+  cache.set(conversationKey(ctx), state);
+  return state;
 }
 
-function saveState(): void {
-  const statePath = getStatePath();
-  const temporary = `${statePath}.tmp`;
+function saveState(ctx: any): void {
+  const statePath = statePathFor(conversationKey(ctx));
+  const state = stateFor(ctx);
+  if ((state.submissions?.length ?? 0) > MAX_SUBMISSIONS) {
+    state.submissions = state.submissions!.slice(-MAX_SUBMISSIONS);
+  }
+  const temporary = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
   mkdirSync(path.dirname(statePath), { recursive: true });
-  writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   renameSync(temporary, statePath);
+}
+
+/** Keep only the most recently updated conversation state files. */
+export function pruneStateFiles(limit = MAX_CONVERSATION_FILES): void {
+  const directory = getStateDir();
+  let files: Array<{ file: string; mtime: number }>;
+  try {
+    files = readdirSync(directory)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => {
+        const file = path.join(directory, name);
+        return { file, mtime: statSync(file).mtimeMs };
+      });
+  } catch {
+    return;
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  for (const { file } of files.slice(limit)) {
+    try {
+      unlinkSync(file);
+    } catch {
+      // Another process may already have removed it.
+    }
+  }
 }
 
 function parsePositiveInt(value: string | undefined): number | null {
@@ -131,12 +177,16 @@ async function runtime(ctx: any): Promise<{
       ? "off"
       : state.mode ?? "auto";
   const timer = mode === "off" ? null : await timerRemaining();
+  if (timer !== null) {
+    // sandbox-timer reports only the remaining time, so treat the first value
+    // observed in this conversation as the total budget.
+    state.totalBudgetSecs = Math.max(state.totalBudgetSecs ?? 0, timer);
+  }
   const configuredTotal = parsePositiveInt(process.env.TASK_BUDGET_SECS);
   const total = configuredTotal ?? state.totalBudgetSecs ?? DEFAULT_BUDGET_SECS;
   const elapsed = Math.max(0, Math.floor((Date.now() - (state.startedAt ?? Date.now())) / 1_000));
   const remaining = timer ?? (mode === "on" ? Math.max(0, total - elapsed) : null);
   const reserve = parsePositiveInt(process.env.HORIZON_RESERVE_SECS) ?? DEFAULT_RESERVE_SECS;
-  state.totalBudgetSecs = total;
   return {
     active: mode === "on" || (mode === "auto" && timer !== null),
     remaining,
@@ -214,13 +264,20 @@ async function resolvesCommit(repository: string, requested: string): Promise<bo
 
 async function resolveRepository(cwd: string, requested: string, supplied?: string): Promise<string> {
   const workspace = path.resolve(cwd);
+  let workspaceRepository: string | null = null;
+  try {
+    workspaceRepository = await repositoryRoot(workspace);
+  } catch {
+    // The task root may contain a nested repository rather than being one.
+  }
+
   if (supplied) {
     const candidate = path.resolve(workspace, supplied);
     if (!isInside(workspace, candidate)) {
       throw new Error(`repository must be inside the active workspace (${workspace})`);
     }
     const root = await repositoryRoot(candidate);
-    if (!isInside(workspace, root)) {
+    if (root !== workspaceRepository && !isInside(workspace, root)) {
       throw new Error(`repository root must be inside the active workspace (${workspace})`);
     }
     if (!await resolvesCommit(root, requested)) {
@@ -229,13 +286,14 @@ async function resolveRepository(cwd: string, requested: string, supplied?: stri
     return root;
   }
 
-  const candidates = new Set(nestedGitRepositories(workspace));
-  try {
-    const root = await repositoryRoot(workspace);
-    if (isInside(workspace, root)) candidates.add(root);
-  } catch {
-    // The task root may contain a nested repository rather than being one.
+  // Prefer the repository containing the active workspace, so revisions such
+  // as HEAD are not ambiguous when other repositories are nested below it.
+  if (workspaceRepository && await resolvesCommit(workspaceRepository, requested)) {
+    return workspaceRepository;
   }
+
+  const candidates = new Set(nestedGitRepositories(workspace));
+  if (workspaceRepository) candidates.delete(workspaceRepository);
   const matches: string[] = [];
   for (const candidate of candidates) {
     if (await resolvesCommit(candidate, requested)) matches.push(candidate);
@@ -332,15 +390,6 @@ function checkpointKey(state: ConversationState): string | null {
   return latest ? `${latest.repository}:${latest.commit}` : null;
 }
 
-function assistantFingerprint(message: unknown): string | null {
-  const normalized = String(message ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
-}
-
-function completionMessage(message: unknown): boolean {
-  return /\b(task complete|completed|complete|finished|latest clean checkpoint|clean checkpoint)\b/i.test(String(message ?? ""));
-}
-
 function continuationPrompt(info: Awaited<ReturnType<typeof runtime>>, state: ConversationState): string {
   const latest = state.submissions?.at(-1);
   const checkpoint = latest
@@ -348,15 +397,28 @@ function continuationPrompt(info: Awaited<ReturnType<typeof runtime>>, state: Co
     : "No workspace checkpoint has been recorded yet.";
   return [
     "<system-reminder>",
-    "Horizon mode is active for this long-running task.",
+    REMINDER_MARKER,
     budgetLine(info),
     checkpoint,
     "Maintain /tmp/horizon/PROGRESS.md as a compact recovery ledger. Create it early, read it after compaction or continuation, and update it after objective measurements, checkpoints, strategy changes, and before long-running commands. Record the real baseline and best result, latest checkpoint, validation status, failed experiments, and next action.",
     "Continue working autonomously. Do not stop at a plausible implementation or a smoke test: measure the actual objective, search for another improvement, test held-out/generalization behavior, and preserve known-good checkpoints.",
     "Use submit({commit}) whenever you have a better clean checkpoint. Checkpointing is nonterminal and does not end Horizon mode; the external task budget controls when work stops.",
-    `If you repeatedly report completion without using tools or producing a new checkpoint, Horizon pauses after ${STAGNANT_TURN_LIMIT} identical no-op turns.`,
+    `Horizon pauses automatic continuation after ${STAGNANT_TURN_LIMIT} consecutive turns without a non-submit tool call or a new checkpoint.`,
     "</system-reminder>",
   ].join("\n");
+}
+
+function messageText(message: any): string {
+  if (typeof message?.content === "string") return message.content;
+  if (Array.isArray(message?.content)) {
+    return message.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("\n");
+  }
+  return "";
+}
+
+/** True when the input already carries a Horizon reminder, e.g. a turn_end continuation. */
+function hasReminder(input: any[]): boolean {
+  return input.some((message) => message?.role === "user" && messageText(message).includes(REMINDER_MARKER));
 }
 
 function prependReminder(input: any[], reminder: string): any[] {
@@ -376,7 +438,8 @@ function prependReminder(input: any[], reminder: string): any[] {
 }
 
 export default function activate(letta: any) {
-  loadState();
+  cache.clear();
+  pruneStateFiles();
   const disposers: Array<() => void> = [];
 
   if (
@@ -454,10 +517,8 @@ export default function activate(letta: any) {
             recordedAt: new Date().toISOString(),
             ...(bundlePath ? { bundlePath } : {}),
           },
-        ];
-        state.stagnantTurns = 0;
-        state.pausedForStagnation = false;
-        await saveState();
+        ].slice(-MAX_SUBMISSIONS);
+        saveState(ctx);
         const durability = bundlePath
           ? `Verified external bundle: ${bundlePath}.`
           : "Workspace checkpoint only; HORIZON_CHECKPOINT_DIR is not configured, so this commit will not survive sandbox deletion.";
@@ -479,10 +540,10 @@ export default function activate(letta: any) {
           state.startedAt = Date.now();
           state.pausedForStagnation = false;
           state.stagnantTurns = 0;
-          await saveState();
+          saveState(ctx);
         } else if (action === "reset") {
-          store.conversations[conversationKey(ctx)] = { mode: state.mode ?? "auto", startedAt: Date.now() };
-          await saveState();
+          resetState(ctx, state.mode ?? "auto");
+          saveState(ctx);
         } else if (action !== "status") {
           return { type: "output", output: "Usage: /horizon on|off|auto|status|reset" };
         }
@@ -513,8 +574,15 @@ export default function activate(letta: any) {
       }
       state.pausedForStagnation = false;
       state.toolsThisTurn = 0;
+      // A turn_end continuation already carries a fresh reminder; only new
+      // user input needs one, and it also restarts the stagnation count.
+      if (hasReminder(event.input)) {
+        saveState(ctx);
+        return;
+      }
+      state.stagnantTurns = 0;
       event.input = prependReminder(event.input, continuationPrompt(info, state));
-      await saveState();
+      saveState(ctx);
       return { input: event.input };
     }));
 
@@ -527,26 +595,20 @@ export default function activate(letta: any) {
       if (/(error|cancel|interrupt|abort)/.test(stop)) return;
 
       if (letta.capabilities.events.tools) {
+        // A turn is stagnant when it made no non-submit tool call and did not
+        // change the checkpoint, regardless of what the assistant said.
         const currentCheckpoint = checkpointKey(state);
-        const fingerprint = assistantFingerprint(event.assistantMessage);
-        const completionOnly = (state.toolsThisTurn ?? 0) === 0
-          && currentCheckpoint === (state.lastTurnCheckpoint ?? null)
-          && fingerprint !== null
-          && completionMessage(event.assistantMessage);
-        state.stagnantTurns = completionOnly
-          ? fingerprint === state.lastAssistantFingerprint
-            ? (state.stagnantTurns ?? 0) + 1
-            : 1
-          : 0;
+        const productive = (state.toolsThisTurn ?? 0) > 0
+          || currentCheckpoint !== (state.lastTurnCheckpoint ?? null);
+        state.stagnantTurns = productive ? 0 : (state.stagnantTurns ?? 0) + 1;
         state.lastTurnCheckpoint = currentCheckpoint;
-        state.lastAssistantFingerprint = fingerprint;
         if ((state.stagnantTurns ?? 0) >= STAGNANT_TURN_LIMIT) {
           state.pausedForStagnation = true;
-          await saveState();
+          saveState(ctx);
           return;
         }
       }
-      await saveState();
+      saveState(ctx);
       return { continue: continuationPrompt(info, state) };
     }));
   }
@@ -558,7 +620,7 @@ export default function activate(letta: any) {
         state.toolsThisTurn = (state.toolsThisTurn ?? 0) + 1;
         state.stagnantTurns = 0;
         state.pausedForStagnation = false;
-        await saveState();
+        saveState(ctx);
       }
     }));
   }
