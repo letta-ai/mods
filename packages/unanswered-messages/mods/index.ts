@@ -6,8 +6,8 @@
 // person on the other side gets silence. This mod remembers which chats sent
 // messages during a turn, forgets them once the agent sends to that chat, and,
 // if a turn ends with any still unanswered, queues one short follow-up turn
-// asking the agent to check. Staying silent remains a valid choice: the mod
-// nudges at most once per batch of inbound messages, then lets the turn end.
+// asking the agent to check. Staying silent remains a valid choice: each chat
+// gets at most one reminder per batch of inbound messages, then is dropped.
 
 const MARKER = "<unanswered-channel-messages>";
 const STALE_AFTER_MS = 30 * 60 * 1000;
@@ -24,9 +24,10 @@ type Pending = {
   sender: string | null;
   count: number;
   seenAt: number;
+  reminded: boolean;
 };
 type Outcome = { status: string; at: number; channel: string; accountId: string | null; chatId: string; threadId: string | null; messageIds: string[] };
-type ConversationState = { pending: Map<string, Pending>; nudged: boolean; active: boolean; seen: Map<string, number>; outcomes: Outcome[] };
+type ConversationState = { pending: Map<string, Pending>; seen: Map<string, number>; outcomes: Outcome[] };
 
 const states = new Map<string, ConversationState>();
 
@@ -34,7 +35,7 @@ function stateFor(conversationId: string | null): ConversationState {
   const key = conversationId ?? "__default__";
   let state = states.get(key);
   if (!state) {
-    state = { pending: new Map(), nudged: false, active: false, seen: new Map(), outcomes: [] };
+    state = { pending: new Map(), seen: new Map(), outcomes: [] };
     states.set(key, state);
   }
   return state;
@@ -54,8 +55,10 @@ function parseAttrs(raw: string): Record<string, string> {
   return attrs;
 }
 
+// Runs only at turn_start, before the new turn's messages are added. Turns in a
+// conversation run one at a time, so nothing here belongs to a running turn,
+// even when the previous turn errored and never emitted turn_end.
 function dropStale(state: ConversationState, now: number): void {
-  if (state.active) return;
   for (const [key, entry] of state.pending) {
     if (now - entry.seenAt > STALE_AFTER_MS) {
       record(state, entry, "expired");
@@ -128,7 +131,7 @@ export default function activate(letta) {
       parallelSafe: true,
       run(ctx) {
         const state = states.get(ctx.conversation.id ?? "__default__");
-        return JSON.stringify({ pending: state ? [...state.pending.values()].map(p => ({ channel: p.channel, accountId: p.accountId, chatId: p.chatId, threadId: p.threadId, messageIds: [...p.messageIds], count: p.count })) : [], outcomes: state?.outcomes ?? [], active: state?.active ?? false });
+        return JSON.stringify({ pending: state ? [...state.pending.values()].map(p => ({ channel: p.channel, accountId: p.accountId, chatId: p.chatId, threadId: p.threadId, messageIds: [...p.messageIds], count: p.count, reminded: p.reminded })) : [], outcomes: state?.outcomes ?? [] });
       },
     }));
   }
@@ -139,15 +142,15 @@ export default function activate(letta) {
         .filter((item) => item && item.type !== "approval" && item.role === "user")
         .map((item) => textOf(item.content))
         .join("\n");
-      if (text.includes(MARKER)) return; // our own follow-up turn
+      // No early return for our own reminder turn: the listener can merge it
+      // with channel messages that queued up during the previous turn, and
+      // those must still be tracked. The reminder text has no notifications.
 
       const now = Date.now();
       const state = stateFor(event.conversationId);
       dropStale(state, now);
-      state.active = true;
       for (const [id, at] of state.seen) if (now - at > 24 * 60 * 60 * 1000) state.seen.delete(id);
 
-      let sawInbound = false;
       for (const match of text.matchAll(NOTIFICATION_RE)) {
         const attrs = parseAttrs(match[1]);
         if (!attrs.source || !attrs.chat_id) continue;
@@ -160,7 +163,6 @@ export default function activate(letta) {
           state.seen.set(identity, now);
           if (state.seen.size > 4096) state.seen.delete(state.seen.keys().next().value!);
         }
-        sawInbound = true;
         const existing = state.pending.get(key);
         const messageIds = existing?.messageIds ?? new Set<string>();
         if (attrs.message_id) messageIds.add(attrs.message_id);
@@ -173,10 +175,10 @@ export default function activate(letta) {
           sender: attrs.sender_name ?? existing?.sender ?? null,
           count: (existing?.count ?? 0) + 1,
           seenAt: now,
+          reminded: false, // a new message earns its chat one fresh reminder
         });
         record(state, state.pending.get(key)!, "pending");
       }
-      if (sawInbound) state.nudged = false; // new messages earn one fresh reminder
     }),
   );
 
@@ -198,24 +200,27 @@ export default function activate(letta) {
   disposers.push(
     letta.events.on("turn_end", (event) => {
       const state = stateFor(event.conversationId);
-      // Age alone cannot discard a message while its turn is doing work.
-      state.active = false;
-      if (state.pending.size === 0) return;
-
-      if (state.nudged) {
-        // Already reminded once for these messages: respect the decision.
-        for (const p of state.pending.values()) record(state, p, "dismissed-after-reminder");
-        state.pending.clear();
-        return;
+      const due: Pending[] = [];
+      for (const [key, p] of state.pending) {
+        if (p.reminded) {
+          // Already reminded once for these messages: respect the decision.
+          record(state, p, "dismissed-after-reminder");
+          state.pending.delete(key);
+        } else {
+          due.push(p);
+        }
       }
+      if (due.length === 0) return;
 
-      state.nudged = true;
-      for (const p of state.pending.values()) record(state, p, "reminded");
+      for (const p of due) {
+        p.reminded = true;
+        record(state, p, "reminded");
+      }
       return {
         continue: [
           MARKER,
           "This turn ended without a MessageChannel send to some chats that messaged you:",
-          describe([...state.pending.values()]),
+          describe(due),
           "If a reply is owed, send it with MessageChannel now. If staying silent was intentional, just end the turn; you won't be reminded again about these messages.",
           "</unanswered-channel-messages>",
         ].join("\n"),

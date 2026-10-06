@@ -56,3 +56,36 @@ test("idle expiration is visible, active messages are protected", () => {
     expect(h.status().outcomes.at(-1).status).toBe("expired");
   } finally { Date.now = old; h.dispose(); }
 });
+test("messages merged into the reminder turn are tracked and reminded", () => {
+  const h = harness();
+  try {
+    h.emit("turn_start", inbound("1", "a"));
+    const reminder = h.emit("turn_end", end).continue;
+    // The listener merges a channel message queued during the turn with the reminder.
+    h.emit("turn_start", { conversationId: "test", input: [inbound("2", "b").input[0], { role: "user", content: reminder }] });
+    const next = h.emit("turn_end", end)?.continue ?? "";
+    expect(next).toContain("signal chat b");
+    expect(next).not.toContain("signal chat a"); // a was already reminded once
+    expect(h.status().pending.map((p: any) => p.chatId)).toEqual(["b"]);
+  } finally { h.dispose(); }
+});
+test("an errored turn with no turn_end does not block expiry", () => {
+  const h = harness(), old = Date.now; let now = 1000; Date.now = () => now;
+  try {
+    h.emit("turn_start", inbound()); // the listener emits no turn_end for an errored turn
+    now += 6 * 3600000;
+    h.emit("turn_start", { conversationId: "test", input: [{ role: "user", content: "unrelated" }] });
+    expect(h.status().outcomes.at(-1).status).toBe("expired");
+    expect(h.emit("turn_end", end)).toBeUndefined();
+  } finally { Date.now = old; h.dispose(); }
+});
+test("a new message in one chat does not re-remind another chat", () => {
+  const h = harness();
+  try {
+    h.emit("turn_start", inbound("1", "a")); h.emit("turn_end", end);
+    h.emit("turn_start", inbound("2", "b"));
+    const next = h.emit("turn_end", end).continue;
+    expect(next).toContain("signal chat b");
+    expect(next).not.toContain("signal chat a");
+  } finally { h.dispose(); }
+});
