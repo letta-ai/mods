@@ -68,7 +68,10 @@ function conversationKey(ctx: any): string {
 }
 
 export function statePathFor(key: string): string {
-  return path.join(getStateDir(), `${key.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+  const safe = key.replace(/[^A-Za-z0-9._-]/g, "_");
+  // Disambiguate keys whose unsafe characters were replaced.
+  const name = safe === key ? safe : `${safe}-${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
+  return path.join(getStateDir(), `${name}.json`);
 }
 
 function freshState(mode: Mode = "auto"): ConversationState {
@@ -549,6 +552,7 @@ export default function activate(letta: any) {
         }
         const current = stateFor(ctx);
         const info = await runtime(ctx);
+        saveState(ctx);
         return {
           type: "output",
           output: [

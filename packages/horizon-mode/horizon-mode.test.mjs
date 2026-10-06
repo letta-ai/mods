@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import activate, { pruneStateFiles } from "./mods/index.ts";
+import activate, { pruneStateFiles, statePathFor } from "./mods/index.ts";
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "letta-horizon-mode-"));
@@ -351,6 +351,11 @@ test("auto mode uses the first observed sandbox-timer value as the total budget"
 
   process.env.HORIZON_TEST_REMAINING = "3600";
   assert.match((await h.events.get("turn_end")({ stopReason: "end_turn" }, ctx)).continue, /1h 0m \(50%\)/);
+  // A status check can be the first observation; it must persist the total too.
+  const statusCtx = context(f, "conv-budget-status");
+  process.env.HORIZON_TEST_REMAINING = "1800";
+  assert.match((await h.commands.get("horizon").run({ ...statusCtx, args: "status" })).output, /30m 0s \(100%\)/);
+  assert.equal((await storedState(f, "conv-budget-status")).totalBudgetSecs, 1800);
 });
 
 test("productive tool use resets the stagnation breaker", async (t) => {
@@ -444,6 +449,7 @@ test("stores each conversation in its own file so separate processes do not clob
   assert.equal((await storedState(f, "conv-a")).submissionCount, 1);
   assert.equal((await storedState(f, "conv-b")).submissionCount, 1);
   assert.deepEqual((await readdir(f.stateDir)).sort(), ["conv-a.json", "conv-b.json"]);
+  assert.notEqual(statePathFor("a/b"), statePathFor("a_b"));
 });
 
 test("caps submission history and prunes old conversation state", async (t) => {
