@@ -2,12 +2,14 @@ const EXA_API_URL = "https://api.exa.ai/search";
 const TAVILY_API_URL = "https://api.tavily.com/search";
 const PERPLEXITY_API_URL = "https://api.perplexity.ai/v1/sonar";
 const PARALLEL_SEARCH_API_URL = "https://api.parallel.ai/v1/search";
+const YOUCOM_API_URL = "https://ydc-index.io/v1/search";
 
 const PROVIDERS = [
   { id: "exa", key: "EXA_API_KEY", label: "Exa" },
   { id: "tavily", key: "TAVILY_API_KEY", label: "Tavily" },
   { id: "parallel", key: "PARALLEL_API_KEY", label: "Parallel" },
   { id: "perplexity", key: "PERPLEXITY_API_KEY", label: "Perplexity" },
+  { id: "youcom", key: "YDC_API_KEY", label: "You.com" },
 ];
 
 function stringArg(value, fallback = "") {
@@ -396,6 +398,72 @@ async function runParallelSearch(ctx, apiKey, query) {
     .join("\n\n");
 }
 
+function formatYoucomResult(result, index) {
+  const title = stringArg(result?.title, "Untitled");
+  const url = stringArg(result?.url);
+  const description = stringArg(result?.description);
+  const snippets = Array.isArray(result?.snippets)
+    ? result.snippets.map((item) => stringArg(item)).filter(Boolean)
+    : [];
+  const pageAge = stringArg(result?.page_age);
+
+  return [
+    `### ${index + 1}. ${title}`,
+    url,
+    pageAge ? `Published: ${pageAge}` : "",
+    description,
+    snippets.length
+      ? `Snippets:\n${snippets.map((item) => `- ${item}`).join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function runYoucomSearch(ctx, apiKey, query) {
+  const body = {
+    query,
+    count: clampInteger(ctx.args.max_results, 5, 1, 10),
+  };
+
+  const country = stringArg(ctx.args.country);
+  if (country) body.country = country;
+
+  const safesearch = pickEnum(ctx.args.safesearch, ["off", "moderate", "strict"], "");
+  if (safesearch) body.safesearch = safesearch;
+
+  const freshness = pickEnum(
+    ctx.args.freshness,
+    ["day", "week", "month", "year"],
+    "",
+  );
+  if (freshness) body.freshness = freshness;
+
+  const response = await fetch(YOUCOM_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+    body: JSON.stringify(body),
+    signal: ctx.signal,
+  });
+
+  if (!response.ok) {
+    const detail = await readResponseBody(response);
+    return {
+      status: "error",
+      content: `You.com API error ${response.status}: ${detail.slice(0, 2000)}`,
+    };
+  }
+
+  const data = await response.json();
+  const webResults = Array.isArray(data?.results?.web) ? data.results.web : [];
+  if (webResults.length === 0) return "No You.com results.";
+
+  return [
+    "## You.com results",
+    ...webResults.map(formatYoucomResult),
+  ].join("\n\n");
+}
+
 async function runSelectedProvider(ctx, provider, apiKey, query) {
   switch (provider.id) {
     case "exa":
@@ -406,6 +474,8 @@ async function runSelectedProvider(ctx, provider, apiKey, query) {
       return runParallelSearch(ctx, apiKey, query);
     case "perplexity":
       return runPerplexitySearch(ctx, apiKey, query);
+    case "youcom":
+      return runYoucomSearch(ctx, apiKey, query);
     default:
       return { status: "error", content: `Unsupported web search provider: ${provider.id}` };
   }
@@ -417,7 +487,7 @@ export default function activate(letta) {
   return letta.tools.register({
     name: "web_search",
     description:
-      "Search the live web using the first configured provider key (Exa, Tavily, Parallel, or Perplexity), or a provider selected explicitly. Use for current facts, source discovery, news, research papers, companies, or web pages.",
+      "Search the live web using the first configured provider key (Exa, Tavily, Parallel, Perplexity, or You.com), or a provider selected explicitly. Use for current facts, source discovery, news, research papers, companies, or web pages.",
     parameters: {
       type: "object",
       properties: {
@@ -427,9 +497,9 @@ export default function activate(letta) {
         },
         provider: {
           type: "string",
-          enum: ["auto", "exa", "tavily", "parallel", "perplexity"],
+          enum: ["auto", "exa", "tavily", "parallel", "perplexity", "youcom"],
           description:
-            "Provider to use. auto picks the first configured key in this order: Exa, Tavily, Parallel, Perplexity. Defaults to auto.",
+            "Provider to use. auto picks the first configured key in this order: Exa, Tavily, Parallel, Perplexity, You.com. Defaults to auto.",
         },
         max_results: {
           type: "number",
@@ -520,6 +590,20 @@ export default function activate(letta) {
         after_date: {
           type: "string",
           description: "Parallel YYYY-MM-DD start date for filtering results.",
+        },
+        freshness: {
+          type: "string",
+          enum: ["day", "week", "month", "year"],
+          description: "You.com result recency filter.",
+        },
+        country: {
+          type: "string",
+          description: "You.com ISO 3166-1 alpha-2 country code to focus results geographically.",
+        },
+        safesearch: {
+          type: "string",
+          enum: ["off", "moderate", "strict"],
+          description: "You.com content moderation level. Defaults to moderate.",
         },
       },
       required: ["query"],

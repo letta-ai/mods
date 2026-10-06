@@ -32,6 +32,8 @@ The tool normalizes the requested title before it saves the title:
 
 The active Letta Code interface receives the title update through the conversation mod API. Other clients can show the new title after they receive or reload the stored conversation state.
 
+The default conversation cannot be renamed because it has no stored conversation record. The tool returns an error before it sends an update request.
+
 ## Suggested title style
 
 Use a short title that describes the main work. Two to seven words usually fit conversation lists well.

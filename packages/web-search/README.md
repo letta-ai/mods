@@ -26,6 +26,7 @@ Recommended, agent-scoped:
 /secret set TAVILY_API_KEY <value>
 /secret set PARALLEL_API_KEY <value>
 /secret set PERPLEXITY_API_KEY <value>
+/secret set YDC_API_KEY <value>
 ```
 
 Environment fallback is also supported if keys are present when Letta Code starts:
@@ -35,6 +36,7 @@ export EXA_API_KEY=...
 export TAVILY_API_KEY=...
 export PARALLEL_API_KEY=...
 export PERPLEXITY_API_KEY=...
+export YDC_API_KEY=...
 letta
 ```
 
@@ -50,8 +52,9 @@ Provider selection defaults to `auto`, which checks keys in this order:
 2. `TAVILY_API_KEY`
 3. `PARALLEL_API_KEY`
 4. `PERPLEXITY_API_KEY`
+5. `YDC_API_KEY`
 
-Pass `provider: "exa" | "tavily" | "parallel" | "perplexity"` to force a provider.
+Pass `provider: "exa" | "tavily" | "parallel" | "perplexity" | "youcom"` to force a provider.
 
 ## Privacy
 

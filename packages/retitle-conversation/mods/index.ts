@@ -1,4 +1,5 @@
 const MAX_TITLE_LENGTH = 100;
+const DEFAULT_CONVERSATION_ID = "default";
 const UNSAFE_TITLE_CHARACTERS =
   /[\p{Cc}\p{Bidi_Control}\u200b\u2060\ufeff]/gu;
 const INVISIBLE_TITLE_CHARACTERS = /\p{Default_Ignorable_Code_Point}/gu;
@@ -47,6 +48,12 @@ export default function activate(letta: any) {
         return {
           status: "error",
           content: "The current conversation does not have a conversation ID.",
+        };
+      }
+      if (ctx.conversation.id === DEFAULT_CONVERSATION_ID) {
+        return {
+          status: "error",
+          content: "The default conversation cannot be renamed.",
         };
       }
 

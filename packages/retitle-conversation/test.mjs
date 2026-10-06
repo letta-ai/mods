@@ -80,6 +80,19 @@ test("normalizes and persists a safe conversation title", async () => {
   assert.equal(result, 'Conversation title changed to "Release readiness review".');
 });
 
+test("rejects the default conversation before mutation", async () => {
+  const harness = createHarness();
+  const { ctx, updates } = conversationContext({ id: "default" });
+
+  const result = await harness.tool.run(ctx);
+
+  assert.deepEqual(result, {
+    status: "error",
+    content: "The default conversation cannot be renamed.",
+  });
+  assert.deepEqual(updates, []);
+});
+
 test("accepts 100 Unicode code points and rejects 101", async () => {
   const harness = createHarness();
   const accepted = conversationContext({ title: "😀".repeat(100) });

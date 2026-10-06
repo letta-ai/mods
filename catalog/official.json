@@ -35,6 +35,10 @@
     },
     {
       "type": "npm",
+      "package": "@letta-ai/jev-auto"
+    },
+    {
+      "type": "npm",
       "package": "@letta-ai/memfs-search"
     },
     {
@@ -52,6 +56,10 @@
     {
       "type": "npm",
       "package": "@letta-ai/retitle-conversation"
+    },
+    {
+      "type": "npm",
+      "package": "@letta-ai/secrets-scrubber"
     },
     {
       "type": "npm",
