@@ -30,7 +30,7 @@
   "letta": {
     "manifestVersion": 1,
     "mods": ["./mods/index.ts"],
-    "capabilities": ["events.turns", "events.tools"],
+    "capabilities": ["events.turns", "events.tools", "tools"],
     "engines": {
       "lettaCodeCli": ">=0.30.0"
     }

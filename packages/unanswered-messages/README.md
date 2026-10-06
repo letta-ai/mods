@@ -25,6 +25,9 @@ It never sends anything to a channel itself; only the agent decides whether to r
 
 - Requires Letta Code 0.30.0 or later (uses the `turn_end` mod event).
 - State is in memory: `/reload` or a restart forgets pending messages.
+- The optional read-only `unanswered_messages_status` tool reports pending routes and the last 128 outcomes for the current conversation, without message bodies or sender names.
+- Pending messages survive long-running turns. The 30-minute expiry applies to idle entries at the next ordinary turn start, before that turn becomes active.
+- Duplicate message IDs on the same route do not add to counts or earn another reminder, including after a reply or dismissal. Deduplication retains up to 4,096 IDs per conversation for 24 hours and resets on reload.
 - Turns that end in an error or are interrupted don't trigger a reminder.
 - Each reminder costs one extra agent turn.
 

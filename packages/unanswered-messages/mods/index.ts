@@ -25,7 +25,8 @@ type Pending = {
   count: number;
   seenAt: number;
 };
-type ConversationState = { pending: Map<string, Pending>; nudged: boolean };
+type Outcome = { status: string; at: number; channel: string; accountId: string | null; chatId: string; threadId: string | null; messageIds: string[] };
+type ConversationState = { pending: Map<string, Pending>; nudged: boolean; active: boolean; seen: Map<string, number>; outcomes: Outcome[] };
 
 const states = new Map<string, ConversationState>();
 
@@ -33,7 +34,7 @@ function stateFor(conversationId: string | null): ConversationState {
   const key = conversationId ?? "__default__";
   let state = states.get(key);
   if (!state) {
-    state = { pending: new Map(), nudged: false };
+    state = { pending: new Map(), nudged: false, active: false, seen: new Map(), outcomes: [] };
     states.set(key, state);
   }
   return state;
@@ -54,9 +55,18 @@ function parseAttrs(raw: string): Record<string, string> {
 }
 
 function dropStale(state: ConversationState, now: number): void {
+  if (state.active) return;
   for (const [key, entry] of state.pending) {
-    if (now - entry.seenAt > STALE_AFTER_MS) state.pending.delete(key);
+    if (now - entry.seenAt > STALE_AFTER_MS) {
+      record(state, entry, "expired");
+      state.pending.delete(key);
+    }
   }
+}
+
+function record(state: ConversationState, p: Pending, status: string): void {
+  state.outcomes.push({ status, at: Date.now(), channel: p.channel, accountId: p.accountId, chatId: p.chatId, threadId: p.threadId, messageIds: [...p.messageIds] });
+  if (state.outcomes.length > 128) state.outcomes.shift();
 }
 
 function routeKey(channel: string, accountId: string | null, chatId: string, threadId: string | null): string {
@@ -109,6 +119,20 @@ export default function activate(letta) {
 
   const disposers = [];
 
+  if (letta.capabilities.tools) {
+    disposers.push(letta.tools.register({
+      name: "unanswered_messages_status",
+      description: "Inspect this conversation's pending channel replies and recent outcomes. Read-only, no message bodies; state resets on reload. Dedup retains up to 4096 message IDs for 24 hours.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+      requiresApproval: false,
+      parallelSafe: true,
+      run(ctx) {
+        const state = states.get(ctx.conversation.id ?? "__default__");
+        return JSON.stringify({ pending: state ? [...state.pending.values()].map(p => ({ channel: p.channel, accountId: p.accountId, chatId: p.chatId, threadId: p.threadId, messageIds: [...p.messageIds], count: p.count })) : [], outcomes: state?.outcomes ?? [], active: state?.active ?? false });
+      },
+    }));
+  }
+
   disposers.push(
     letta.events.on("turn_start", (event) => {
       const text = (event.input ?? [])
@@ -120,15 +144,23 @@ export default function activate(letta) {
       const now = Date.now();
       const state = stateFor(event.conversationId);
       dropStale(state, now);
+      state.active = true;
+      for (const [id, at] of state.seen) if (now - at > 24 * 60 * 60 * 1000) state.seen.delete(id);
 
       let sawInbound = false;
       for (const match of text.matchAll(NOTIFICATION_RE)) {
         const attrs = parseAttrs(match[1]);
         if (!attrs.source || !attrs.chat_id) continue;
-        sawInbound = true;
         const accountId = attrs.account_id || null;
         const threadId = attrs.thread_id || null;
         const key = routeKey(attrs.source, accountId, attrs.chat_id, threadId);
+        if (attrs.message_id) {
+          const identity = JSON.stringify([key, attrs.message_id]);
+          if (state.seen.has(identity)) continue;
+          state.seen.set(identity, now);
+          if (state.seen.size > 4096) state.seen.delete(state.seen.keys().next().value!);
+        }
+        sawInbound = true;
         const existing = state.pending.get(key);
         const messageIds = existing?.messageIds ?? new Set<string>();
         if (attrs.message_id) messageIds.add(attrs.message_id);
@@ -142,6 +174,7 @@ export default function activate(letta) {
           count: (existing?.count ?? 0) + 1,
           seenAt: now,
         });
+        record(state, state.pending.get(key)!, "pending");
       }
       if (sawInbound) state.nudged = false; // new messages earn one fresh reminder
     }),
@@ -155,23 +188,29 @@ export default function activate(letta) {
       if (!SEND_ACTIONS.has(String(args.action))) return;
 
       const state = stateFor(event.conversationId);
-      for (const key of answeredRoutes(state, args)) state.pending.delete(key);
+      for (const key of answeredRoutes(state, args)) {
+        record(state, state.pending.get(key)!, "answered");
+        state.pending.delete(key);
+      }
     }),
   );
 
   disposers.push(
     letta.events.on("turn_end", (event) => {
       const state = stateFor(event.conversationId);
-      dropStale(state, Date.now());
+      // Age alone cannot discard a message while its turn is doing work.
+      state.active = false;
       if (state.pending.size === 0) return;
 
       if (state.nudged) {
         // Already reminded once for these messages: respect the decision.
+        for (const p of state.pending.values()) record(state, p, "dismissed-after-reminder");
         state.pending.clear();
         return;
       }
 
       state.nudged = true;
+      for (const p of state.pending.values()) record(state, p, "reminded");
       return {
         continue: [
           MARKER,
