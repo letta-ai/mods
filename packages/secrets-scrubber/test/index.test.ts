@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import activate, {
   extractOutputPaths,
@@ -13,12 +23,25 @@ import activate, {
 
 const OPENAI_KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJ";
 const DATABASE_URL = "postgresql://user:password@example.com:5432/db";
+const SENTINEL = "\nwriter-finished\n";
 const tempDirectories: string[] = [];
 
 function createBackgroundDirectory(): string {
   const directory = mkdtempSync(join(tmpdir(), "letta-background-"));
   tempDirectories.push(directory);
   return directory;
+}
+
+function createOverflowFile(content: string): string {
+  const projects = join(homedir(), ".letta", "projects");
+  mkdirSync(projects, { recursive: true });
+  const project = mkdtempSync(join(projects, "secrets-scrubber-test-"));
+  tempDirectories.push(project);
+  const directory = join(project, "agent-tools");
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, "bash-12345678-1234-4123-8123-123456789abc.txt");
+  writeFileSync(path, content, { mode: 0o600 });
+  return path;
 }
 
 function createHarness(): {
@@ -139,16 +162,15 @@ describe("referenced output file scrubbing", () => {
     expect(extractOutputPaths("the Output file: /tmp/not-a-breadcrumb is inline")).toEqual([]);
   });
 
-  test("rewrites an allowed background output file", () => {
+  test("never rewrites a background output file through the exported scanner", () => {
     const directory = createBackgroundDirectory();
     const path = join(directory, "bash_1.log");
-    writeFileSync(path, `before ${OPENAI_KEY} after`, { mode: 0o600 });
+    const original = `before ${OPENAI_KEY} after`;
+    writeFileSync(path, original, { mode: 0o600 });
 
     expect(isAllowedOutputPath(path)).toBe(true);
-    expect(scrubOutputFile(path)).toBe("changed");
-    expect(readFileSync(path, "utf8")).toBe(
-      "before [REDACTED: API Secret Key (sk-)] after",
-    );
+    expect(scrubOutputFile(path)).toBe("unchanged");
+    expect(readFileSync(path, "utf8")).toBe(original);
   });
 
   test("rejects unexpected names, directories, and symlinks", () => {
@@ -166,30 +188,37 @@ describe("referenced output file scrubbing", () => {
     expect(readFileSync(target, "utf8")).toBe(OPENAI_KEY);
   });
 
-  test("withholds a breadcrumb when an allowed path is a symlink", async () => {
-    const directory = createBackgroundDirectory();
+  test("still redacts immutable overflow files", async () => {
+    const path = createOverflowFile(`before ${OPENAI_KEY} after`);
+    const harness = createHarness();
+    const result = await harness.emit({
+      args: {},
+      output: `[Full output written to: ${path}]`,
+      status: "success",
+      toolName: "Bash",
+    });
+
+    expect(result).toBeUndefined();
+    expect(readFileSync(path, "utf8")).toBe(
+      "before [REDACTED: API Secret Key (sk-)] after",
+    );
+    expect(harness.diagnostics).toEqual([]);
+  });
+
+  test("fails closed for an immutable overflow symlink without changing its target", async () => {
+    const path = createOverflowFile("placeholder");
     const outside = mkdtempSync(join(tmpdir(), "secret-scan-outside-"));
     tempDirectories.push(outside);
-    const target = join(outside, "target.log");
-    const symlink = join(directory, "bash_3.log");
+    const target = join(outside, "target.txt");
     writeFileSync(target, OPENAI_KEY, { mode: 0o600 });
-    symlinkSync(target, symlink);
+    rmSync(path);
+    symlinkSync(target, path);
     const harness = createHarness();
-
-    expect(
-      await harness.emit({
-        args: { run_in_background: true },
-        output: `Command running in background with ID: bash_3\nOutput file: ${symlink}`,
-        status: "success",
-        toolName: "Bash",
-      }),
-    ).toBeUndefined();
-
     const result = await harness.emit({
-      args: { task_id: "bash_3" },
-      output: JSON.stringify({ message: "done", status: "completed" }),
+      args: {},
+      output: `[Full output written to: ${path}]`,
       status: "success",
-      toolName: "TaskOutput",
+      toolName: "Bash",
     });
 
     expect(result).toEqual({
@@ -203,62 +232,39 @@ describe("referenced output file scrubbing", () => {
     expect(readFileSync(target, "utf8")).toBe(OPENAI_KEY);
   });
 
-  test("tracks a running background file and scrubs it after completion", async () => {
+  test.each([
+    ["current Bash launch", "Bash", "Command is still running with task ID: bash_1"],
+    ["legacy Bash launch", "Bash", "Command running in background with ID: bash_1"],
+    ["Task breadcrumb", "Task", "Task running in background with task ID: bash_1"],
+    ["Monitor breadcrumb", "Monitor", "Monitor started (task bash_1, persistent)"],
+    ["Workflow breadcrumb", "Workflow", "Workflow launched in background. Task ID: bash_1"],
+  ])("does not rewrite a mutable background log for %s", async (_name, toolName, launch) => {
     const directory = createBackgroundDirectory();
-    const path = join(directory, "task_1.log");
-    writeFileSync(path, `first=${OPENAI_KEY}`, { mode: 0o600 });
+    const path = join(directory, "bash_1.log");
+    const original = `first=${OPENAI_KEY}`;
+    writeFileSync(path, original, { mode: 0o600 });
+    const writer = openSync(path, "a");
     const harness = createHarness();
 
-    await harness.emit({
-      args: { run_in_background: true },
-      output: `Task running in background with task ID: task_1\nOutput file: ${path}`,
-      status: "success",
-      toolName: "Agent",
-    });
-    expect(readFileSync(path, "utf8")).toContain(OPENAI_KEY);
-
-    const runningOutput = JSON.stringify({
-      message: `first=${OPENAI_KEY}`,
-      status: "running",
-    });
-    const runningResult = await harness.emit({
-      args: { task_id: "task_1" },
-      output: runningOutput,
-      status: "success",
-      toolName: "TaskOutput",
-    });
-    expect(runningResult).toEqual({
-      result: {
+    try {
+      const result = await harness.emit({
+        args: { run_in_background: true },
+        output: `${launch}\nOutput file: ${path}\nfirst=${OPENAI_KEY}`,
         status: "success",
-        output: JSON.stringify({
-          message: "first=[REDACTED: API Secret Key (sk-)]",
-          status: "running",
-        }),
-      },
-    });
-    expect(readFileSync(path, "utf8")).toContain(OPENAI_KEY);
+        toolName,
+      });
+      appendFileSync(writer, SENTINEL);
 
-    writeFileSync(path, `later=${DATABASE_URL}`, { mode: 0o600 });
-    const output = JSON.stringify({
-      message: `later=${DATABASE_URL}`,
-      status: "completed",
-    });
-    const result = await harness.emit({
-      args: { task_id: "task_1" },
-      output,
-      status: "success",
-      toolName: "TaskOutput",
-    });
-
-    expect(readFileSync(path, "utf8")).not.toContain(DATABASE_URL);
-    expect(result).toEqual({
-      result: {
-        status: "success",
-        output: JSON.stringify({
-          message: "later=[REDACTED: Database Connection String]",
-          status: "completed",
-        }),
-      },
-    });
+      expect(result).toEqual({
+        result: {
+          status: "success",
+          output: `${launch}\nOutput file: ${path}\nfirst=[REDACTED: API Secret Key (sk-)]`,
+        },
+      });
+      expect(readFileSync(path, "utf8")).toBe(`${original}${SENTINEL}`);
+      expect(harness.diagnostics).toEqual([]);
+    } finally {
+      closeSync(writer);
+    }
   });
 });

@@ -16,15 +16,12 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { scan } from "@sanity-labs/secret-scan";
 
 const REDACTION_PREFIX = "REDACTED";
-const MAX_TRACKED_BACKGROUND_FILES = 1_000;
 const OVERFLOW_FILE_NAME = /^[a-zA-Z][a-zA-Z0-9_-]*-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.txt$/i;
 const BACKGROUND_FILE_NAME = /^(?:bash_\d+|task_\d+)\.log$/;
-const TASK_ID = /^(?:bash_\d+|task_\d+)$/;
 const BREADCRUMB_PATTERNS = [
   /^\[Full output written to: (.+)]$/gm,
   /^Output file: (.+)$/gm,
 ] as const;
-const BACKGROUND_TASK_PATTERN = /^(?:Command|Task) running in background with (?:ID|task ID): ((?:bash_|task_)\d+)$/m;
 
 type ToolStatus = "success" | "error";
 
@@ -221,6 +218,13 @@ function atomicReplace(path: string, content: string, identity: FileIdentity): b
 
 export function scrubOutputFile(path: string): "changed" | "unchanged" | "rejected" | "failed" {
   if (!isAllowedOutputPath(path)) return "rejected";
+  if (BACKGROUND_FILE_NAME.test(basename(path))) {
+    try {
+      return lstatSync(path).isFile() ? "unchanged" : "rejected";
+    } catch {
+      return "rejected";
+    }
+  }
 
   const original = readRegularFile(path);
   if (!original) return "rejected";
@@ -235,73 +239,20 @@ export function scrubOutputFile(path: string): "changed" | "unchanged" | "reject
   return atomicReplace(path, scrubbed.output, original.identity) ? "changed" : "failed";
 }
 
-function backgroundTaskId(event: ToolEndEvent): string | null {
-  if (event.args.run_in_background !== true) return null;
-  return event.output.match(BACKGROUND_TASK_PATTERN)?.[1] ?? null;
-}
-
-function taskIdFromArgs(event: ToolEndEvent): string | null {
-  const candidate = event.args.task_id ?? event.args.shell_id;
-  return typeof candidate === "string" && TASK_ID.test(candidate) ? candidate : null;
-}
-
-function completedTaskOutput(event: ToolEndEvent): boolean {
-  if (event.toolName !== "TaskOutput") return false;
-  try {
-    const parsed = JSON.parse(event.output) as { status?: unknown };
-    return parsed.status === "completed" || parsed.status === "failed";
-  } catch {
-    return false;
-  }
-}
-
-function rememberBackgroundPath(
-  paths: Map<string, string>,
-  taskId: string,
-  path: string,
-): void {
-  paths.delete(taskId);
-  paths.set(taskId, path);
-  while (paths.size > MAX_TRACKED_BACKGROUND_FILES) {
-    const oldest = paths.keys().next().value;
-    if (typeof oldest !== "string") break;
-    paths.delete(oldest);
-  }
-}
-
 export default function activate(letta: LettaModApi): (() => void) | undefined {
   if (!letta.capabilities.events.tools) return;
-
-  const backgroundOutputPaths = new Map<string, string>();
 
   return letta.events.on("tool_end", (event) => {
     try {
       const paths = extractOutputPaths(event.output);
-      const launchedTaskId = backgroundTaskId(event);
       let fileScanFailed = false;
 
       for (const path of paths) {
         if (!isAllowedOutputPath(path)) continue;
-        if (launchedTaskId && BACKGROUND_FILE_NAME.test(basename(path))) {
-          rememberBackgroundPath(backgroundOutputPaths, launchedTaskId, path);
-          continue;
-        }
+        if (BACKGROUND_FILE_NAME.test(basename(path))) continue;
 
         const result = scrubOutputFile(path);
         if (result === "failed" || result === "rejected") fileScanFailed = true;
-      }
-
-      const consumedTaskId = taskIdFromArgs(event);
-      if (consumedTaskId && completedTaskOutput(event)) {
-        const path = backgroundOutputPaths.get(consumedTaskId);
-        if (path) {
-          const result = scrubOutputFile(path);
-          if (result === "failed" || result === "rejected") {
-            fileScanFailed = true;
-          } else {
-            backgroundOutputPaths.delete(consumedTaskId);
-          }
-        }
       }
 
       if (fileScanFailed) {

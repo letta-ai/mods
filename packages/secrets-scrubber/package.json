@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/secrets-scrubber",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Letta Code mod that redacts detected secrets from tool results before they enter conversation history.",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
       "events.tools"
     ],
     "engines": {
-      "lettaCodeCli": ">=0.27.14"
+      "lettaCodeCli": ">=0.27.19"
     }
   }
 }
