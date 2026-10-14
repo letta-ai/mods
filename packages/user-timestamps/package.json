@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/user-timestamps",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Letta Code turn-start mod that adds local timestamp metadata to every user message.",
   "author": "Letta",
   "license": "Apache-2.0",
@@ -29,5 +29,8 @@
     "engines": {
       "lettaCodeCli": ">=0.27.14"
     }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test.mjs"
   }
 }
