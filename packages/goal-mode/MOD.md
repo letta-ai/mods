@@ -50,7 +50,7 @@ The mod registers snake_case and PascalCase aliases so different toolsets can ca
 
 ## Turn reminders
 
-While a goal is active, the mod prepends a reminder that includes the goal objective, status, budget, and completion-audit rules. The reminder tells the agent to use `<goal_status>complete</goal_status>` only after the goal is actually achieved.
+While a goal is active, the mod adds passive turn context that includes the goal objective, status, budget, and completion-audit rules. The reminder tells the agent to use `<goal_status>complete</goal_status>` only after the goal is actually achieved.
 
 ## State
 
