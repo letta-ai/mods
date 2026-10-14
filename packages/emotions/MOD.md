@@ -87,7 +87,9 @@ Mood and episodes are shared in the tracked state. Fast affect is keyed by a has
 
 ## Injection safety
 
-The `<emotions>` block is added as a separate system message and contains normalized affect, mood, dimensions, safe episode metadata, and tendencies. It never includes arbitrary stored cause text or modifies the user's original message. Custom feeling labels become `custom-feeling` before injection, though their full names remain available as untrusted quoted data through inspection.
+The `<emotions>` block is added as a separate user-role `<system-reminder>` message and contains normalized affect, mood, dimensions, safe episode metadata, and tendencies. It never includes arbitrary stored cause text or modifies the user's original message. Custom feeling labels become `custom-feeling` before injection, though their full names remain available as untrusted quoted data through inspection.
+
+Turn context is emitted as a user-role message so that Local backend ingestion delivers it to provider context. Because Local persists user-role messages in conversation history, this adds one extra message per turn with no cross-turn deduplication.
 
 ## Adaptation notes
 
