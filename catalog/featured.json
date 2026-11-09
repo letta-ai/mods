@@ -20,6 +20,10 @@
     {
       "type": "npm",
       "package": "@letta-ai/unanswered-messages"
-    }
+    },
+    {
+      "type": "npm",
+      "package": "letta-explicit-oath"
+    },
   ]
 }
