@@ -39,25 +39,39 @@ Catalog labels have separate meanings:
 - **Community** packages are published and maintained by their authors.
 - **Featured** packages are selected by Letta for additional visibility. Featured is an editorial signal, not a security audit or ownership claim.
 
-New community mods should live in author-owned repositories and npm scopes. New package source is accepted into this repository only when Letta explicitly adopts the package and commits to maintaining it. Existing packages are being evaluated under this policy separately from this repository foundation work.
+New community mods should live in author-owned repositories and npm scopes. New package source is accepted into this repository only when Letta explicitly adopts the package and commits to maintaining it.
+
+## Official packages
+
+[`catalog/official.json`](catalog/official.json) is the public source of truth for official ownership. Every package under `packages/` must appear in that allowlist, use the `@letta-ai` npm scope, and have an active Letta maintainer.
+
+Official status is controlled by repository review. It is not inferred from npm scope or declared by package authors.
 
 ## Featured packages
 
 [`catalog/featured.json`](catalog/featured.json) is the public source of truth for featured catalog placement. It contains typed npm-package or GitHub-repository sources in display order. Catalog consumers overlay this list on top of normal registry and topic discovery.
 
-A featured package may be official or community-maintained. The website should preserve the ownership label independently from the Featured badge.
+A featured package may be official or community-maintained. Catalog consumers preserve the ownership label independently from the Featured badge.
 
 Changes to the featured list are reviewed like code changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for nomination criteria.
+
+## Retired packages
+
+[`catalog/retired.json`](catalog/retired.json) records packages removed from official maintenance, the original contributor, and the pull request that introduced the source. A replacement is listed only after an owner-maintained package or repository exists.
+
+Existing retired npm releases remain available for migration compatibility. They are not part of the official allowlist and receive no new releases from this repository.
 
 ## Repository structure
 
 ```text
 catalog/
-└── featured.json          # Public featured-package curation
+├── featured.json          # Editorial selection and ordering
+├── official.json          # Letta-maintained package allowlist
+└── retired.json           # Community migration records
 packages/
 └── <package>/             # Letta-published mod package source
 scripts/
-├── validate-featured.mjs  # Featured-list schema validation
+├── validate-catalog.mjs   # Catalog policy and package ownership validation
 └── validate-manifests.mjs # Package manifest validation
 ```
 

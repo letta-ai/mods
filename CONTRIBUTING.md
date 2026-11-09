@@ -28,7 +28,7 @@ Git-only packages remain installable with `letta install git:github.com/publishe
 
 ## Official package adoption
 
-Adding package source to this repository means Letta is adopting the package as official software rather than only listing it in the ecosystem catalog. Official adoption is exceptional and requires:
+Adding package source to this repository and [`catalog/official.json`](catalog/official.json) means Letta is adopting the package as official software rather than only listing it in the ecosystem catalog. Official adoption is exceptional and requires:
 
 - broad usefulness beyond one person's workflow
 - an active Letta maintainer
@@ -40,6 +40,8 @@ Adding package source to this repository means Letta is adopting the package as 
 - an ongoing maintenance commitment
 
 A community package does not need official adoption to be discovered or featured.
+
+When an official package returns to community ownership, remove its source from `packages/` and its entry from `catalog/official.json` in the same pull request. Add a `catalog/retired.json` record preserving the original contributor and pull request. Add replacement metadata only after an owner-maintained destination is available.
 
 ## Featured package nominations
 

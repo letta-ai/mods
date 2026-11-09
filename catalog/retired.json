@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "package": "@letta-ai/aura-maxxing",
+      "owner": "EthanThatOneKid",
+      "pullRequest": 34
+    },
+    {
+      "package": "@letta-ai/autopivot",
+      "owner": "chaddorsey",
+      "pullRequest": 30,
+      "replacement": {
+        "type": "npm",
+        "package": "letta-mod-autopivot"
+      }
+    },
+    {
+      "package": "@letta-ai/code-outline-enforce",
+      "owner": "Desenrad",
+      "pullRequest": 52
+    },
+    {
+      "package": "@letta-ai/control-room",
+      "owner": "v3nommy",
+      "pullRequest": 32
+    },
+    {
+      "package": "@letta-ai/cruise-code",
+      "owner": "homebodify",
+      "pullRequest": 56
+    },
+    {
+      "package": "@letta-ai/cruise-ux",
+      "owner": "homebodify",
+      "pullRequest": 56
+    },
+    {
+      "package": "@letta-ai/environment-compass",
+      "owner": "laurajustinevermore",
+      "pullRequest": 20
+    },
+    {
+      "package": "@letta-ai/hypa",
+      "owner": "rl-0x000",
+      "pullRequest": 29
+    },
+    {
+      "package": "@letta-ai/jukebox",
+      "owner": "homebodify",
+      "pullRequest": 26
+    },
+    {
+      "package": "@letta-ai/muscle-memory",
+      "owner": "adrianchan94",
+      "pullRequest": 19
+    },
+    {
+      "package": "@letta-ai/oath-keeper",
+      "owner": "RhoMancer",
+      "pullRequest": 28
+    },
+    {
+      "package": "@letta-ai/output-compressor",
+      "owner": "nicolasmn",
+      "pullRequest": 21
+    },
+    {
+      "package": "@letta-ai/soft-landing",
+      "owner": "laurajustinevermore",
+      "pullRequest": 31
+    },
+    {
+      "package": "@letta-ai/sprite",
+      "owner": "tanner-caffrey",
+      "pullRequest": 27
+    },
+    {
+      "package": "@letta-ai/threadkeeper",
+      "owner": "vqlkyriez-bot",
+      "pullRequest": 11
+    },
+    {
+      "package": "@letta-ai/tool-guard-inspector",
+      "owner": "YingzuoLiu",
+      "pullRequest": 18
+    },
+    {
+      "package": "@vedant020000/ponytail",
+      "owner": "Vedant020000",
+      "pullRequest": 55
+    }
+  ]
+}

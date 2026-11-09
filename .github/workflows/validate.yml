@@ -29,3 +29,12 @@ jobs:
 
       - name: Validate repository
         run: npm run validate
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Validate secrets scrubber
+        run: |
+          npm --prefix packages/secrets-scrubber install --ignore-scripts --no-audit --no-fund
+          npm --prefix packages/secrets-scrubber test
+          npm --prefix packages/secrets-scrubber run typecheck

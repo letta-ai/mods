@@ -104,8 +104,8 @@ jobs:
             case "$name" in
               @letta-ai/*) ;;
               *)
-                echo "Skipping community-owned package $name; this workflow only publishes the @letta-ai scope."
-                continue
+                echo "Refusing to publish $name; this workflow only publishes the @letta-ai scope."
+                exit 1
                 ;;
             esac
 
